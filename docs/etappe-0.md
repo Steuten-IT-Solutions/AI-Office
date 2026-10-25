@@ -20,44 +20,74 @@ Entwicklungsmaschine des CEO. Der VPS (E8, O5) und das Backup des Anbieters (E21
 zurückgestellt. Der Anbietervergleich vom 25.10.2026 steht im ersten Commit dieses PR (`ddec55c`);
 die Preise müssen vor einer späteren Bestellung ohnehin neu geprüft werden.
 
+**Entwicklungsmaschine (Angaben des CEO):** Windows 11 Pro (10.0.26200), AMD Ryzen 5 5600X
+(6 Kerne), 64 GB RAM, Laufwerke C: 62,5 GB, D: 137 GB, F: 1,35 TB, G: 711 GB.
+
+**Empfehlung: eine Hyper-V-VM mit Ubuntu Server LTS als Zielumgebung.**
+Das Rechtemodell aus Kap. 4.7 setzt Linux voraus: getrennte Unix-Nutzer, nftables-Regel für die UID
+von `aio-office`, `SO_PEERCRED` am Unix-Socket, Docker ohne Zugriff für `aio-office`, systemd.
+Hyper-V ist in Windows 11 Pro enthalten
+([Microsoft Learn](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/get-started/install-hyper-v)).
+
+Warum nicht WSL 2 oder Docker Desktop:
+- WSL 2 bindet standardmäßig alle festen Windows-Laufwerke unter `/mnt` ein (`[automount]
+  enabled`, Standard `true`) und erlaubt Linux-Prozessen, Windows-Programme zu starten (`[interop]
+  enabled`, Standard `true`) ([Microsoft Learn: wsl.conf](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)).
+  Beides lässt sich abschalten, aber jeder Fehler in dieser Konfiguration gäbe dem Office Zugriff auf
+  Ihre persönlichen Daten und auf Windows.
+- WSL fährt die VM nach Leerlauf herunter (`vmIdleTimeout`, `instanceIdleTimeout`, ebenda). Das passt
+  nicht zu einem Dienst, der dauerhaft läuft.
+- Docker Desktop nutzt ebenfalls WSL 2 bzw. eine eigene VM. Die Trennung aus Kap. 4.7 wäre dort
+  nicht so umsetzbar wie geplant **[Annahme]**.
+- Eine Hyper-V-VM hat einen eigenen Kernel, keinen Zugriff auf Windows-Laufwerke und keine
+  Interop. Sie verhält sich wie der spätere Server, die Skripte lassen sich unverändert übernehmen.
+
 **Folgen für den Plan:**
-- Das Rechtemodell aus Kap. 4.7 setzt Linux voraus: getrennte Unix-Nutzer, nftables-Regel für die
-  UID von `aio-office`, `SO_PEERCRED` am Unix-Socket, Docker ohne Zugriff für `aio-office`,
-  systemd. Auf einer Linux-Maschine lässt sich das vollständig nachbauen. Unter macOS oder Windows
-  laufen Container in einer VM von Docker Desktop; dann lassen sich nftables, `SO_PEERCRED` und die
-  Netztrennung nicht so umsetzen wie geplant, und die Abnahmekriterien 8 und 10 wären nur
-  eingeschränkt prüfbar **[Annahme, je nach Betriebssystem in S1 zu klären]**.
-- **Sicherheit:** Lauf-Container laufen dann auf einem Rechner mit Ihren persönlichen Daten und
-  Zugängen. Die Container sehen nur ihren Arbeitsbereich (Kap. 4.7), aber jede Lücke in der
-  Isolation trifft Ihre Arbeitsmaschine statt eines leeren Servers. Deshalb gilt: Office und
-  Supervisor laufen unter eigenen Nutzern, nie unter Ihrem Konto. Der Docker-Zugriff liegt nur bei
-  `aio-sup`.
-- **S3** misst die Statik auf der Entwicklungsmaschine. Die Servergröße für später leite ich daraus
-  ab.
-- **Backup (E21) und Abnahmekriterium 12** entfallen vorerst. Ersatz: tägliche SQLite-Sicherung
-  (Paket S15) in ein lokales Verzeichnis außerhalb von `/var/lib/aio-office`.
-- **Abnahmekriterium 10** („Neustart des VPS“) gilt sinngemäß für den Neustart der
-  Entwicklungsmaschine.
-- **VPN** ist nur nötig, wenn Sie von anderen Geräten zugreifen wollen. Lokal reicht der Zugriff
-  über Loopback.
+- **Sicherheit:** Die Lauf-Container laufen in der VM, nicht direkt unter Windows. Eine Lücke in
+  der Container-Isolation trifft zunächst die VM. Die VM bekommt keine geteilten Ordner und keine
+  Windows-Zugangsdaten.
+- **S3** misst die Statik innerhalb der VM. Die Servergröße für später leite ich daraus ab.
+- **Backup (E21) und Abnahmekriterium 12:** Ersatz ist die tägliche SQLite-Sicherung (Paket S15)
+  plus Hyper-V-Prüfpunkte oder ein VM-Export vor riskanten Schritten. Der Rücksicherungstest läuft
+  gegen diese Sicherung.
+- **Abnahmekriterium 10** („Neustart des VPS“) gilt für den Neustart der VM und den Neustart von
+  Windows. Die VM startet mit Windows automatisch (automatische Startaktion in Hyper-V).
+- **VPN** ist nicht nötig. Der Zugriff erfolgt vom Windows-Browser auf die VM im internen
+  Hyper-V-Netz.
 
 **Schritte für Sie:**
-1. Mir Betriebssystem und Version der Entwicklungsmaschine nennen, außerdem CPU-Kerne, RAM und
-   freien Plattenplatz.
-2. Unter Linux: Docker Engine installieren (nicht Docker Desktop), damit Container direkt auf dem
-   Host-Kernel laufen. Das Provisionierungsskript (Paket S16) legt die Nutzer `aio-sup` und
-   `aio-office` an.
+1. Hyper-V aktivieren: PowerShell als Administrator,
+   `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All`, danach Neustart
+   (Microsoft Learn, siehe oben).
+2. VM anlegen (Hyper-V-Manager → Neu → Virtueller Computer):
+   - Generation 2, Name `aio-dev`
+   - Arbeitsspeicher 16 GB, **dynamischer Arbeitsspeicher aus** (feste Grenzen für die Statik)
+   - 8 virtuelle Prozessoren (der Ryzen hat 6 Kerne mit 12 Threads)
+   - virtuelle Festplatte 200 GB, dynamisch erweiterbar, auf einem **SSD-Laufwerk** mit
+     ausreichend Platz
+   - Netzwerk: „Default Switch“
+   - Ubuntu Server 24.04 LTS (oder die neueste LTS) als ISO von ubuntu.com
+   - Sicherer Start: Vorlage „Microsoft UEFI-Zertifizierungsstelle“, sonst startet Ubuntu nicht
+     **[Annahme: im Assistenten prüfen]**
+   - Automatische Startaktion: „Immer automatisch starten“
+3. Ubuntu installieren: OpenSSH-Server aktivieren, eigener Admin-Nutzer, nach der Installation
+   `sudo apt update && sudo apt full-upgrade` und `unattended-upgrades`.
+4. Docker Engine nach der offiziellen Anleitung für Ubuntu installieren (nicht Docker Desktop).
+5. Einen Prüfpunkt „frisch installiert“ anlegen.
+6. Mir die IP-Adresse der VM nennen. Das Provisionierungsskript (Paket S16) legt danach die Nutzer
+   `aio-sup` und `aio-office` an.
 
 **Interne Namen und TLS (neu, im Plan bisher nicht ausgeführt):**
-- Die Cookies mit Präfix `__Host-` (Kap. 4.7) verlangen `Secure`. Ob Browser das auf
-  `http://localhost` akzeptieren, prüfe ich vor Paket P09 **[Annahme]**. Für den späteren Server
-  braucht es HTTPS und eine eigene kleine Zertifizierungsstelle.
+- Die Cookies mit Präfix `__Host-` (Kap. 4.7) verlangen `Secure`, also HTTPS. Weil der Browser
+  unter Windows auf die VM zugreift und nicht auf `localhost`, braucht es schon jetzt eine eigene
+  kleine Zertifizierungsstelle. Ihr Stammzertifikat tragen Sie einmal in Windows als
+  vertrauenswürdig ein; das Skript dafür kommt mit Paket S16. Die Namen lösen Sie über die
+  `hosts`-Datei von Windows auf.
 - Der Plan nennt `.aio.intern` als Beispiel. `.intern` ist **nicht** reserviert. Reserviert für
   private Nutzung ist `.internal` (ICANN-Beschluss vom 29.07.2024, zitiert in
   [draft-davies-internal-tld-06](https://www.ietf.org/archive/id/draft-davies-internal-tld-06.html)).
-  Vorschlag für den Server: `office.aio.internal` und `konsole.aio-sup.internal` (verschiedene
-  Domains, wie in Kap. 5.11 empfohlen). Für die lokale Entwicklung klärt P09 bzw. S12, wie Office
-  und Konsole getrennte Origins und Cookies bekommen.
+  Vorschlag: `office.aio.internal` und `konsole.aio-sup.internal` (verschiedene Domains, wie in
+  Kap. 5.11 empfohlen).
 
 ### 1.2 GitHub App ⚠
 
@@ -87,7 +117,7 @@ Chat.**
 ### 1.3 Repo `ai-office-supervisor` ⚠
 
 Anlegen in der Organisation, nur Sie haben Schreibrechte, App nicht installiert (E35).
-Sichtbarkeit: siehe Rückfrage 3.
+Sichtbarkeit: **privat** (CEO-Entscheidung vom 25.10.2026).
 
 ### 1.4 Repo-Einstellungen `AI-Office` ⚠
 
@@ -114,7 +144,7 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
 
 ### 1.5 Claude: `setup-token` und voller Login ⚠
 
-Nach E27 gibt es zwei Zugänge. Beide stellen Sie selbst her, beide auf der Entwicklungsmaschine als Nutzer `aio-sup`
+Nach E27 gibt es zwei Zugänge. Beide stellen Sie selbst her, beide in der VM `aio-dev` als Nutzer `aio-sup`
 (der Nutzer entsteht mit dem Provisionierungsskript aus Paket S16; für die Spikes reicht vorerst ein
 eigenes Spike-Verzeichnis).
 
@@ -145,7 +175,8 @@ Empfehlung: über beide Wege, mit Datum notieren. Die Antwort bitte schriftlich 
 - Test-Repo für S1, z. B. `aio-spike-s1`, leer und **öffentlich**, weil Branch-Schutz für private
   Repos im Free-Tarif fehlt (Plan Fakt 14) und S1e ihn braucht. Es wird nach dem Spike gelöscht.
   Dazu die vorübergehende Installation der App darauf.
-- Ein Kontingent-Budget und ein ruhiges Zeitfenster für S2 (siehe 3.2).
+- Kontingent-Budget für S2: bis zu 5 Prozentpunkte des Wochenlimits, in einem ruhigen Zeitfenster
+  (vom CEO am 25.10.2026 freigegeben, siehe 3.2).
 
 ---
 
@@ -190,14 +221,14 @@ Beschreibung beruht, wäre wertlos. Die Zitate stammen aus den
 ## 3. Plan für die Spikes S1–S3
 
 **Allgemein:**
-- Alle Spikes laufen auf der Entwicklungsmaschine in `/opt/aio-spikes` mit Skripten, die per PR in dieses Repo
+- Alle Spikes laufen in der VM `aio-dev` (siehe 1.1) in `/opt/aio-spikes` mit Skripten, die per PR in dieses Repo
   kommen (Verzeichnis `spikes/`). Sie geben **nie** ein Token aus, sondern nur „gefunden / nicht
   gefunden“ bzw. Prüfsummen.
 - Ergebnisse als Bericht `spikes/ergebnisse/S<n>.md` per PR, ohne Rohdaten, die Geheimnisse enthalten
   könnten.
 - Die CLI-Version wird für alle Spikes fest gepinnt und im Bericht genannt (R9).
-- Kontingent: S1 und S3 brauchen nur wenige kurze Läufe mit `haiku`. S2 braucht ein eigenes Budget
-  (Rückfrage 4).
+- Kontingent: S1 und S3 brauchen nur wenige kurze Läufe mit `haiku`. S2 darf bis zu 5 Prozentpunkte
+  des Wochenlimits verbrauchen (vom CEO freigegeben).
 
 ### 3.1 S1 – Isolation
 
@@ -249,7 +280,7 @@ dimensionieren.
 ### 3.4 Reihenfolge und Abhängigkeiten
 
 1. S1c, S1d, S1e (brauchen nur GitHub) → sofort nach Freigabe des Test-Repos.
-2. S1a, S1b, S1f, S1g, S3a (brauchen die Entwicklungsmaschine und `setup-token`).
+2. S1a, S1b, S1f, S1g, S3a (brauchen die VM `aio-dev` und `setup-token`).
 3. S2 (braucht vollen Login und das ruhige Zeitfenster).
 4. S3b–S3d (brauchen P01, damit ein echtes Repo gebaut werden kann).
 
@@ -293,7 +324,7 @@ AK = Abnahmekriterium aus Kap. 7.4. Jedes Paket = ein Branch, ein PR.
 | **S14** | SUP | Benachrichtigung | E-Mail bei Eskalation, Schutzschalter, Anmeldung, Stillstand, Überschreitung | S03 | S | 6, 7 |
 | **S15** | SUP | Backup + Rücksicherung | Tägliche SQLite-Sicherung beider DBs vor dem Anbieter-Backup, Rücksicherungsskript, Test | S01, P03 | S | 12 |
 | **S16** | SUP | Host-Provisionierung | Nutzer `aio-sup`/`aio-office`, Verzeichnisse und Rechte, nftables für `aio-office` (E41), systemd-Units mit Watchdog, Docker-Log-Limits, interne CA und Hostnamen | S01 | M | 10 |
-| **I01** | beide | Abnahme auf der Entwicklungsmaschine | Testprotokoll für AK 1–12, Ergebnis als Bericht | alle | M | 1–12 |
+| **I01** | beide | Abnahme in der VM `aio-dev` | Testprotokoll für AK 1–12, Ergebnis als Bericht | alle | M | 1–12 |
 
 ### 4.2 Reihenfolge
 
@@ -371,6 +402,6 @@ eigenen PR vor.
    hinweisen: Der kostenlose Tarif ist laut Anbieter „only suitable for non-commercial use“
    ([tailscale.com/pricing](https://tailscale.com/pricing)). Empfehlung: WireGuard.
 5. **Repo-Inhalte im Arbeitsbereich:** Prüfung S1f ergänzen (Hooks und `.mcp.json` aus dem Repo).
-6. **E8, E21, O5:** In der Entwicklungsphase läuft das System auf der Entwicklungsmaschine des
-   CEO, VPS und Anbieter-Backup sind zurückgestellt (siehe 1.1). Abnahmekriterien 10 und 12
+6. **E8, E21, O5:** In der Entwicklungsphase läuft das System in einer Hyper-V-VM auf der
+   Entwicklungsmaschine des CEO, VPS und Anbieter-Backup sind zurückgestellt (siehe 1.1). Abnahmekriterien 10 und 12
    entsprechend anpassen.
