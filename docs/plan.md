@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Entwurf 0.1 (Phasen 1–2 abgeschlossen, Phasen 3–4 im ersten Entwurf, Phasen 5–7 offen).
+> **Status:** Entwurf 0.2 (Phasen 1–2 abgeschlossen, Phasen 3–4 im Entwurf, Phasen 5–7 offen).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -21,6 +21,10 @@
 | E8 | Betrieb auf einem **VPS mit Root-Zugriff**, nicht auf dem Ionos-Webspace | Das Büro braucht dauerhaft laufende Prozesse und Docker. | Runde 2 |
 | E9 | Firma = GitHub-Organisation `Steuten-IT-Solutions`. Produkte werden **erst festgelegt, wenn die Software steht**. | CEO-Vorgabe | Runde 3 |
 | E10 | Der CEO kommuniziert **direkt im Webinterface** mit den Agenten (Chat). | CEO-Vorgabe | Runde 3 |
+| E11 | Der **Schutzschalter** im Supervisor stoppt bei Auffälligkeiten neue Läufe und eskaliert an den CEO. | Agenten in einer Fehlschleife erkennen diese nicht zuverlässig. | Runde 4 |
+| E12 | **60-%-Regel** bezieht sich auf den Gesamtverbrauch der Woche, mit Tagesglättung (1/7 + Übertrag). | Dem CEO bleiben garantiert 40 %. | Runde 4 |
+| E13 | `project-cockpit` bleibt **getrennt** vom AI-Office. | CEO-Vorgabe | Runde 4 |
+| E14 | **Agenten erhalten nie ein GitHub-Token.** Push, PR und Merge laufen ausschließlich über die Office-API bzw. den Supervisor. Agenten dürfen nur auf Branches `agent/*` pushen. | Durchsetzung unabhängig vom GitHub-Tarif (Kap. 2.3). Kein Geheimnis in der Sandbox (R5). | Review 2 |
 
 ---
 
@@ -49,7 +53,16 @@
 10. **OpenAI/Codex:** „API keys are still the recommended default for automation“. Programmatische Workflows sollen per API-Key laufen.
     Quelle: <https://learn.chatgpt.com/docs/auth>
 
-### 2.2 Bewertung
+### 2.2 GitHub: Sichtbarkeit, CI und Branch-Schutz
+
+11. **Actions-Kosten:** „GitHub Actions usage is free for self-hosted runners and for public repositories.“ Private Repos haben ein Freikontingent, im Free-Tarif 2.000 Minuten pro Monat.
+    Quelle: <https://docs.github.com/en/billing/concepts/product-billing/github-actions>
+12. **Branch-Schutz:** Protected Branches, Code Owners und Required Reviewers in **privaten** Repos gehören zu den „Advanced tools … in private repositories“ von GitHub Pro und Team, nicht zu GitHub Free. Rulesets sind beschrieben „for customers on GitHub Team and GitHub Enterprise plans“.
+    Quellen: <https://docs.github.com/en/get-started/learning-about-github/githubs-plans>, <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets>
+
+**Folge:** Eine Test-Pipeline erfordert **kein** öffentliches Repo. In einer Organisation mit GitHub Free fehlt bei privaten Repos aber der Branch-Schutz. Deshalb wird der Schutz von `main` **im AI-Office selbst** durchgesetzt (E14). Der GitHub-Branch-Schutz ist nur eine zusätzliche Schicht, wo der Tarif ihn bietet.
+
+### 2.3 Bewertung
 
 - **Technisch möglich und dokumentiert:** Das unveränderte `claude`-CLI läuft im Headless-Modus (`claude -p`) mit dem eigenen Abo. Das AI-Office ist kein Produkt für Dritte. Es vermittelt keine Zugangsdaten und hat keinen eigenen Login.
 - **Rechtliche Grauzone:** Ob ein autonomes Mehragentensystem im Dauerbetrieb noch „ordinary, individual usage“ ist, lässt sich nicht verifizieren. Es bleibt **Risiko R1**. Gegenmaßnahmen: Pausen im Betrieb (60-%-Grenze, Ruhezeiten), sparsame Modellwahl und eine Anfrage bei Anthropic vor dem Dauerbetrieb (Empfehlung).
@@ -246,13 +259,13 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 | R1 | Lizenz-Grauzone „ordinary, individual usage“ bei Dauerbetrieb | Risiko. Empfehlung: bei Anthropic anfragen |
 | R2 | Genaue Grenzen von Max 5x nicht veröffentlicht. Die Usage-Schnittstelle ist experimentell. | Risiko, Fallback vorgesehen |
 | R3 | Der Claude-Login auf dem Server kann ablaufen, danach steht das Büro still. | Überwachung durch den Supervisor, Hinweis an den CEO |
-| R4 | `AI-Office` ist ein **öffentliches** Repo: Prompts und Pläne sind sichtbar. Fremde PRs könnten die CI angreifen. | Offen: Sichtbarkeit entscheiden (O3) |
-| R5 | Credentials in der Sandbox: Das CLI braucht den Claude-Login, in der Sandbox ausgeführter Code könnte ihn lesen (Fakt 9). | Lösung in Phase 5 (z. B. Anmeldedaten nur im CLI-Prozess, Bash mit `denyRead` und eigenem Container) |
+| R4 | `AI-Office` ist ein **öffentliches** Repo: Prompts und Pläne sind sichtbar. Fremde PRs könnten die CI angreifen. | Offen: Sichtbarkeit entscheiden (O3), Fakten in Kap. 2.2 |
+| R5 | Credentials in der Sandbox: Das CLI braucht den Claude-Login, in der Sandbox ausgeführter Code könnte ihn lesen (Fakt 9). | GitHub-Token durch E14 gelöst. Für den Claude-Login folgt die Lösung in Phase 5. |
 | R6 | Prompt-Injection über Recherche und Repo-Inhalte | Konzept in Phase 5 |
-| O1 | Schutzschalter des Supervisors gegen Fehlschleifen (Kap. 4.3) | CEO-Bestätigung ausstehend |
-| O2 | Definition der 60-%-Regel (Gesamtverbrauch, Glättung) | CEO-Bestätigung ausstehend |
-| O3 | Sichtbarkeit von `AI-Office` (öffentlich/privat) | CEO-Entscheidung ausstehend |
-| O4 | Verhältnis zum bestehenden `project-cockpit` | CEO-Antwort ausstehend |
+| O1 | Schutzschalter des Supervisors gegen Fehlschleifen (Kap. 4.3) | Entschieden (E11) |
+| O2 | Definition der 60-%-Regel (Gesamtverbrauch, Glättung) | Entschieden (E12) |
+| O3 | Sichtbarkeit von `AI-Office` (öffentlich/privat), GitHub-Tarif der Organisation | CEO-Entscheidung ausstehend |
+| O4 | Verhältnis zum bestehenden `project-cockpit` | Entschieden (E13) |
 | O5 | VPS-Anbieter und monatliches Budget | CEO hat Kosten zugestimmt, Betrag offen |
 
 ## 9. Protokoll der Review-Runden
@@ -269,5 +282,13 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 | Stabilität | Eine Eigenänderung könnte das Deployment selbst beschädigen. | Deployer im Supervisor, nicht im Office. Last-known-good-Modus |
 | Erweiterbarkeit | Bindung an einen Anbieter | Adapter `LlmRunner` |
 | Betrieb | Wenn GitHub die Auslieferung anstößt (Push), braucht der Server Zugang von außen. | Pull-Deployment durch den Supervisor |
+
+### Review 2 (Entwurf 0.2)
+
+| Perspektive | Befund | Änderung |
+|---|---|---|
+| Sicherheit | Der Plan stützte Stufe D auf den GitHub-Branch-Schutz. Den gibt es bei privaten Repos im Free-Tarif nicht (Fakt 12). | E14: Der Schutz von `main` wird in Office-API und Supervisor durchgesetzt. Branch-Schutz nur zusätzlich. |
+| Sicherheit | Ein GitHub-Token in der Sandbox wäre für ausgeführten Code lesbar. | E14: Das Token bleibt im Supervisor, Push nur über die Office-API |
+| Kosten | Bei privatem Repo zählen CI-Minuten gegen 2.000 Minuten pro Monat (Fakt 11). | CI schlank halten. Der Staging-Test beim Deployment läuft ohnehin auf dem VPS. Option: Self-hosted Runner (kostenlos laut Fakt 11), aber nur für private Repos. |
 
 Weitere Runden folgen nach den Phasen 5 und 6.
