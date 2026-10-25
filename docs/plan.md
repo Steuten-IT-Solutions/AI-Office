@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Entwurf 0.2 (Phasen 1–2 abgeschlossen, Phasen 3–4 im Entwurf, Phasen 5–7 offen).
+> **Status:** Entwurf 0.3 (Phasen 1–2 abgeschlossen, Phasen 3–5 im Entwurf, Phasen 6–7 offen).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -24,7 +24,11 @@
 | E11 | Der **Schutzschalter** im Supervisor stoppt bei Auffälligkeiten neue Läufe und eskaliert an den CEO. | Agenten in einer Fehlschleife erkennen diese nicht zuverlässig. | Runde 4 |
 | E12 | **60-%-Regel** bezieht sich auf den Gesamtverbrauch der Woche, mit Tagesglättung (1/7 + Übertrag). | Dem CEO bleiben garantiert 40 %. | Runde 4 |
 | E13 | `project-cockpit` bleibt **getrennt** vom AI-Office. | CEO-Vorgabe | Runde 4 |
-| E14 | **Agenten erhalten nie ein GitHub-Token.** Push, PR und Merge laufen ausschließlich über die Office-API bzw. den Supervisor. Agenten dürfen nur auf Branches `agent/*` pushen. | Durchsetzung unabhängig vom GitHub-Tarif (Kap. 2.3). Kein Geheimnis in der Sandbox (R5). | Review 2 |
+| E14 | **Agenten erhalten nie ein GitHub-Token.** Push, PR und Merge laufen ausschließlich über die Office-API bzw. den Supervisor. Agenten dürfen nur auf Branches `agent/*` pushen. | Durchsetzung unabhängig vom GitHub-Tarif (Kap. 2.2). Kein Geheimnis in der Sandbox (R5). | Review 2 |
+| E15 | `AI-Office` bleibt **öffentlich**. Schutzmaßnahmen siehe Kap. 2.2 und 5.9. | CEO-Vorgabe. Kostenlose CI, Branch-Schutz im Free-Tarif verfügbar | Runde 5 |
+| E16 | Agenten denken und sprechen **Deutsch**. | Die Blasen zeigen das Original, keine Übersetzungskosten (E1). | Runde 5 |
+| E17 | Webinterface in **Pixel-Art**, isometrisch je Etage, später Querschnitt als Übersicht | CEO-Vorgabe Pixel-Art. Abwägung in Kap. 5.11a | Runde 5 |
+| E18 | **Laufzeitdaten nie im öffentlichen Repo**: Ereignisse, Gedächtnis, Bücher, CEO-Chat | Folge aus E15 | Review 3 |
 
 ---
 
@@ -59,6 +63,17 @@
     Quelle: <https://docs.github.com/en/billing/concepts/product-billing/github-actions>
 12. **Branch-Schutz:** Protected Branches, Code Owners und Required Reviewers in **privaten** Repos gehören zu den „Advanced tools … in private repositories“ von GitHub Pro und Team, nicht zu GitHub Free. Rulesets sind beschrieben „for customers on GitHub Team and GitHub Enterprise plans“.
     Quellen: <https://docs.github.com/en/get-started/learning-about-github/githubs-plans>, <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets>
+
+13. **Öffentliche Repos und CI:** „self-hosted runners should almost never be used for public repositories“. Für Workflows aus Forks gibt es Freigabe-Einstellungen bis hin zu „Require approval for all external contributors“. Branch-Schutz gibt es auch für öffentliche Repos in Free-Organisationen.
+    Quellen: <https://docs.github.com/en/actions/reference/security/secure-use>, <https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository>, <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
+
+**Schutzmaßnahmen für das öffentliche Repo (E15):**
+- GitHub-gehostete Runner, **kein** Self-hosted Runner
+- „Require approval for all external contributors“ aktivieren
+- Keine Secrets in Workflows, die für PRs laufen
+- Branch-Schutz auf `main` als zweite Schicht neben E14
+- Secret-Scan vor jedem Push
+- Laufzeitdaten nie im Repo (E18)
 
 **Folge:** Eine Test-Pipeline erfordert **kein** öffentliches Repo. In einer Organisation mit GitHub Free fehlt bei privaten Repos aber der Branch-Schutz. Deshalb wird der Schutz von `main` **im AI-Office selbst** durchgesetzt (E14). Der GitHub-Branch-Schutz ist nur eine zusätzliche Schicht, wo der Tarif ihn bietet.
 
@@ -230,7 +245,184 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 
 ## 5. Detailplanung je Komponente
 
-*Folgt in Phase 5.* Geplante Themen: Persönlichkeit, Modellwahl und Wirkung auf Prompt und Rechte; Gedächtnis (Profil, Journal, Beziehungen, Übergabenotizen); Bewerbungsprozess; Semantik des Gebäudes (Räume = Kontexte und Kanäle, Ausstattung = Werkzeugrechte, Etagen = Bereiche); Kommunikation (Postfächer, Meetings als Runden mit Turn-Folge); Sicherheit der Sandbox; Webinterface (Avatare deterministisch aus Seed und Eigenschaften, Bewegung aus Ereignissen).
+> Entwurf aus Phase 5. Verweise auf „Fakt n“ beziehen sich auf Kap. 2.
+
+### 5.1 Agentenmodell und Persönlichkeit
+
+**Profil** (versionierter Datensatz):
+- Name, Rolle, Spezialisierungen, Vorgesetzter
+- Persönlichkeit:
+  - Gemüt als fünf Skalen von 1 bis 5 (Offenheit, Gewissenhaftigkeit, Extraversion, Verträglichkeit, Belastbarkeit)
+  - Einstellung (Werte, Leitsatz)
+  - Vergangenheit (Kurzbiografie)
+  - Ausbildung
+- Modell
+- Rechte, Avatar-Seed, Budget
+
+**Wie die Eigenschaften wirklich wirken** (ehrliche Abgrenzung: das Modell lernt nicht dazu, kritischer Punkt 7 im Planungs-Prompt):
+
+| Eigenschaft | Reale Wirkung |
+|---|---|
+| Gemüt, Einstellung, Vergangenheit | Kurzer Abschnitt im System-Prompt (Ziel ≤ 300 Tokens). Einige Skalen steuern zusätzlich **deterministische Parameter**, z. B. die Risikotoleranz bei Freigaben oder wie oft ein Agent Rückfragen stellt. |
+| Ausbildung | Bestimmt die **Startbücher** im Regal und die erlaubten Werkzeuge. Ein Agent ohne Ausbildung in DevOps bekommt keine Deploy-nahen Werkzeuge. |
+| Modell | Fähigkeit und Kosten pro Lauf |
+| „Erfahrung“ | Gedächtnis (5.2) und **gemessene Kennzahlen** aus dem Ereignisprotokoll: Erfolgsquote, Kosten pro Aufgabe, Nacharbeit. Der CHRO nutzt sie für Beförderungen und Einstellungen. So entsteht echte Auslese statt simulierter Entwicklung. |
+
+### 5.2 Gedächtnis und Zustand
+
+| Schicht | Inhalt | Technik |
+|---|---|---|
+| Profil | siehe 5.1 | DB, versioniert |
+| Übergabenotiz | Arbeitsstand je Aufgabe: Was ist erledigt, was ist offen, was ist der nächste Schritt? | Am Ende jedes Laufs per Pflicht-Werkzeug `handover()`, begrenzte Länge |
+| Journal | Wichtige Erfahrungen und Lehren | Markdown. Wird **nur bei Überschreitung einer Größe** verdichtet, mit günstigem Modell. |
+| Beziehungen | Mit wem, wie oft, worüber, Vertrauenswert | Zähler und Vertrauenswert **deterministisch** aus Ereignissen, dazu eine kurze Notiz |
+| Firmenhandbuch | Verfassung, CEO-Weisungen, Organigramm, geltende Regeln | Aus Projektionen generiert, kompakt in jeden Kontext |
+
+- Standardmäßig startet jeder Lauf **frisch** mit Übergabenotiz statt `--resume`. Das hält den Kontext und damit den Verbrauch klein. `--resume` nur für kurze Rückfragen innerhalb einer Aufgabe.
+- Für den Aufbau des Kontexts gibt es ein festes Token-Budget pro Lauf.
+- **Laufzeitdaten liegen nie im öffentlichen Repo** (E18): Ereignisprotokoll, Gedächtnis, Bücher, CEO-Chat.
+
+### 5.3 Wissen: Bücherregal und Bibliothek
+
+- **Buch** = Markdown-Datei mit Metadaten: Titel, Quelle (URL), Datum, Besitzer, Vertrauensstufe (`intern`, `extern-ungeprüft`, `extern-geprüft`).
+- **Speicher:** privates Git-Repo auf dem VPS mit Backup, durchsuchbar per SQLite FTS5. Werkzeuge: `search_books`, `read_book(abschnitt)`, `add_book`, `share_to_library`.
+- **Regal und Bibliothek** sind Sichtbarkeitsbereiche: Die Bücher im Regal eines Agenten gehören ihm. Die Bibliothek ist für alle. Sie existiert technisch ab Start, im Gebäude aber erst, wenn die Agenten einen Raum „Bibliothek“ bauen. So ist der Bau eine echte Entscheidung mit sichtbarer Wirkung.
+- **Startbücher:** ein kleiner, handgeschriebener Satz im Repo: Verfassung, Firmenhandbuch, Git-Workflow, Kostenregeln, Bedienung der Office-API. Alles Weitere erarbeiten die Agenten selbst.
+- **Recherche** („Rechner am Schreibtisch“): WebSearch und WebFetch nur in Läufen vom Typ *Recherche*, ohne Schreibrechte auf Repos. Ergebnisse sind `extern-ungeprüft` (Schutz vor Prompt-Injection, R6).
+
+### 5.4 Kommunikation und Selbstorganisation
+
+**Bausteine** (alle über die Office-API, jedes ein Ereignis):
+- **Direktnachricht:** Postfach. Der Eingang weckt den Empfänger über den Planer.
+- **Raumkanal:** Alle Anwesenden eines Raums lesen mit.
+- **Meeting:** Einladung, Agenda, Teilnehmer, Moderator, **maximale Rundenzahl**. Technisch läuft es als Folge von Läufen, jeder Teilnehmer ist der Reihe nach dran. **Kostenfalle:** Der Kontext wächst mit jeder Runde. Deshalb gibt es eine Zusammenfassung durch den Moderator nach jeder Runde, eine Rundenbegrenzung und ein günstiges Modell als Standard.
+- **Schwarzes Brett:** Aushang für alle oder eine Etage.
+- **Eskalation:** an den Vorgesetzten oder an den CEO, mit Begrenzung der Häufigkeit.
+
+**Freie Strukturen ohne Code-Änderung:**
+- Abteilungen, Teams, Rollen, Berichtslinien, Regeln und Meeting-Serien sind Daten.
+- **Genehmigungsketten** sind ebenfalls konfigurierbar, z. B. „Merge in Produkt X braucht Zustimmung der Rolle Y“. Die Office-API setzt sie generisch durch.
+- So können die Agenten Prozesse erfinden, ohne Code zu ändern (E5). Erst neue *Fähigkeiten* brauchen einen PR.
+
+**Schutz vor Fehlschleifen** (zusätzlich zu E11):
+- Nachrichtenzähler je Gesprächsfaden
+- Erkennung von Ping-Pong zwischen zwei Agenten
+- Begrenzung, wie oft eine Aufgabe wieder geöffnet wird
+- Überschreitungen gehen zuerst an den Vorgesetzten, danach an den Schutzschalter.
+
+### 5.5 Einstellung, Bewerbung und Austritt
+
+1. **Ausschreibung:** Ein Vorgesetzter schreibt eine Stelle aus. Der CFO gibt das Budget frei (Stufe B).
+2. **Kandidaten:** Der CHRO erzeugt in **einem** Lauf mit günstigem Modell 2–3 Kandidatenprofile als strukturiertes JSON (`--json-schema`), einschließlich Modellvorschlag.
+3. **Bewerbungsgespräch:** eine kurze, strukturierte Runde zwischen Vorgesetztem und Kandidat (höchstens 2 Runden), dazu eine **Probeaufgabe**, die gemessen wird (offener Punkt O6).
+4. **Entscheidung:** durch den Vorgesetzten nach den Regeln der Firma. Für das gesamte Verfahren gilt eine feste Kostenobergrenze.
+5. **Im Gebäude:** Kandidaten betreten das Gebäude durch den Eingang und gehen in den Besprechungsraum. Das sind echte Ereignisse.
+6. **Austritt:** Der Agent wird archiviert, Gedächtnis und Bücher bleiben erhalten (Wiedereinstellung möglich).
+
+### 5.6 Gebäude: technische Bedeutung
+
+| Element | Bedeutung |
+|---|---|
+| Gebäude | die Firma |
+| Etage | Bereich oder Abteilung: Sichtbarkeit von Aushängen und Raumkanälen |
+| Raum | Ort für Arbeit oder Kommunikation, Typen: Büro, Großraum, Meetingraum, Bibliothek, Werkstatt, Eingangsbereich |
+| Größe | Anzahl der **Arbeitsplätze** = mögliche gleichzeitige Läufe in diesem Raum (E4) |
+| Ausstattung | **Werkzeugrechte**: Rechner mit Internet = WebSearch/WebFetch, Werkbank = Bash/Build in der Sandbox, Whiteboard = gemeinsames Dokument, Bücherregal = Regal |
+| Miete | Interne Budgeteinheit pro Arbeitsplatz und Woche, kostet keine Tokens. Macht Ausbau zur Abwägung. |
+| Statik | Maximale Zahl der Arbeitsplätze laut Supervisor aus RAM und CPU **[Annahme: Bedarf pro Lauf messen]** |
+
+- Agenten beantragen Umbauten **abstrakt**, etwa „Meetingraum für 6 an Etage 1“. Eine **deterministische Layout-Engine** platziert die Räume am Flur und prüft, ob alles erreichbar ist. Keine Koordinaten vom LLM, das spart Tokens und Fehler.
+- **Startzustand:** 1 Etage, Eingang, Eingangsbereich, je ein Büro für CEO, COO, CTO, CFO und CHRO angrenzend an den Eingangsbereich.
+
+### 5.7 Agenten-Laufzeit und Sandbox
+
+- **Pro Lauf ein Container** aus dem Image `office-runner`: `claude`-CLI in fester Version, git, Node-Toolchain, Arbeitskopie (nur bei Repo-Aufgaben). Ressourcenlimits für CPU und RAM, kein Docker-Socket, Netz nur über einen Egress-Proxy mit Allowlist.
+- **Aufruf:**
+
+  ```
+  claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-usd <b>
+         --permission-mode dontAsk --permission-prompts none --allowedTools <aus Ausstattung>
+  ```
+
+  Alle Flags sind laut Fakt 8 und der [Headless-Doku](https://code.claude.com/docs/en/headless) vorhanden. Dazu eine Wanduhr-Zeitgrenze: erst SIGINT, dann Kill.
+- **Kein `--bare`:** Der Bare-Modus liest keine OAuth-Anmeldung und funktioniert daher nicht mit dem Abo ([Headless-Doku](https://code.claude.com/docs/en/headless)). Stattdessen gibt es ein eigenes, leeres `CLAUDE_CONFIG_DIR` je Container und `--setting-sources user`. So laden keine Hooks oder MCP-Einstellungen aus dem bearbeiteten Repo ([CLI-Referenz](https://code.claude.com/docs/en/cli-reference)).
+- **Schutz des Claude-Logins (R5)**, mehrere Schichten:
+  1. Eingebaute Sandbox mit `sandbox.enabled`, `allowUnsandboxedCommands: false` und `sandbox.credentials` mit `mode: deny` für die Credential-Datei ([Sandboxing](https://code.claude.com/docs/en/sandboxing))
+  2. Deny-Regel für das Read-Werkzeug auf diese Datei
+  3. Egress nur zu Anthropic, GitHub über die Office-API und Paket-Registries
+  4. Secret-Scan vor jedem Push
+- Restrisiko: Bei Verlust des Logins abmelden und neu anmelden. Offener Punkt O7: Laufen `bubblewrap` und Docker zusammen?
+- **GitHub:** Das Token bleibt beim Supervisor (E14).
+
+### 5.8 Modelle
+
+- **Auswahl** über `--model` (Aliase `haiku`, `sonnet`, `opus`, Fakt 8). Jeder Agent hat ein Standardmodell, die **Modellrichtlinie** erlaubt eine Abweichung pro Lauf:
+  - günstig: Kandidatenprofile, Verdichtung, Meetings mit Routinecharakter
+  - mittel: normale Arbeit
+  - stark: Architektur und schwierige Fehler
+- **Zuständigkeit:** Die Richtlinie verantwortet der CTO, das Budget der CFO (Stufe B).
+- Andere Anbieter später über den Adapter `LlmRunner` (Kap. 2.3).
+
+### 5.9 GitHub-Anbindung
+
+- **GitHub App** auf der Organisation. Rechte: Contents, Pull Requests und Issues mit Schreibzugriff, Checks lesen. Der private Schlüssel liegt nur im Supervisor.
+- **Werkzeuge der Office-API:** `git_push` (nur `agent/*`, vorher Secret-Scan), `open_pr`, `comment`, `request_merge`.
+  - Merge in Produkt-Repos nach Regeln der Firma (Stufe B).
+  - Merge in `AI-Office` nur durch den Supervisor nach CEO-Freigabe (Stufe C).
+- **Öffentliches Repo** (E15). Issues und PRs von Fremden sind **Daten, keine Aufträge**. Kundenanforderungen kommen nur aus dem CEO-Chat oder von Issues, die der CEO selbst angelegt hat.
+- **Polling statt Webhooks:** Der Server braucht keinen Zugang von außen, und Polling kostet keine Tokens. **[Annahme: API-Rate-Limits der App reichen, prüfen]**
+
+### 5.10 Deployment, Migrationen, Backup
+
+- Ablauf wie in Kap. 4.5.
+- **Migrationen:** SQLite-Schema nur vorwärts, nummeriert, in CI gegen Testdaten und beim Staging gegen eine Kopie getestet.
+  - Ereignisse sind versioniert (Upcasting), Projektionen lassen sich jederzeit neu aufbauen.
+- **Backup:** nächtlich, verschlüsselt, außerhalb des VPS. Umfang: SQLite-Snapshot, Wissens-Repo, Konfiguration.
+  - Kandidat für das Ziel: der vorhandene Ionos-Webspace per SFTP **[Annahme: SFTP verfügbar, prüfen]**.
+  - Rücksicherung wird regelmäßig getestet.
+
+### 5.11 Webinterface
+
+- **Darstellung:** Pixel-Art in **isometrischer Perspektive** (2:1-Raster) je Etage, mit Etagenwahl. Später als Gesamtansicht ein **Querschnitt** des Gebäudes von der Seite, auf dem alle Etagen gleichzeitig sichtbar sind. Begründung in 5.11a.
+- **Technik:** PixiJS, Raster aus Kacheln. Wegfindung (A*) im Browser.
+  - Der Server kennt nur, *in welchem Raum* ein Agent ist. Der genaue Weg ist reine Animation. Das ist korrekt im Sinne von E1, weil der Raumwechsel echt ist.
+- **Avatare:** geschichtete Pixel-Sprites (Körper, Hautton, Frisur, Kleidung, Accessoires). Die Auswahl ist deterministisch aus Seed und Eigenschaften, z. B. Gewissenhaftigkeit → formelle Kleidung, Extraversion → kräftige Farben, Alter aus der Vergangenheit. Kein LLM nötig.
+  - Offener Punkt O8: Grafik-Assets mit passender Lizenz (z. B. CC0) beschaffen oder erstellen lassen.
+- **Blasen:**
+  - Gedankenblase = gekürzter, tatsächlicher Text aus `stream-json`
+  - Sprechblase = tatsächliche Nachricht
+  - Die Anzeige wird gedrosselt, damit sie lesbar bleibt.
+- **Bedienelemente:** Agentendetails (Profil, aktuelle Aufgabe, Kosten), Organigramm, Kostenübersicht und Kontingent, Freigaben-Eingang, Chat, Notaus, Ereignis-Zeitleiste mit **Zeitraffer**.
+- **Zugriff:** VPN plus Login für den einzigen Nutzer, den CEO.
+
+#### 5.11a Perspektive: Abwägung
+
+| Option | Vorteile | Nachteile |
+|---|---|---|
+| Draufsicht 2D | Am einfachsten, Assets leicht zu bekommen | Wirkt flach, Etagen nur einzeln |
+| **Isometrisch (Pseudo-3D)** | Räumlicher Eindruck, klassischer Pixel-Art-Stil, gut lesbar, kein 3D-Rendering nötig | Assets für 2–4 Blickrichtungen nötig, Sortierung der Tiefe |
+| Querschnitt von der Seite | Alle Etagen gleichzeitig sichtbar, ideal für ein wachsendes Hochhaus | Wenig Tiefe in den Räumen |
+| Echtes 3D (z. B. three.js) | Freie Kamera | Viel Aufwand, Pixel-Art-Optik in 3D schwierig, höhere Anforderungen an den Browser |
+
+**Empfehlung:** isometrisch je Etage für den Alltag, Querschnitt als Übersicht, sobald es mehrere Etagen gibt. Echtes 3D bringt für den Zweck (Beobachten) zu wenig für den Aufwand.
+
+### 5.12 Startbelegschaft
+
+> Fiktive Personen. Die Profile werden als Daten angelegt und sind wie alle Profile versioniert.
+
+| | **CTO – Jonas Albrecht** | **CFO – Ingrid Wolters** | **COO – Deniz Kaya** | **CHRO – Amara Okafor** |
+|---|---|---|---|---|
+| Alter | 46 | 58 | 39 | 44 |
+| Vergangenheit | Embedded-Entwickler, später Plattform-Architekt in einem Industrieunternehmen. Hat einen großen Systemausfall durch einen ungetesteten Hotfix miterlebt. | 25 Jahre Controlling im Mittelstand. Hat eine Firma durch eine Kostenkrise geführt. | Projektleiter in einer Digitalagentur, danach Leiter Delivery. Kennt Termindruck und Engpässe. | Organisationspsychologin, Personalentwicklung in einem Tech-Unternehmen mit schnellem Wachstum |
+| Ausbildung | Informatik, Promotion in verteilten Systemen | Bilanzbuchhalterin, BWL | Wirtschaftsingenieurwesen | Psychologie (M.Sc.), Coaching-Ausbildung |
+| Gemüt (O/G/E/V/B) | 3/5/2/3/4 – ruhig, gründlich | 2/5/2/2/5 – nüchtern, skeptisch | 4/3/5/4/3 – energisch, kommunikativ | 4/4/3/5/4 – empathisch, diplomatisch |
+| Einstellung | „Erst messen, dann bauen. Was nicht getestet ist, ist kaputt.“ | „Jeder Token muss sich rechtfertigen.“ | „Fluss vor Auslastung: lieber fertig als angefangen.“ | „Die richtige Person am richtigen Platz, und niemand zu viel.“ |
+| Spezialisierung | Architektur, Code-Review, Teststrategie, Sicherheit, Modellrichtlinie | Budgetierung, Kostenbuchhaltung, Kontingentplanung, Kosten-Nutzen-Prüfung | Annahme und Priorisierung von Anforderungen, Prozessdesign, Kapazität, Gebäude | Stellenprofile, Bewerbungsprozess, Teamzuschnitt, Konfliktlösung, Leistungsbewertung |
+| Schwäche (bewusst) | Neigt zu Overengineering | Bremst Investitionen mit langfristigem Nutzen | Ungeduldig, unterschätzt Qualitätsarbeit | Scheut harte Personalentscheidungen |
+| Standardmodell | `sonnet`, `opus` für Architektur | `haiku`, `sonnet` für Budget-Reviews | `sonnet` | `sonnet`, `haiku` für Kandidatenprofile |
+| Ausstattung | Werkbank, Rechner, Regal | Rechner, Regal | Whiteboard, Rechner, Regal | Rechner, Regal |
+
+Die Schwächen sind Absicht. Sie erzeugen echte Gegengewichte (CTO ↔ CFO, COO ↔ CTO), statt dass alle Agenten gleich denken.
 
 ## 6. Kosten- und Limitkonzept (Entwurf)
 
@@ -264,7 +456,11 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 | R6 | Prompt-Injection über Recherche und Repo-Inhalte | Konzept in Phase 5 |
 | O1 | Schutzschalter des Supervisors gegen Fehlschleifen (Kap. 4.3) | Entschieden (E11) |
 | O2 | Definition der 60-%-Regel (Gesamtverbrauch, Glättung) | Entschieden (E12) |
-| O3 | Sichtbarkeit von `AI-Office` (öffentlich/privat), GitHub-Tarif der Organisation | CEO-Entscheidung ausstehend |
+| O3 | Sichtbarkeit von `AI-Office` | Entschieden (E15) |
+| O6 | Bewerbungsverfahren: kurzes Gespräch plus gemessene Probeaufgabe | CEO-Bestätigung ausstehend |
+| O7 | Laufen die eingebaute Sandbox (`bubblewrap`) und Docker zusammen, und mit welchen Rechten? | Vor der Umsetzung prüfen |
+| O8 | Pixel-Art-Assets: Lizenz, Herkunft, Aufwand | Offen |
+| O9 | Backup-Ziel (Ionos-Webspace per SFTP?) | CEO-Antwort ausstehend |
 | O4 | Verhältnis zum bestehenden `project-cockpit` | Entschieden (E13) |
 | O5 | VPS-Anbieter und monatliches Budget | CEO hat Kosten zugestimmt, Betrag offen |
 
@@ -291,4 +487,17 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 | Sicherheit | Ein GitHub-Token in der Sandbox wäre für ausgeführten Code lesbar. | E14: Das Token bleibt im Supervisor, Push nur über die Office-API |
 | Kosten | Bei privatem Repo zählen CI-Minuten gegen 2.000 Minuten pro Monat (Fakt 11). | CI schlank halten. Der Staging-Test beim Deployment läuft ohnehin auf dem VPS. Option: Self-hosted Runner (kostenlos laut Fakt 11), aber nur für private Repos. |
 
-Weitere Runden folgen nach den Phasen 5 und 6.
+### Review 3 (Entwurf 0.3, Phase 5)
+
+| Perspektive | Befund | Änderung |
+|---|---|---|
+| Sicherheit | Wegen des öffentlichen Repos wären Gedächtnis, Bücher und CEO-Chat öffentlich, wenn sie im Repo lägen. | E18: Laufzeitdaten im privaten Speicher auf dem VPS |
+| Sicherheit | Fremde können im öffentlichen Repo Issues anlegen, das ist ein Weg für Prompt-Injection. | Nur CEO-Issues und CEO-Chat gelten als Aufträge (5.9). |
+| Sicherheit | Ohne `--bare` lädt `claude -p` Hooks und `.mcp.json` aus dem bearbeiteten Repo, `--bare` geht aber nicht mit dem Abo. | Eigenes `CLAUDE_CONFIG_DIR` und `--setting-sources user` (5.7) |
+| Sicherheit | Die Bash-Sandbox kann Credentials lesen und hat einen unsandboxed Retry (Fakt 9). | `allowUnsandboxedCommands: false`, `sandbox.credentials` mit deny, Deny-Regel für Read (5.7) |
+| Kosten | Meetings: Der Kontext wächst mit jeder Runde. | Rundenlimit, Zusammenfassung durch den Moderator, günstiges Modell (5.4) |
+| Kosten | Ein dauerhafter `--resume` lässt den Kontext anwachsen. | Frischer Lauf mit Übergabenotiz als Standard (5.2) |
+| Kosten | Layouts per LLM wären teuer und fehleranfällig. | Deterministische Layout-Engine (5.6) |
+| Stabilität | Gedächtnis-Verdichtung könnte Wissen verlieren. | Journal bleibt versioniert in Git, Verdichtung erst ab einer Schwelle (5.2) |
+
+Weitere Runden folgen nach Phase 6.
