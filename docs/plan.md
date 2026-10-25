@@ -536,7 +536,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Registries nur über einen lesenden Cache. Er leitet nur an **fest eingestellte** offizielle Upstreams weiter, nur Pfade im Muster „Paketname/Version bzw. Tarball“ und ohne Query-Strings.
     Restkanal: Bei einem Cache-Miss sieht der Betreiber der Registry den angefragten Paketnamen. Ein Angreifer sieht diese Anfragen nicht, solange er die Registry nicht selbst betreibt. Ich halte den Kanal daher für vernachlässigbar und akzeptiere ihn ausdrücklich (R6).
   - DNS nur über den Proxy
-- **Speicher:** Arbeitsbereich mit Größenlimit **[Annahme: 5 GB]**. Freier Speicher auf dem Host ist ein Admission-Kriterium. Aufbewahrung: Rohprotokolle 90 Tage, Arbeitsbereiche löscht der Supervisor nach Laufende.
+- **Speicher:** Arbeitsbereich mit Größenlimit **[Annahme: 5 GB]**. Freier Speicher auf dem Host ist ein Admission-Kriterium. **Protokolle begrenzt:** Docker-Logs mit festem Größenlimit je Container (`--log-opt max-size` und `max-file`). Rohprotokolle im Supervisor mit Obergrenze je Lauf **[Annahme: 50 MB]**, darüber wird abgeschnitten und vermerkt. So kann auch ein laufender Container die Platte nicht über stdout/stderr füllen. Aufbewahrung: Rohprotokolle 90 Tage, Arbeitsbereiche löscht der Supervisor nach Laufende.
 - **Zeitgrenze:** erst SIGINT, dann SIGTERM, dann Kill. Zusätzlich setzt eine **harte Lease** im Startprozess des Containers eine Wanduhr-Grenze, die auch ohne Supervisor greift (E42).
 - **Idempotenz:** Jeder Aufruf der Office-API trägt Lauf-ID und Sequenznummer.
 
@@ -596,6 +596,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
 - **Sicherheit (Schutz vor XSS):**
   - Alle Texte von Agenten und Fremden werden **nur als Text** gerendert (`textContent` bzw. Text-Objekte von PixiJS). Markdown nur über einen Sanitizer.
   - Strikte Content-Security-Policy ohne `unsafe-inline`.
+  - **Schutz vor Clickjacking:** Die Supervisor-Konsole sendet `Content-Security-Policy: frame-ancestors 'none'` und `X-Frame-Options: DENY`. Sonst könnte das Office die angemeldete Konsole unsichtbar einbetten und den CEO eine Freigabe anklicken lassen.
   - Cookies `SameSite=Strict`, CSRF-Token.
   - **Supervisor-Konsole:** Für jeden zustandsändernden Aufruf ein sitzungsgebundenes CSRF-Token und eine serverseitige Prüfung, dass die `Origin` exakt die Konsole ist. Keine Zustandsänderung per GET. Das ist nötig, weil `office.aio.intern` und `konsole.aio.intern` zwar verschiedene Origins sind, aber **dieselbe Site**. `SameSite=Strict` schützt die Konsole deshalb nicht vor Anfragen, die das Office auslöst. Zusätzlich wird empfohlen, Konsole und Office unter **verschiedenen Domains** zu betreiben (z. B. `konsole.aio-sup.intern` und `office.aio.intern`).
   - Freigaben gibt es hier ohnehin nicht (E26).
@@ -699,7 +700,9 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - **Reservierung:** Vor dem Start wird ein **konservativer** Verbrauch des Laufs vom Spielraum abgezogen und nach dem Lauf verrechnet. Er berechnet sich aus `--max-budget-usd` × Überschreitungszuschlag × oberem Wert des Faktors.
     Zuschlag und Faktor lernt der Supervisor aus den beobachteten Abweichungen; anfangs sind sie bewusst hoch **[Annahme: Zuschlag 1,5]**. Das Risiko, dass parallele Läufe zusammen das Limit überschreiten, sinkt damit stark.
     **Eine harte Garantie gibt es nicht:** Fakt 8 sagt, das Budget kann überschritten werden, und der Faktor hat keine belegte Fehlergrenze. Deshalb gilt die 60-%-Grenze als **Zielwert** (Verfassung Nr. 2, O11).
-  - **Selbstkorrektur:** Jede gemessene Überschreitung von 60 % wird gemeldet (E37) und senkt die Pausenschwelle automatisch, z. B. um die Höhe der Überschreitung.
+  - **Selbstkorrektur:** Jede gemessene Überschreitung von 60 % wird gemeldet (E37).
+    Angepasst wird aber nur dort, wo das **Büro selbst** falsch geschätzt hat: Übersteigt der tatsächliche Verbrauch eines Laufs seine Reservierung, steigen Zuschlag und Faktor. Grundlage ist der Vergleich der eigenen Prognose mit dem eigenen Hauptbuch und den Messwerten vor und nach dem Lauf.
+    Nutzt der CEO nach einer Pause des Büros sein eigenes Kontingent und steigt der Gesamtzähler deshalb über 60 %, ist das **kein** Prognosefehler. Die Schwelle bleibt dann unverändert, das Büro pausiert einfach weiter. Die Admission steuert weiterhin der Gesamtzähler.
   - **Sicherheitsabstand:** Pause ab **55 %** Gesamtverbrauch der Woche, damit Überschießen unter 60 % bleibt (E31, Wert justierbar).
   - **Tages-Zielkurve (E12):** Das Büro startet nur Läufe, solange der Gesamtverbrauch der Woche unter `55 % × (vergangene Tage + 1) / 7` liegt. Die Kurve bezieht sich auf den Gesamtzähler, so wie es E12 vorgibt. Nutzt der CEO an einem Tag viel, bekommt das Büro an diesem Tag entsprechend weniger.
   - **5-Stunden-Fenster:** Pause ab **70 %** **[Annahme, justieren]**, damit der CEO jederzeit selbst arbeiten kann.
@@ -930,3 +933,13 @@ Copilot meldet **keine offenen Befunde** mehr. Zusätzlich nennt die Zusammenfas
 |---|---|---|
 | 1 | „Muss nicht erneuert werden“ widerspricht der Laufzeit des `setup-token` von einem Jahr. | Ablaufdatum speichern, Warnung 30 Tage vorher, Pause bei Authentifizierungsfehlern, Neuausstellung durch den CEO (2.3) |
 | 2 | Die beschreibbare Container-Schicht hat kein Größenlimit. | Schreibgeschütztes Root-Dateisystem, `tmpfs` mit Größenlimit (4.7) |
+
+### Review 14 – Copilot-Review in PR #1, Runde 6
+
+Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene Punkte mit niedriger Schwere. Alle sind berechtigt, einer davon ist ein Logikfehler in meiner eigenen Änderung zu E43.
+
+| # | Befund | Änderung |
+|---|---|---|
+| 1 | Docker-Logs und Rohprotokolle haben kein Größenlimit. Ein Lauf kann über stdout die Platte füllen. | Größenlimits je Container und je Lauf (5.7) |
+| 2 | Die Supervisor-Konsole ist nicht gegen Clickjacking geschützt. | `frame-ancestors 'none'`, `X-Frame-Options: DENY` (5.11) |
+| 3 | Die Selbstkorrektur hätte die Schwelle auch wegen der eigenen Nutzung des CEO gesenkt und sie damit auf Dauer unbrauchbar gemacht. | Korrektur nur bei nachweisbarem Prognosefehler des Büros (6) |
