@@ -527,7 +527,12 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Der Supervisor importiert es in sein Bare-Repo mit `core.hooksPath=/dev/null` und ohne Repo-Konfiguration und prüft die Refs.
 - **Netz (E29):**
   - nur Proxy und Office-API
-  - Anthropic nur über die Hosts der Inferenz-API **[Annahme: Hostliste in Spike S1 ermitteln; Prüfung auf eigenen Token per TLS-Proxy optional]**
+  - Anthropic nur über einen **TLS-terminierenden Proxy**, der zwei Dinge erzwingt:
+    1. nur die Endpunkte, die das CLI tatsächlich braucht (Allowlist aus Pfad und Methode, z. B. die Messages-API, aber nicht die Files-API)
+    2. nur Anfragen mit **unserem eigenen** Token im Authorization-Header
+
+    So kann ein Lauf mit einem fremden API-Key keine Daten in einen fremden Workspace hochladen. Das Lauf-Image vertraut dazu der CA des Proxys (`NODE_EXTRA_CA_CERTS`).
+    **[Annahme: Endpunktliste und Verträglichkeit mit dem CLI in Spike S1 ermitteln.]** Lässt sich das nicht umsetzen, wird dieser Kanal ausdrücklich als Restrisiko unter R6 entschieden.
   - Registries nur über einen lesenden Cache. Er leitet nur an **fest eingestellte** offizielle Upstreams weiter, nur Pfade im Muster „Paketname/Version bzw. Tarball“ und ohne Query-Strings.
     Restkanal: Bei einem Cache-Miss sieht der Betreiber der Registry den angefragten Paketnamen. Ein Angreifer sieht diese Anfragen nicht, solange er die Registry nicht selbst betreibt. Ich halte den Kanal daher für vernachlässigbar und akzeptiere ihn ausdrücklich (R6).
   - DNS nur über den Proxy
@@ -559,7 +564,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Der Adapter filtert nach Autor-ID. Nur Inhalte des CEO gelten als Auftrag (Kundenanforderung).
   - Fremdinhalte (Issues, Kommentare, PRs von Fremden) gehen nur in Läufe ohne Werkbank, mit Kennzeichnung (E33).
 - **Ausgehend (E33):**
-  - PR-Beschreibung, Commit-Nachrichten und Kommentare laufen durch den Ausgangsfilter des Supervisors.
+  - PR-Beschreibung, Commit-Nachrichten, Kommentare **sowie alle Dateiinhalte und Pfade aller übertragenen Commits** laufen vor **jedem Push** durch den Ausgangsfilter des Supervisors. Geprüft werden auch Inhalte, die in einem späteren Commit wieder gelöscht wurden, denn der öffentliche Verlauf enthält sie trotzdem. Der Branch ist schon vor dem CEO-Review öffentlich, deshalb muss der Filter vor dem Push greifen und nicht erst beim Merge.
   - Er prüft Länge, Secret-Muster und **Fingerabdrücke** aus CEO-Chat und Gedächtnis (Textabschnitte, die nicht hinaus dürfen).
   - Kommentare an Fremde sind Stufe C.
 - **Produkt-Merges (Stufe B, ab Etappe 5):** Der Supervisor merged nur, wenn
@@ -592,6 +597,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Alle Texte von Agenten und Fremden werden **nur als Text** gerendert (`textContent` bzw. Text-Objekte von PixiJS). Markdown nur über einen Sanitizer.
   - Strikte Content-Security-Policy ohne `unsafe-inline`.
   - Cookies `SameSite=Strict`, CSRF-Token.
+  - **Supervisor-Konsole:** Für jeden zustandsändernden Aufruf ein sitzungsgebundenes CSRF-Token und eine serverseitige Prüfung, dass die `Origin` exakt die Konsole ist. Keine Zustandsänderung per GET. Das ist nötig, weil `office.aio.intern` und `konsole.aio.intern` zwar verschiedene Origins sind, aber **dieselbe Site**. `SameSite=Strict` schützt die Konsole deshalb nicht vor Anfragen, die das Office auslöst. Zusätzlich wird empfohlen, Konsole und Office unter **verschiedenen Domains** zu betreiben (z. B. `konsole.aio-sup.intern` und `office.aio.intern`).
   - Freigaben gibt es hier ohnehin nicht (E26).
 - **Bedienelemente:** Agentendetails, Organigramm, Kosten und Kontingent, Chat, Zeitleiste mit Zeitraffer, Link zur Supervisor-Konsole.
 - **PR-Ansicht (E26):**
@@ -907,3 +913,11 @@ Copilot hat 4 Befunde geliefert, alle als niedrige Schwere eingestuft.
 | 2 | Eine `recherche`-URL kann vertrauliche Daten an einen fremden Server tragen. | teilweise. Offene Recherche braucht beliebige Ziele. | Minimaler Kontext für `recherche`, Restkanal ausdrücklich akzeptiert (5.3, R6) |
 | 3 | SSRF über `web_fetch` auf interne Adressen | bestätigt | SSRF-Sperre mit Prüfung der aufgelösten Adresse und jeder Weiterleitung (5.3) |
 | 4 | Ein S1-No-Go mit akzeptiertem R5 widerspricht dem uneingeschränkten Test „Token nicht lesbar“. | bestätigt (Widerspruch) | Ausnahme nur für diese Prüfung, mit Ersatzprüfungen (5.13, 7.4) |
+
+### Review 12 – Copilot-Review in PR #1, Runde 4
+
+| # | Schwere (Copilot) | Befund | Bewertung | Änderung |
+|---|---|---|---|---|
+| 1 | hoch | Konsole und Office sind dieselbe Site. `SameSite=Strict` schützt die Konsole nicht vor CSRF durch das Office. | bestätigt, Fehler aus Review 11 | CSRF-Token, exakte Prüfung der `Origin`, keine Zustandsänderung per GET, Empfehlung für verschiedene Domains (5.11) |
+| 2 | hoch | Der Ausgangsfilter prüft keine Dateiinhalte, und der Branch ist schon vor dem Review öffentlich. | bestätigt | Filter vor jedem Push auf alle Dateiinhalte und Pfade aller Commits, auch auf wieder gelöschte Inhalte (5.9) |
+| 3 | mittel (bisher übersehen) | Eine reine Host-Allowlist für Anthropic erlaubt Uploads in die Files-API mit einem fremden API-Key. | bestätigt | TLS-Proxy mit Allowlist für Endpunkte und Prüfung des eigenen Tokens. Machbarkeit in Spike S1, sonst ausdrücklich als Restrisiko (5.7) |
