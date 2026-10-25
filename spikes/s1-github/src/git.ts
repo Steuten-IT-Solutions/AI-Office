@@ -12,6 +12,8 @@ export function gitEnv(token: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GIT_TERMINAL_PROMPT: "0",
+    // Git Credential Manager unter Windows soll kein Anmeldefenster öffnen.
+    GCM_INTERACTIVE: "never",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
