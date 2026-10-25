@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O12 in Runde 9).
+> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). **Offen:** CEO-Entscheidung zu O13 (Restrisiko R11).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -308,7 +308,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
 
 ### 4.5 Selbstmodifikation und Auslieferung
 
-1. Agenten entwickeln in `agent/*`-Branches von `AI-Office`. Den Code übergeben sie per Bundle an den Supervisor (E28). Der Supervisor prüft:
+1. Agenten entwickeln in Branches von `AI-Office`. Den **Branch-Namen vergibt der Supervisor** aus einer eigenen ID, z. B. `agent/r-7f3a9c`. Das Git-Gate akzeptiert nur genau diesen einen Ref, der dem Lauf bzw. der Aufgabe zugewiesen ist. So lässt sich über frei gewählte Branch-Namen nichts veröffentlichen. Den Code übergeben die Agenten per Bundle an den Supervisor (E28). Der Supervisor prüft:
    - den Branch-Namen
    - den Secret-Scan
    - den Ausgangsfilter (E33)
@@ -387,7 +387,7 @@ Alle anderen Aufrufe sind reine Daten im Office.
 | IPC | Unix-Socket `/run/aio/supervisor.sock`, schreibbar nur für `aio-office`. Eine schmale, versionierte API (Kap. 4.6, Liste). Der Supervisor authentifiziert über `SO_PEERCRED`. |
 | Lauf-Container | Nicht privilegiert, `--cap-drop ALL`, `no-new-privileges`, Limits für CPU, RAM und PIDs, **schreibgeschütztes Root-Dateisystem** (`--read-only`). Schreibbar sind nur der Arbeitsbereich mit Größenlimit sowie `/tmp` und das CLI-Konfigurationsverzeichnis als `tmpfs` mit festem Größenlimit, damit kein Lauf die Platte des VPS füllen kann. Eigenes Netz. Kein Docker-Socket, kein Host-Mount außer dem Arbeitsbereich |
 | Supervisor-Konsole | **Eigener Hostname** (z. B. `konsole.aio.intern`), nur über VPN erreichbar. Eigener Login mit zweitem Faktor. Sitzungscookie mit Präfix `__Host-`, also ohne `Domain`-Attribut, mit `Secure`, `HttpOnly` und `SameSite=Strict`. Eine Trennung nur über den Port würde nicht reichen, weil Browser Cookies nicht nach Port trennen. Freigaben sind an das Objekt gebunden (ID, bei PRs der SHA). |
-| Office-Webinterface | **Eigener Hostname** (z. B. `office.aio.intern`), Login über VPN, Cookie ebenfalls mit Präfix `__Host-`. Kann nichts freigeben. |
+| Office-Webinterface | **Eigener Hostname** (z. B. `office.aio.intern`), Login über VPN, Cookie ebenfalls mit Präfix `__Host-`. Kann nichts freigeben. Ausgeliefert über einen **Reverse-Proxy des Supervisors**, der die Sicherheits-Header selbst setzt und vom Office gesetzte überschreibt: `default-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'`. So kann der Frontend-Code des Office aus dem Browser des CEO keine Daten per Fetch, Bild oder Formular an fremde Server senden. **Restkanal:** Eine Navigation der ganzen Seite auf eine fremde URL, etwa über einen Link oder eine Weiterleitung, kann eine CSP nicht zuverlässig verhindern (R11, O13). |
 
 ---
 
@@ -783,6 +783,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | R3 | Der volle Login beim Supervisor kann ablaufen. | Dann Pause und Benachrichtigung. Die Läufe selbst hängen davon nicht ab (E27). |
 | R4 | Öffentliches Repo: Pläne und Prompts sind sichtbar, Agenten-Branches lösen CI aus. | Gemindert durch E30, E33 |
 | R5 | Das `setup-token` im Container kann abgegriffen werden, wenn die Isolation nicht greift (Fakt 9). | Spike S1. Schaden begrenzt: nur Modellanfragen, harter Egress. Restrisiko gegebenenfalls ausdrücklich akzeptiert |
+| R11 | Datenabfluss über den Browser des CEO: Ein manipuliertes Office kann Text in eine URL schreiben und den Browser dorthin navigieren lassen. Die CSP des Supervisors sperrt Fetch, Bilder und Formulare, aber keine Navigation der ganzen Seite. | Entscheidung des CEO ausstehend (O13). Optionen: akzeptieren oder ein eigenes Browserprofil nur für das Büro, dessen Netz auf die Hosts im VPN beschränkt ist |
 | R6 | Prompt-Injection über Recherche, Bücher, Repo-Inhalte und Fremde | Gemindert durch Lauftypen (5.7), E29, E33 und die Supervisor-Grenzen (4.6). Restrisiko bleibt |
 | R7 | Backup und Server beim selben Anbieter | Akzeptiert (E21) |
 | R8 | Pixel-Art-Assets: Lizenz und Aufwand | Vor Etappe 2 (O8) |
@@ -793,6 +794,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O8 | Grafik-Assets | Vor Etappe 2 |
 | O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
 | O12 | Vier-Augen-Prinzip zwischen Agenten vor Etappe 3: Bis zur ersten Einstellung prüft nur der CEO den Code des CTO. Option: eine vereinfachte Einstellung schon in Etappe 2 | Entschieden (Runde 9): **Variante A**. Bis Etappe 3 ist das Review des CEO die einzige zweite Prüfung, siehe E44. |
+| O13 | Restrisiko R11 (Abfluss über Navigation im Browser des CEO): akzeptieren oder ein eigenes Browserprofil mit beschränktem Netz | CEO-Entscheidung ausstehend |
 | O11 | 60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie (Verfassung Nr. 2, Kap. 6) | Bestätigt (Runde 8), siehe E43 |
 
 ---
@@ -962,3 +964,10 @@ Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene
 |---|---|---|---|
 | 1 | hoch | Autor und Committer der Commits wurden nicht gefiltert, ein Lauf hätte dort Text veröffentlichen können. | Feste Identität je Agent, abweichende Commits zurückgewiesen, Tags und Signaturen aus dem Bundle nicht übernommen (5.9) |
 | 2 | mittel | Den eigenen Wartungs-PR kann der CEO nicht selbst freigeben, und er ist der einzige Code Owner. | Der CEO pusht auf `ceo/*`, die App öffnet den PR, der CEO reviewt und merged selbst (4.5) |
+
+### Review 17 – Copilot-Review in PR #1, Runde 9
+
+| # | Schwere (Copilot) | Befund | Änderung |
+|---|---|---|---|
+| 1 | hoch | Die Netzsperre für `aio-office` verhindert keinen Datenabfluss über den Browser des CEO. Eine CSP, die das Office selbst liefert, ist keine unabhängige Grenze. | Der Reverse-Proxy des Supervisors setzt die CSP (Fetch, Bilder, Formulare nur zum eigenen Host). Den Restkanal über Navigation der ganzen Seite muss der CEO entscheiden (R11, O13). |
+| 2 | mittel (bisher übersehen) | Über frei wählbare Branch-Namen kann Text vor dem Review veröffentlicht werden. | Der Supervisor vergibt die Branch-Namen, und nur der zugewiesene Ref wird akzeptiert (4.5). |
