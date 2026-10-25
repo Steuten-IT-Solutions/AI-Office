@@ -317,6 +317,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
 2. **Pflicht-CI** (E23, E30): öffentlich, ohne Secrets, ohne echtes LLM, Workflows mit `permissions: {}`. Inhalt: Typecheck, Lint, Tests, Secret-Scan, Migrationstest mit synthetischen Daten.
    - Der Supervisor zählt einen Check nur, wenn die Workflow-Dateien des PR **identisch mit `main`** sind.
    - Ändert ein PR `.github/`, verlangt das Stufe C, und die Workflow-Änderung kommt vom CEO selbst.
+   - **Wartungspfad des CEO für Workflow-Änderungen:** Der Supervisor merged solche PRs nicht. Der CEO merged sie selbst in GitHub, als Mensch und mit Code-Owner-Review. Den daraus entstandenen `main`-SHA liefert der Supervisor erst aus, wenn der CEO ihn in der Konsole **ausdrücklich freigibt**. Die Freigabe ist an diesen SHA gebunden.
 3. **Freigabe (E26):** Der CEO reviewt den PR in GitHub. `CODEOWNERS` verlangt den CEO für alle Pfade, und der Branch-Schutz verlangt ein Review von Code Owners. Die GitHub App hat **keinen** Bypass. **Kritische Pfade**, auf die der CEO besonders achten soll, sind:
    - `package.json`, Lockfile
    - Dockerfiles bzw. das Lauf-Image
@@ -500,7 +501,7 @@ Alle anderen Aufrufe sind reine Daten im Office.
 **CLI-Aufruf** (vom Supervisor gebaut, E25):
 
 ```
-claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-usd <b>
+claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --max-budget-usd <b>
        --permission-mode dontAsk --permission-prompts none --allowedTools <je Lauftyp>
        --setting-sources user --settings <vom Supervisor, inkl. disableAllHooks>
 ```
@@ -751,7 +752,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | **1 – MVP: Kernkreislauf** | **Supervisor:** Admission mit Prognose, Weckbudget, Schutzschalter, Notaus; Container-Manager; Git-Gate mit Bundle, Secret-Scan und Ausgangsfilter; Merge-Gate per GitHub-Review; Build-Container; Blue/Green mit Health-Check und Rollback; Audit; Konsole mit 2FA. **Office:** Ereignisprotokoll, Planer mit Weckregeln, Kontextaufbau, Office-API mit Minimalumfang (`send_message`, `create_task`, `delegate`, `handover`, `escalate`, `submit_bundle`, `open_pr`, `request_merge`). Lauftypen `werkbank` und `buero`. Die 4 Startagenten, festes Gebäude als Daten. Webinterface schlicht (Zeitleiste, Chat, Kosten und Kontingent, Agentenliste, PR-Ansicht mit Link zu GitHub), mit XSS-Schutz. E-Mail-Benachrichtigung. Fake-Runner, Negativtests. | CEO + Claude Code |
 | **2 – Gebäude sichtbar** | Isometrische Pixel-Art, Avatare, Laufwege, Blasen. Das ist die **erste Kundenanforderung an die Agenten** und der Praxistest der Selbstentwicklung. | Agenten |
 | **3 – Selbstorganisation** | Bewerbung, Abteilungen, Regeln, Genehmigungsketten, Meetings, Schwarzes Brett, Umbau mit Layout-Engine, Arbeitsplätze, Abteilungsbudgets. Staging mit Parallelbetrieb | Agenten |
-| **4 – Wissen** | Bücher, Bibliothek, Lauftyp `recherche` mit `web_fetch`, Journal, Beziehungen, Kennzahlen | Agenten |
+| **4 – Wissen** | Bücher, Bibliothek, Lauftyp `recherche` mit `web_fetch`, Journal, Beziehungen, Kennzahlen. **Vorher** erweitert der CEO mit Claude Code den Supervisor um `web_fetch` mit Proxy und SSRF-Sperre, weil die Agenten den Supervisor nicht ändern dürfen (E35). | Agenten, Supervisor-Teil durch CEO + Claude Code |
 | **5 – Produkte** | Erste Produkt-Repos (Auswahl durch den CEO), Produkt-Merges nach Kap. 5.9 | Agenten |
 | **6 – Reife** | Lockerung C → B, Querschnitt, semantische Suche, weitere Anbieter | Agenten |
 
@@ -943,3 +944,13 @@ Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene
 | 1 | Docker-Logs und Rohprotokolle haben kein Größenlimit. Ein Lauf kann über stdout die Platte füllen. | Größenlimits je Container und je Lauf (5.7) |
 | 2 | Die Supervisor-Konsole ist nicht gegen Clickjacking geschützt. | `frame-ancestors 'none'`, `X-Frame-Options: DENY` (5.11) |
 | 3 | Die Selbstkorrektur hätte die Schwelle auch wegen der eigenen Nutzung des CEO gesenkt und sie damit auf Dauer unbrauchbar gemacht. | Korrektur nur bei nachweisbarem Prognosefehler des Büros (6) |
+
+### Review 15 – Copilot-Review in PR #1, Runde 7
+
+Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene Punkte mit niedriger Schwere, alle berechtigt.
+
+| # | Befund | Änderung |
+|---|---|---|
+| 1 | Für Workflow-Änderungen des CEO gab es keinen Weg zu Merge und Auslieferung, weil der Supervisor nur Checks mit unveränderten Workflow-Dateien anerkennt. | Wartungspfad: Der CEO merged selbst, der Supervisor liefert erst nach ausdrücklicher, SHA-gebundener Freigabe in der Konsole aus (4.5). |
+| 2 | `--output-format stream-json` braucht im Print-Modus `--verbose`. | Flag ergänzt (5.7). Das Streaming-Beispiel der [Headless-Doku](https://code.claude.com/docs/en/headless) verwendet `--verbose` ebenfalls. |
+| 3 | Etappe 4 braucht `web_fetch` im Supervisor, den die Agenten nicht ändern dürfen. | Supervisor-Teil durch CEO + Claude Code vor Etappe 4 (7.3) |
