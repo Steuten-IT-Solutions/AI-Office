@@ -324,6 +324,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
    - Konfiguration der Sandbox
    - Fixtures des Fake-Runners
 4. **Merge:** Der Supervisor merged nur, wenn ein Approve des CEO auf dem **aktuellen Head-SHA** vorliegt und die Bedingungen aus Punkt 2 erfüllt sind. Dann setzt er das Release-Tag und speichert die SHA.
+   **Voraussetzung:** Der freigegebene Head muss das aktuelle `main` enthalten. Der Supervisor prüft vor dem Merge, dass `main` ein Vorfahre des Heads ist. Ist der PR veraltet, verlangt der Supervisor eine Aktualisierung (Merge von `main` in den Branch), und das CEO-Review gilt für den neuen Head erneut. Dazu kommt die GitHub-Option „Require branches to be up to date before merging“. So kann ein später gemergter PR keine früheren Änderungen wieder entfernen.
    Dieses Approve gilt zugleich als Freigabe für die Auslieferung **genau dieses SHA** (E39). Ausgeliefert wird nur ein Artefakt, das aus diesem SHA gebaut wurde. Der Supervisor prüft dafür eine Prüfsumme, die Artefakt und SHA verknüpft. Wer nicht direkt ausliefern will, setzt in der Konsole „Auslieferung anhalten“. Dann wartet der Merge auf eine manuelle Freigabe.
 5. **Build:** in einem Wegwerf-Container ohne Install-Skripte, ohne Secrets und ohne Netz außer dem Registry-Cache (E34). Ergebnis ist ein Artefakt. Auf dem Host wird nichts aus dem Repo ausgeführt, außer dem fertigen Office als Nutzer `aio-office`.
 6. **Auslieferung (MVP: Blue/Green ohne Parallelbetrieb):**
@@ -362,7 +363,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
 | `main` und Releases | Merge nur bei CEO-Approve auf dem Head-SHA und gültiger CI (Kap. 4.5). Branch-Schutz und `CODEOWNERS` zusätzlich |
 | Merges in Produkt-Repos | Der Supervisor prüft die Mindestbedingungen (Kap. 5.9). |
 | Öffentliche Texte | Ausgangsfilter im Supervisor (E33) |
-| Identität eines Laufs | Das Lauf-Token stellt der **Supervisor** beim Containerstart aus. Es ist signiert und gebunden an Lauf, Agent, Lauftyp und Laufzeit. Sicherheitsrelevante Aufrufe gehen vom Container **direkt** an das Supervisor-Gateway im Laufnetz, das das Token selbst prüft (E40). Die Office-API prüft das Token nur für Office-Daten. Den MCP-Client im Container behandeln beide als nicht vertrauenswürdig. |
+| Identität eines Laufs | Der Supervisor stellt beim Containerstart **zwei getrennte Tokens** aus: Das **Office-Token** gilt nur für die Office-API und nur für Office-Daten. Das **Supervisor-Token** gilt nur für das Supervisor-Gateway. Dieses Token bekommt das Office nie zu sehen. Es ist zusätzlich an die **Absenderadresse des Containers** in seinem eigenen Laufnetz gebunden, sodass ein weitergereichtes Token aus einem anderen Container wertlos ist (E40). Den MCP-Client im Container behandeln beide Seiten als nicht vertrauenswürdig. |
 | Netz | Eigenes Docker-Netz je Lauf, ohne Verbindung zu anderen Containern. Erreichbar sind nur der Proxy, der Port der Office-API und das Supervisor-Gateway (nur die Endpunkte für Läufe, E40). Die Verwaltungs-Endpunkte des Supervisors gibt es nur per Unix-Socket, der nie in einen Container gemountet wird (E29). **Das Office selbst hat kein Netz nach außen** (E41). |
 | Geheimnisse | Im Supervisor. In Containern nur das `setup-token` (E27, Restrisiko R5) |
 
@@ -381,7 +382,7 @@ Alle anderen Aufrufe sind reine Daten im Office.
 | Element | Festlegung |
 |---|---|
 | Unix-Nutzer `aio-sup` | Führt den Supervisor aus. Mitglied der Gruppe `docker`. Besitzer von `/opt/aio-supervisor`, `/etc/aio/secrets` (Modus 0600) und der Audit-DB |
-| Unix-Nutzer `aio-office` | Führt das Office aus. **Nicht** in der Gruppe `docker`. Keine Leserechte auf Supervisor und Secrets. Schreibrechte nur auf `/var/lib/aio-office`. **Ausgehendes Netz gesperrt** per nftables-Regel für diese UID (`meta skuid`). Erlaubt sind nur Loopback zu den internen Ports und der Unix-Socket (E41). |
+| Unix-Nutzer `aio-office` | Führt das Office aus. **Nicht** in der Gruppe `docker`. Keine Leserechte auf Supervisor und Secrets. Schreibrechte nur auf `/var/lib/aio-office`. **Neue ausgehende Verbindungen gesperrt** per nftables-Regel für diese UID (`meta skuid`). Antwortverkehr auf eingehende Verbindungen bleibt erlaubt (`ct state established,related accept` vor der Sperre), damit Webinterface, WebSocket und MCP-Verbindungen der Container funktionieren. Neue Verbindungen sind nur über Loopback zu den internen Ports und den Unix-Socket erlaubt (E41). |
 | IPC | Unix-Socket `/run/aio/supervisor.sock`, schreibbar nur für `aio-office`. Eine schmale, versionierte API (Kap. 4.6, Liste). Der Supervisor authentifiziert über `SO_PEERCRED`. |
 | Lauf-Container | Nicht privilegiert, `--cap-drop ALL`, `no-new-privileges`, Limits für CPU, RAM und PIDs, Arbeitsbereich mit Größenlimit, eigenes Netz. Kein Docker-Socket, kein Host-Mount außer dem Arbeitsbereich |
 | Supervisor-Konsole | Eigener Port bzw. eigene Origin, nur über VPN erreichbar. Eigener Login mit zweitem Faktor. Freigaben sind an das Objekt gebunden (ID, bei PRs der SHA). |
@@ -430,6 +431,8 @@ Alle anderen Aufrufe sind reine Daten im Office.
 - **Startbücher:** handgeschrieben (Verfassung, Handbuch, Git-Workflow, Kostenregeln, Office-API).
 - **Recherche (E29):** Lauftyp `recherche` ohne Bash, ohne Arbeitskopie, ohne WebFetch des CLI. Webzugriff gibt es nur über das Werkzeug `web_fetch`. Der Container ruft es direkt beim Supervisor-Gateway auf (E40, E41). Der Supervisor lädt über den Proxy, protokolliert die URL im Audit-Log, begrenzt die URL-Länge und gibt nur extrahierten Text zurück. Die Ergebnisse sind `extern-ungeprüft`.
 - **Lauftyp-Prinzip auch für Bücher:** Ein Lauf, der Bücher der Stufe `extern-ungeprüft` liest, bekommt keine Werkbank.
+- **Herkunftsmarkierung für abgeleitete Inhalte:** Nachrichten, Übergabenotizen und Zusammenfassungen aus einem Lauf, der Fremdinhalte gelesen hat, tragen die Markierung `abgeleitet-extern`. Im Kontext eines `werkbank`-Laufs erscheinen sie nur als deutlich abgegrenzte Daten.
+  **Grenze dieser Maßnahme:** Den Kontext baut das Office, die Markierung lässt sich daher nicht unabhängig vom Office durchsetzen. Ein lückenloser Schutz würde verlangen, dass der Supervisor alle Prompts selbst zusammenbaut. Das widerspräche dem Ziel eines kleinen Supervisors (R10). Die eigentliche Absicherung liegt deshalb in den harten Grenzen: Container, Egress, Git-Gate und das CEO-Review jedes Merges (4.6). Eine Injection, die einen `werkbank`-Lauf erreicht, kann höchstens einen PR erzeugen, den der CEO prüft. Das ist als Restrisiko unter R6 akzeptiert.
 
 ### 5.4 Kommunikation und Selbstorganisation
 
@@ -543,7 +546,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Der Schlüssel liegt nur im Supervisor.
 - **Repo-Einstellungen `AI-Office`:**
   - Standardrechte für Workflows: nur lesen
-  - Branch-Schutz `main`: Review durch Code Owners erforderlich, kein Bypass für die App
+  - Branch-Schutz `main`: Review durch Code Owners erforderlich, Branch muss aktuell sein, kein Bypass für die App
   - `CODEOWNERS` = CEO
   - „Require approval for all external contributors“
   - nur GitHub-gehostete Runner
@@ -878,3 +881,14 @@ Copilot hat 7 Befunde mit hoher Schwere gemeldet. Ich habe jeden gegen den Plan 
 | CHRO „scheut harte Personalentscheidungen“ | Das führt zu Aufblähung, und kein anderer Agent wirkt dem gezielt entgegen. | Schwäche „stellt zu früh ein“, mit dem CFO als direktem Gegengewicht |
 | Nur der CTO kann Code schreiben. | Ein Vier-Augen-Prinzip zwischen Agenten gibt es erst nach der ersten Einstellung (Etappe 3). | Als offener Punkt O12 dem CEO vorgelegt |
 | Beibehalten: Namen, Alter, Ausbildungen, Einstellungen, Vergangenheiten | Die Vergangenheiten begründen jeweils eine konkrete Entscheidungsheuristik (z. B. ungetesteter Hotfix → Testpflicht). Das ist der wirksamste Teil einer Persona. | nur CHRO und COO konkretisiert |
+
+### Review 10 – Copilot-Review in PR #1, Runde 2
+
+Copilot hat 4 Befunde geliefert, alle als niedrige Schwere eingestuft. Drei davon sind echte Fehler in meinen eigenen Änderungen aus Review 8, deshalb habe ich sie trotz der niedrigen Einstufung behoben.
+
+| # | Befund | Bewertung | Änderung |
+|---|---|---|---|
+| 1 | Zwei PRs auf derselben Basis: Ein Build des unveränderten zweiten Heads würde die Änderungen des ersten wieder entfernen (E39). | bestätigt, Fehler aus Review 8 | Der Head muss `main` enthalten, sonst Aktualisierung und neues Review. Zusätzlich die GitHub-Option „Branch must be up to date“ (4.5, 5.9) |
+| 2 | Dasselbe Lauf-Token liegt auch beim Office, das es an einen anderen Container weiterreichen könnte. | bestätigt, Fehler aus Review 8 | Getrennte Tokens für Office und Supervisor. Das Supervisor-Token ist an die Absenderadresse im Laufnetz gebunden (4.6). |
+| 3 | Die nftables-Regel hätte auch den Antwortverkehr des Office gesperrt, also Webinterface und MCP. | bestätigt, Fehler aus Review 8 | `ct state established,related` erlaubt (4.7) |
+| 4 | Abgeleitete Fremdinhalte (Notizen, Nachrichten) erreichen `werkbank`-Läufe. | teilweise. Den Pfad gibt es, aber ein lückenloser Schutz unabhängig vom Office würde den Bau aller Prompts in den Supervisor verlagern. | Herkunftsmarkierung als Komfortmaßnahme, die Grenze der Maßnahme ist offen dokumentiert. Restrisiko unter R6, abgefangen durch die harten Grenzen und das CEO-Review |
