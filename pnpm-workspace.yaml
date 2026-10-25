@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+
+# Lieferkette (E34): Abhängigkeiten führen beim Installieren keine Skripte aus.
+# Ein Paket mit Build-Skript bricht die Installation ab, bis es hier ausdrücklich
+# bewertet ist.
+strictDepBuilds: true
+
+# Neue Versionen erst nach 7 Tagen installieren (Minuten). Schützt vor
+# kompromittierten Releases, die meist innerhalb weniger Tage entdeckt werden.
+minimumReleaseAge: 10080
