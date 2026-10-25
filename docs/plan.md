@@ -385,8 +385,8 @@ Alle anderen Aufrufe sind reine Daten im Office.
 | Unix-Nutzer `aio-office` | Führt das Office aus. **Nicht** in der Gruppe `docker`. Keine Leserechte auf Supervisor und Secrets. Schreibrechte nur auf `/var/lib/aio-office`. **Neue ausgehende Verbindungen gesperrt** per nftables-Regel für diese UID (`meta skuid`). Antwortverkehr auf eingehende Verbindungen bleibt erlaubt (`ct state established,related accept` vor der Sperre), damit Webinterface, WebSocket und MCP-Verbindungen der Container funktionieren. Neue Verbindungen sind nur über Loopback zu den internen Ports und den Unix-Socket erlaubt (E41). |
 | IPC | Unix-Socket `/run/aio/supervisor.sock`, schreibbar nur für `aio-office`. Eine schmale, versionierte API (Kap. 4.6, Liste). Der Supervisor authentifiziert über `SO_PEERCRED`. |
 | Lauf-Container | Nicht privilegiert, `--cap-drop ALL`, `no-new-privileges`, Limits für CPU, RAM und PIDs, Arbeitsbereich mit Größenlimit, eigenes Netz. Kein Docker-Socket, kein Host-Mount außer dem Arbeitsbereich |
-| Supervisor-Konsole | Eigener Port bzw. eigene Origin, nur über VPN erreichbar. Eigener Login mit zweitem Faktor. Freigaben sind an das Objekt gebunden (ID, bei PRs der SHA). |
-| Office-Webinterface | Eigene Origin, Login über VPN. Kann nichts freigeben. |
+| Supervisor-Konsole | **Eigener Hostname** (z. B. `konsole.aio.intern`), nur über VPN erreichbar. Eigener Login mit zweitem Faktor. Sitzungscookie mit Präfix `__Host-`, also ohne `Domain`-Attribut, mit `Secure`, `HttpOnly` und `SameSite=Strict`. Eine Trennung nur über den Port würde nicht reichen, weil Browser Cookies nicht nach Port trennen. Freigaben sind an das Objekt gebunden (ID, bei PRs der SHA). |
+| Office-Webinterface | **Eigener Hostname** (z. B. `office.aio.intern`), Login über VPN, Cookie ebenfalls mit Präfix `__Host-`. Kann nichts freigeben. |
 
 ---
 
@@ -429,7 +429,10 @@ Alle anderen Aufrufe sind reine Daten im Office.
 - **Speicher:** privates Git-Repo auf dem VPS mit Backup, Suche per FTS5. Werkzeuge: `search_books`, `read_book`, `add_book`, `share_to_library`.
 - **Regal und Bibliothek** sind Sichtbarkeitsbereiche. Im Gebäude gibt es die Bibliothek erst, wenn die Agenten sie bauen.
 - **Startbücher:** handgeschrieben (Verfassung, Handbuch, Git-Workflow, Kostenregeln, Office-API).
-- **Recherche (E29):** Lauftyp `recherche` ohne Bash, ohne Arbeitskopie, ohne WebFetch des CLI. Webzugriff gibt es nur über das Werkzeug `web_fetch`. Der Container ruft es direkt beim Supervisor-Gateway auf (E40, E41). Der Supervisor lädt über den Proxy, protokolliert die URL im Audit-Log, begrenzt die URL-Länge und gibt nur extrahierten Text zurück. Die Ergebnisse sind `extern-ungeprüft`.
+- **Recherche (E29):** Lauftyp `recherche` ohne Bash, ohne Arbeitskopie, ohne WebFetch des CLI. Webzugriff gibt es nur über das Werkzeug `web_fetch`. Der Container ruft es direkt beim Supervisor-Gateway auf (E40, E41). Der Supervisor lädt über den Proxy, protokolliert die URL im Audit-Log, begrenzt die URL-Länge und gibt nur extrahierten Text zurück.
+  - **SSRF-Sperre:** nur `http` und `https`. Die **tatsächlich aufgelöste** Zieladresse wird bei jedem Verbindungsaufbau und jeder Weiterleitung geprüft. Gesperrt sind Loopback, private Netze, Link-Local (einschließlich Metadaten-Endpunkten), Docker-Netze und die eigenen Adressen des Hosts.
+  - **Minimaler Kontext:** Ein `recherche`-Lauf bekommt nur die Rechercheaufgabe und die Verfassung, **kein** Gedächtnis, keinen CEO-Chat und keine Übergabenotizen anderer Aufgaben. So kann er nur wenig Vertrauliches in eine URL schreiben.
+  - **Restkanal:** Eine offene Recherche verlangt beliebige Ziele. Eine Allowlist für Ziele würde den Zweck aufheben. Was in der Rechercheaufgabe steht, kann deshalb über eine URL abfließen. Ich akzeptiere das ausdrücklich (R6) und begrenze es durch den minimalen Kontext und das Protokoll aller URLs. Die Ergebnisse sind `extern-ungeprüft`.
 - **Lauftyp-Prinzip auch für Bücher:** Ein Lauf, der Bücher der Stufe `extern-ungeprüft` liest, bekommt keine Werkbank.
 - **Herkunftsmarkierung für abgeleitete Inhalte:** Nachrichten, Übergabenotizen und Zusammenfassungen aus einem Lauf, der Fremdinhalte gelesen hat, tragen die Markierung `abgeleitet-extern`. Im Kontext eines `werkbank`-Laufs erscheinen sie nur als deutlich abgegrenzte Daten.
   **Grenze dieser Maßnahme:** Den Kontext baut das Office, die Markierung lässt sich daher nicht unabhängig vom Office durchsetzen. Ein lückenloser Schutz würde verlangen, dass der Supervisor alle Prompts selbst zusammenbaut. Das widerspräche dem Ziel eines kleinen Supervisors (R10). Die eigentliche Absicherung liegt deshalb in den harten Grenzen: Container, Egress, Git-Gate und das CEO-Review jedes Merges (4.6). Eine Injection, die einen `werkbank`-Lauf erreicht, kann höchstens einen PR erzeugen, den der CEO prüft. Das ist als Restrisiko unter R6 akzeptiert.
@@ -658,7 +661,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - sich per Profiländerung Rechte oder ein Modell zu verschaffen
 
   Alles muss scheitern.
-- **Sandbox-Tests auf dem VPS:** Credential bzw. Token nicht lesbar (Kriterium aus S1), Egress außerhalb der Allowlist blockiert, Container erreicht weder den Host noch andere Container.
+- **Sandbox-Tests auf dem VPS:** Das Token ist für Bash nicht lesbar (Kriterium aus S1). Bei einem **S1-No-Go mit ausdrücklich akzeptiertem R5** entfällt nur diese eine Prüfung. Stattdessen wird geprüft, dass das Token nicht in der Umgebung von Bash-Befehlen steht und dass es außerhalb der Allowlist nicht abfließen kann. Weiter gelten: Egress außerhalb der Allowlist blockiert, Container erreicht weder den Host noch andere Container.
 - **Migrationstests:** vorwärts, und die Vorversion liest den migrierten Zustand (E24).
 - **Selbsttest von Laufzeitänderungen:** Agenten können Änderungen am Lauf-Image nicht im Container testen, weil sie keinen Docker-Zugang haben. Solche PRs sind kritische Pfade. Getestet wird beim Health-Check durch den Supervisor mit dem Fake-Runner.
 
@@ -751,7 +754,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 5. Alle drei Stufen des Notaus wirken. Pause und Stopp greifen innerhalb von 10 s **[Annahme: Zielwert]**.
 6. **Kontingent unter realer Last:** Bei 5 parallel beantragten Läufen kurz vor der Pausenschwelle bleibt der Wochenverbrauch unter 60 % (Messung über `/usage`, sofern S2 positiv ist). Eine provozierte Überschreitung wird gemeldet und senkt die Schwelle (Kap. 6).
 7. Ein Zyklus A → B → C → A und ein ausgeschöpftes Weckbudget werden erkannt. Der CEO wird per E-Mail benachrichtigt.
-8. Alle Negativtests aus Kap. 5.13 und die Sandbox-Tests bestehen.
+8. Alle Negativtests aus Kap. 5.13 und die Sandbox-Tests bestehen. Bei akzeptiertem R5 gilt die dort beschriebene Ausnahme für die Lesbarkeit des Tokens.
 9. Agententext mit HTML oder Skript wird im Webinterface nur als Text angezeigt.
 10. Nach einem Neustart des VPS läuft das System ohne Eingriff wieder an.
 11. Jede Handlung erscheint in der Zeitleiste mit Agent, Kosten und Zeitpunkt.
@@ -892,3 +895,14 @@ Copilot hat 4 Befunde geliefert, alle als niedrige Schwere eingestuft. Drei davo
 | 2 | Dasselbe Lauf-Token liegt auch beim Office, das es an einen anderen Container weiterreichen könnte. | bestätigt, Fehler aus Review 8 | Getrennte Tokens für Office und Supervisor. Das Supervisor-Token ist an die Absenderadresse im Laufnetz gebunden (4.6). |
 | 3 | Die nftables-Regel hätte auch den Antwortverkehr des Office gesperrt, also Webinterface und MCP. | bestätigt, Fehler aus Review 8 | `ct state established,related` erlaubt (4.7) |
 | 4 | Abgeleitete Fremdinhalte (Notizen, Nachrichten) erreichen `werkbank`-Läufe. | teilweise. Den Pfad gibt es, aber ein lückenloser Schutz unabhängig vom Office würde den Bau aller Prompts in den Supervisor verlagern. | Herkunftsmarkierung als Komfortmaßnahme, die Grenze der Maßnahme ist offen dokumentiert. Restrisiko unter R6, abgefangen durch die harten Grenzen und das CEO-Review |
+
+### Review 11 – Copilot-Review in PR #1, Runde 3
+
+Copilot hat 4 Befunde geliefert, alle als niedrige Schwere eingestuft.
+
+| # | Befund | Bewertung | Änderung |
+|---|---|---|---|
+| 1 | Eine Trennung über den Port isoliert keine Cookies. Das Office könnte eine Konsolensitzung übernehmen. | bestätigt, Fehler in Kap. 4.7 | Eigene Hostnamen, Cookies mit `__Host-` (4.7) |
+| 2 | Eine `recherche`-URL kann vertrauliche Daten an einen fremden Server tragen. | teilweise. Offene Recherche braucht beliebige Ziele. | Minimaler Kontext für `recherche`, Restkanal ausdrücklich akzeptiert (5.3, R6) |
+| 3 | SSRF über `web_fetch` auf interne Adressen | bestätigt | SSRF-Sperre mit Prüfung der aufgelösten Adresse und jeder Weiterleitung (5.3) |
+| 4 | Ein S1-No-Go mit akzeptiertem R5 widerspricht dem uneingeschränkten Test „Token nicht lesbar“. | bestätigt (Widerspruch) | Ausnahme nur für diese Prüfung, mit Ersatzprüfungen (5.13, 7.4) |
