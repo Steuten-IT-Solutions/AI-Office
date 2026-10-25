@@ -317,7 +317,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
 2. **Pflicht-CI** (E23, E30): öffentlich, ohne Secrets, ohne echtes LLM, Workflows mit `permissions: {}`. Inhalt: Typecheck, Lint, Tests, Secret-Scan, Migrationstest mit synthetischen Daten.
    - Der Supervisor zählt einen Check nur, wenn die Workflow-Dateien des PR **identisch mit `main`** sind.
    - Ändert ein PR `.github/`, verlangt das Stufe C, und die Workflow-Änderung kommt vom CEO selbst.
-   - **Wartungspfad des CEO für Workflow-Änderungen:** Der Supervisor merged solche PRs nicht. Der CEO merged sie selbst in GitHub, als Mensch und mit Code-Owner-Review. Den daraus entstandenen `main`-SHA liefert der Supervisor erst aus, wenn der CEO ihn in der Konsole **ausdrücklich freigibt**. Die Freigabe ist an diesen SHA gebunden.
+   - **Wartungspfad des CEO für Workflow-Änderungen:** Der CEO pusht seine Änderung auf einen Branch `ceo/*`. Den PR öffnet die GitHub App, damit der CEO ihn regulär reviewen kann. Ein eigener PR lässt sich in GitHub nicht selbst freigeben. Der Supervisor merged solche PRs nicht. Der CEO merged sie selbst in GitHub, nach seinem Code-Owner-Review. Die App hat weiterhin keinen Bypass. Den daraus entstandenen `main`-SHA liefert der Supervisor erst aus, wenn der CEO ihn in der Konsole **ausdrücklich freigibt**. Die Freigabe ist an diesen SHA gebunden.
 3. **Freigabe (E26):** Der CEO reviewt den PR in GitHub. `CODEOWNERS` verlangt den CEO für alle Pfade, und der Branch-Schutz verlangt ein Review von Code Owners. Die GitHub App hat **keinen** Bypass. **Kritische Pfade**, auf die der CEO besonders achten soll, sind:
    - `package.json`, Lockfile
    - Dockerfiles bzw. das Lauf-Image
@@ -565,7 +565,8 @@ claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --ma
   - Der Adapter filtert nach Autor-ID. Nur Inhalte des CEO gelten als Auftrag (Kundenanforderung).
   - Fremdinhalte (Issues, Kommentare, PRs von Fremden) gehen nur in Läufe ohne Werkbank, mit Kennzeichnung (E33).
 - **Ausgehend (E33):**
-  - PR-Beschreibung, Commit-Nachrichten, Kommentare **sowie alle Dateiinhalte und Pfade aller übertragenen Commits** laufen vor **jedem Push** durch den Ausgangsfilter des Supervisors. Geprüft werden auch Inhalte, die in einem späteren Commit wieder gelöscht wurden, denn der öffentliche Verlauf enthält sie trotzdem. Der Branch ist schon vor dem CEO-Review öffentlich, deshalb muss der Filter vor dem Push greifen und nicht erst beim Merge.
+  - PR-Beschreibung, Commit-Nachrichten, Kommentare **sowie alle Dateiinhalte, Pfade und Metadaten aller übertragenen Commits** laufen vor **jedem Push** durch den Ausgangsfilter des Supervisors. Geprüft werden auch Inhalte, die in einem späteren Commit wieder gelöscht wurden, denn der öffentliche Verlauf enthält sie trotzdem. Der Branch ist schon vor dem CEO-Review öffentlich, deshalb muss der Filter vor dem Push greifen und nicht erst beim Merge.
+  - **Commit-Metadaten:** Autor und Committer (Name und E-Mail) müssen exakt der festen Identität des Agenten entsprechen, die der Supervisor vergibt (z. B. `Jonas Albrecht (CTO) <cto@aio.invalid>`). Commits mit anderen Werten weist das Git-Gate zurück. Annotierte Tags oder Signaturen aus dem Bundle übernimmt es nicht. So lässt sich auch über Metadaten kein Text veröffentlichen.
   - Er prüft Länge, Secret-Muster und **Fingerabdrücke** aus CEO-Chat und Gedächtnis (Textabschnitte, die nicht hinaus dürfen).
   - Kommentare an Fremde sind Stufe C.
 - **Produkt-Merges (Stufe B, ab Etappe 5):** Der Supervisor merged nur, wenn
@@ -954,3 +955,10 @@ Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene
 | 1 | Für Workflow-Änderungen des CEO gab es keinen Weg zu Merge und Auslieferung, weil der Supervisor nur Checks mit unveränderten Workflow-Dateien anerkennt. | Wartungspfad: Der CEO merged selbst, der Supervisor liefert erst nach ausdrücklicher, SHA-gebundener Freigabe in der Konsole aus (4.5). |
 | 2 | `--output-format stream-json` braucht im Print-Modus `--verbose`. | Flag ergänzt (5.7). Das Streaming-Beispiel der [Headless-Doku](https://code.claude.com/docs/en/headless) verwendet `--verbose` ebenfalls. |
 | 3 | Etappe 4 braucht `web_fetch` im Supervisor, den die Agenten nicht ändern dürfen. | Supervisor-Teil durch CEO + Claude Code vor Etappe 4 (7.3) |
+
+### Review 16 – Copilot-Review in PR #1, Runde 8
+
+| # | Schwere (Copilot) | Befund | Änderung |
+|---|---|---|---|
+| 1 | hoch | Autor und Committer der Commits wurden nicht gefiltert, ein Lauf hätte dort Text veröffentlichen können. | Feste Identität je Agent, abweichende Commits zurückgewiesen, Tags und Signaturen aus dem Bundle nicht übernommen (5.9) |
+| 2 | mittel | Den eigenen Wartungs-PR kann der CEO nicht selbst freigeben, und er ist der einzige Code Owner. | Der CEO pusht auf `ceo/*`, die App öffnet den PR, der CEO reviewt und merged selbst (4.5) |
