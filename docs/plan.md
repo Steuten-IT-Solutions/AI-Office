@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Entwurf 0.3 (Phasen 1–2 abgeschlossen, Phasen 3–5 im Entwurf, Phasen 6–7 offen).
+> **Status:** Version 1.0 – **zur Freigabe durch den CEO**. Alle Phasen 1–7 sind durchlaufen, Review-Protokoll in Kap. 9.
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -29,6 +29,12 @@
 | E16 | Agenten denken und sprechen **Deutsch**. | Die Blasen zeigen das Original, keine Übersetzungskosten (E1). | Runde 5 |
 | E17 | Webinterface in **Pixel-Art**, isometrisch je Etage, später Querschnitt als Übersicht | CEO-Vorgabe Pixel-Art. Abwägung in Kap. 5.11a | Runde 5 |
 | E18 | **Laufzeitdaten nie im öffentlichen Repo**: Ereignisse, Gedächtnis, Bücher, CEO-Chat | Folge aus E15 | Review 3 |
+| E19 | Ansicht isometrisch je Etage, später Querschnitt. Startbelegschaft nach Kap. 5.12 | CEO-Bestätigung | Runde 6 |
+| E20 | Bewerbung = kurzes Gespräch (≤ 2 Runden) + gemessene Probeaufgabe + Kostenobergrenze | CEO-Bestätigung | Runde 6 |
+| E21 | Backup über das **Backup-Angebot des VPS-Anbieters**, ergänzt durch konsistente SQLite-Sicherungen (Kap. 5.10) | CEO-Vorgabe | Runde 6 |
+| E22 | **Alle sicherheitsrelevanten Prüfungen liegen im Supervisor.** Prüfungen im Office dienen nur dem Komfort. | Das Office kann sich selbst verändern und ist daher keine Vertrauensbasis. | Review 4 |
+| E23 | **CI und Tests rufen nie ein echtes LLM auf.** Ein Fake-`LlmRunner` spielt aufgezeichnete Läufe ab. | Kostet kein Kontingent, ist deterministisch und braucht keine Secrets in der öffentlichen CI. | Review 4 |
+| E24 | **Migrationen nach dem Muster Expand/Contract**: Die Vorversion kann den neuen Zustand lesen. | Ein Rollback braucht dann keine Rücksicherung, und Ereignisse aus der Beobachtungszeit gehen nicht verloren. | Review 4 |
 
 ---
 
@@ -87,7 +93,7 @@
 
 ---
 
-## 3. Grobarchitektur (Entwurf)
+## 3. Grobarchitektur
 
 ### 3.1 Leitideen
 
@@ -181,7 +187,7 @@ flowchart TB
 
 ---
 
-## 4. Governance-Modell (Entwurf)
+## 4. Governance-Modell
 
 ### 4.1 Verfassung (unveränderlich für Agenten)
 
@@ -213,7 +219,7 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 - **Arbeitsplätze im Gebäude sind die echte Parallelität.** Ein Lauf braucht einen freien Arbeitsplatz (Schreibtisch, Meetingraum-Platz). Die Firma kann Arbeitsplätze anbauen, Stufe B. Der Ausbau kostet „Miete“ im internen Budget. So wird er zu einer echten wirtschaftlichen Abwägung.
 - **Vorgesetzte steuern**, wer an welchem Platz arbeitet und wie viele Läufe ihr Bereich gleichzeitig nutzt.
 - **Der Supervisor setzt nur Grenzen, die physikalisch nötig sind:** Das Gebäude kann nicht mehr Arbeitsplätze haben, als RAM und CPU des Servers tragen, und keine Läufe starten, wenn das Kontingent erschöpft ist. Das entspricht der „Statik des Gebäudes“ und ist keine Firmenregel.
-- **Schutzschalter** (offener Punkt O1): Erkennt der Supervisor eine Anomalie, etwa sprunghaft mehr Läufe pro Stunde, Nachrichten im Ping-Pong oder dieselbe Aufgabe immer wieder neu gestartet, stoppt er neue Läufe und eskaliert an den CEO. **Begründung:** Agenten können eine Fehlschleife nicht zuverlässig erkennen, wenn sie selbst Teil der Schleife sind oder der Fehler im Planer liegt.
+- **Schutzschalter** (E11): Erkennt der Supervisor eine Anomalie, etwa sprunghaft mehr Läufe pro Stunde, Nachrichten im Ping-Pong oder dieselbe Aufgabe immer wieder neu gestartet, stoppt er neue Läufe und eskaliert an den CEO. **Begründung:** Agenten können eine Fehlschleife nicht zuverlässig erkennen, wenn sie selbst Teil der Schleife sind oder der Fehler im Planer liegt.
 
 ### 4.4 Notaus und Eingriffe des CEO
 
@@ -228,24 +234,45 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 ### 4.5 Selbstmodifikation und Auslieferung
 
 1. Agenten entwickeln das Office in Feature-Branches von `AI-Office` und öffnen einen PR.
-2. **Pflicht-CI:** Typecheck, Lint, Unit- und Integrationstests, Secret-Scan, Migrationstest auf einer anonymisierten Kopie des Zustands, Start-Smoke-Test.
-3. **CEO-Freigabe** für den Merge (Stufe C), danach ein Release-Tag.
-4. **Pull-Deployment:** Der Supervisor holt freigegebene Releases. Der Server braucht keinen Zugang von außen, und in GitHub liegen keine Deploy-Schlüssel.
+2. **Pflicht-CI** (öffentlich, ohne Secrets, ohne echtes LLM nach E23): Typecheck, Lint, Unit- und Integrationstests, Secret-Scan, Migrationstest gegen **synthetische** Testdaten, Start-Smoke-Test. Der Test gegen eine Kopie des echten Zustands läuft ausschließlich im Staging auf dem VPS (E18).
+3. **CEO-Freigabe** für den Merge (Stufe C). Die Freigabeansicht hebt **kritische Pfade** hervor (`.github/`, `supervisor/`, `constitution.md`, Migrationen, Sandbox-Konfiguration). Zusätzlich sorgt `CODEOWNERS` dafür, dass solche Änderungen den CEO als Reviewer erfordern. Damit die Agenten ihre eigenen Tests nicht unbemerkt abschwächen können.
+   Danach merged der Supervisor, setzt das Release-Tag und merkt sich die Commit-SHA.
+4. **Pull-Deployment:** Der Supervisor holt freigegebene Releases und prüft, ob die Tag-SHA mit der von ihm gemergten SHA übereinstimmt. Der Server braucht keinen Zugang von außen, und in GitHub liegen keine Deploy-Schlüssel.
 5. **Deployment-Ablauf:**
    1. Backup des Zustands.
    2. Neue Version auf einer Kopie des Zustands parallel starten (Staging).
    3. Health-Checks.
    4. Umschalten.
    5. Beobachtungszeit.
-   6. Bei Fehlern automatischer Rollback: alte Version und Zustand aus dem Backup.
+   6. Bei Fehlern automatischer Rollback auf die alte Version. Wegen E24 bleibt der Zustand erhalten. Die Rücksicherung aus dem Backup ist nur das letzte Mittel.
 6. **Last-known-good:** Startet das Office mehrfach nicht, startet der Supervisor die letzte funktionierende Version im abgesicherten Modus und eskaliert.
 7. **Supervisor-Updates** führt nur der CEO durch. Getrennter Pfad, nie automatisch.
+8. **Health-Check** umfasst:
+   - Prozess läuft
+   - Migrationen vollständig
+   - Office-API antwortet
+   - ein Ende-zu-Ende-Lauf mit dem Fake-Runner
+   - Webinterface lädt
+   - Ereignisprotokoll schreibbar
+
+   Optional folgt nach dem Umschalten ein echter, sehr kurzer „Kanarienlauf“ mit günstigem Modell.
+
+### 4.6 Technische Durchsetzung (Vertrauensgrenzen)
+
+| Grenze | Durchgesetzt durch |
+|---|---|
+| Kontingent, Arbeitsplatz-Statik, Schutzschalter, Notaus | Admission Control im Supervisor (E22) |
+| `main` und Releases | Nur der Supervisor hat das GitHub-Token (E14). Branch-Schutz und `CODEOWNERS` als zweite Schicht |
+| Identität eines Laufs | **Capability-Token** pro Lauf, gebunden an Agent, Lauf und Rechte, gültig bis zum Laufende. Die Office-API akzeptiert nur Aufrufe mit gültigem Token. So kann sich kein Container als anderer Agent ausgeben. |
+| Werkzeugrechte | Allowlist im CLI-Aufruf, abgeleitet aus Raumausstattung und Rolle. Die Liste erzeugt der Supervisor, nicht das Office. |
+| Netz | Egress-Proxy mit Allowlist je Lauftyp |
+| Geheimnisse | nur im Supervisor. Sandbox-Credential-Schutz für den Claude-Login (5.7) |
 
 ---
 
 ## 5. Detailplanung je Komponente
 
-> Entwurf aus Phase 5. Verweise auf „Fakt n“ beziehen sich auf Kap. 2.
+> Verweise auf „Fakt n“ beziehen sich auf Kap. 2.
 
 ### 5.1 Agentenmodell und Persönlichkeit
 
@@ -298,6 +325,10 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 - **Meeting:** Einladung, Agenda, Teilnehmer, Moderator, **maximale Rundenzahl**. Technisch läuft es als Folge von Läufen, jeder Teilnehmer ist der Reihe nach dran. **Kostenfalle:** Der Kontext wächst mit jeder Runde. Deshalb gibt es eine Zusammenfassung durch den Moderator nach jeder Runde, eine Rundenbegrenzung und ein günstiges Modell als Standard.
 - **Schwarzes Brett:** Aushang für alle oder eine Etage.
 - **Eskalation:** an den Vorgesetzten oder an den CEO, mit Begrenzung der Häufigkeit.
+
+**Startregel für Zuständigkeit:** Nachrichten des CEO ohne Adressat und neue Kundenanforderungen gehen zuerst an den **COO**. Das ist eine gewöhnliche Firmenregel (Daten), die die Agenten ändern dürfen (E5).
+
+**Der Planer ist Code, kein Agent.** Er verteilt Läufe deterministisch nach Ereignissen, Prioritäten und Arbeitsplätzen und verbraucht keine Tokens.
 
 **Freie Strukturen ohne Code-Änderung:**
 - Abteilungen, Teams, Rollen, Berichtslinien, Regeln und Meeting-Serien sind Daten.
@@ -353,6 +384,9 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
   4. Secret-Scan vor jedem Push
 - Restrisiko: Bei Verlust des Logins abmelden und neu anmelden. Offener Punkt O7: Laufen `bubblewrap` und Docker zusammen?
 - **GitHub:** Das Token bleibt beim Supervisor (E14).
+- **Parallele Arbeit im selben Repo:** Jeder Lauf bekommt einen eigenen Worktree und Branch. Merge-Konflikte lösen die Agenten selbst, als gewöhnliche Aufgabe.
+- **Idempotenz:** Jeder Aufruf der Office-API trägt einen Schlüssel aus Lauf-ID und Sequenznummer. Wird ein Aufruf wiederholt, etwa nach einem Absturz, wirkt er nicht doppelt.
+- **Rohprotokolle:** Die vollständigen `stream-json`-Ausgaben werden komprimiert in Dateien abgelegt, mit Aufbewahrungsfrist **[Annahme: 90 Tage]**. Im Ereignisprotokoll stehen nur Zusammenfassungen und Kennzahlen. Das begrenzt das Wachstum der Datenbank.
 
 ### 5.8 Modelle
 
@@ -377,9 +411,11 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 - Ablauf wie in Kap. 4.5.
 - **Migrationen:** SQLite-Schema nur vorwärts, nummeriert, in CI gegen Testdaten und beim Staging gegen eine Kopie getestet.
   - Ereignisse sind versioniert (Upcasting), Projektionen lassen sich jederzeit neu aufbauen.
-- **Backup:** nächtlich, verschlüsselt, außerhalb des VPS. Umfang: SQLite-Snapshot, Wissens-Repo, Konfiguration.
-  - Kandidat für das Ziel: der vorhandene Ionos-Webspace per SFTP **[Annahme: SFTP verfügbar, prüfen]**.
-  - Rücksicherung wird regelmäßig getestet.
+- **Backup (E21):** Backup-Angebot des VPS-Anbieters (Snapshots).
+  - Vorher erzeugt der Supervisor täglich eine **konsistente SQLite-Sicherung** über die Backup-Funktion von SQLite in ein lokales Verzeichnis. Ein Snapshot während eines Schreibvorgangs kann sonst eine inkonsistente Datenbank enthalten.
+  - Umfang: SQLite-Sicherungen, Wissens-Repo, Konfiguration. Geheimnisse sind verschlüsselt.
+  - Eine Rücksicherung wird regelmäßig getestet, mindestens vor jeder Etappe der Roadmap.
+  - Restrisiko: Backup und Server liegen beim selben Anbieter (R7).
 
 ### 5.11 Webinterface
 
@@ -424,7 +460,33 @@ Der CEO will keine feste Agentenzahl, die Kontrolle sollen die Vorgesetzten übe
 
 Die Schwächen sind Absicht. Sie erzeugen echte Gegengewichte (CTO ↔ CFO, COO ↔ CTO), statt dass alle Agenten gleich denken.
 
-## 6. Kosten- und Limitkonzept (Entwurf)
+### 5.13 Teststrategie
+
+- **Fake-`LlmRunner`** (E23): spielt aufgezeichnete `stream-json`-Läufe ab. Damit lassen sich Planer, Office-API, Kostenbuchung, Schutzschalter und Webinterface deterministisch testen.
+- **Negativtests für die Sicherheit**, Pflicht in der CI. Ein simulierter Agent versucht:
+  - auf `main` zu pushen
+  - Werkzeuge außerhalb seiner Rechte aufzurufen
+  - sich mit dem Token eines anderen Laufs auszugeben
+  - Läufe trotz Notaus zu starten
+
+  Alles muss scheitern.
+- **Migrationstests:** jede Migration vorwärts. Zusätzlich muss die Vorversion den migrierten Zustand lesen können (E24).
+- **Sandbox-Tests** auf dem VPS (nicht in der öffentlichen CI): Die Credential-Datei ist im Container nicht lesbar, und Egress außerhalb der Allowlist wird blockiert.
+
+### 5.14 Fehlerfälle
+
+| Fall | Verhalten |
+|---|---|
+| Anthropic nicht erreichbar oder `rate_limit` mit `rejected` | Lauf endet. Die Aufgabe bleibt in der Warteschlange, erneuter Versuch mit Backoff. Bei Limit „Feierabend bis Reset“ |
+| Claude-Login abgelaufen | Alle Läufe pausieren, Hinweis an den CEO im Webinterface (R3) |
+| Container stürzt mitten im Lauf ab | Die Laufzeit erzeugt aus den Ereignissen des Laufs automatisch eine Übergabenotiz. Die Aufgabe wird erneut eingeplant, idempotente Aufrufe verhindern doppelte Wirkung. |
+| Office startet nicht | Supervisor startet die letzte funktionierende Version (Kap. 4.5) |
+| Supervisor stürzt ab | systemd startet ihn neu. Ohne Supervisor startet das Office keine Läufe, der Fehlerfall ist also sicher. |
+| Fehlschleife | Schutzschalter (E11) |
+| VPS-Neustart | systemd → Supervisor → Office. Unterbrochene Läufe werden wie Abstürze behandelt. |
+| Webinterface nicht erreichbar | Notaus und Status per SSH über das CLI `aioffice` |
+
+## 6. Kosten- und Limitkonzept
 
 - **Währung:** Token-Zahlen und `total_cost_usd` pro Lauf aus dem CLI (Fakt 6), gebucht auf Agent, Abteilung und Aufgabe. Die Werte sind Schätzungen, reichen aber als interne Währung.
 - **Messung des Kontingents:** Der Supervisor fragt regelmäßig `/usage` ab (Fakt 7) und wertet `rate_limit_event` aus.
@@ -442,7 +504,39 @@ Die Schwächen sind Absicht. Sie erzeugen echte Gegengewichte (CTO ↔ CFO, COO 
 
 ## 7. MVP und Roadmap
 
-*Folgt in Phase 6.*
+### 7.1 Grundsatz
+
+Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann**. Es enthält also den kompletten Kreislauf mit allen Schutzmechanismen:
+
+> Anforderung → Agenten → PR → CI → Freigabe → Deployment → Rollback
+
+Komfort und Visualisierung fehlen dagegen noch. Das MVP wird **nicht von den Agenten gebaut**, sondern von dir mit Claude Code in normalen Sitzungen. Erst ab Etappe 2 bauen die Agenten am Office mit.
+
+Hinweis: Auch die Entwicklungssitzungen verbrauchen dein Abo-Kontingent.
+
+### 7.2 Etappen
+
+| Etappe | Inhalt | Wer baut |
+|---|---|---|
+| **0 – Fundament** | VPS bestellen (mit Backup-Option), Ubuntu, Docker, VPN, systemd. Claude-Login auf dem Server. GitHub App anlegen. Repo-Einstellungen: Branch-Schutz `main`, `CODEOWNERS`, „Require approval for all external contributors“. **Spikes** zur Klärung von O7 (Sandbox in Docker), R2 (`/usage` per Skript abrufbar), Bedarf an RAM und CPU pro Lauf (Statik), GitHub-Rate-Limits. | CEO + Claude Code |
+| **1 – MVP: Kernkreislauf** | Supervisor (Admission mit 60-%-Regel und Glättung, Notaus in drei Stufen, Schutzschalter, Deployer mit Staging, Health und Rollback, Audit-Log, GitHub-Token). Ereignisprotokoll, deterministischer Planer, Laufzeit mit Sandbox-Container, Office-API mit Minimalumfang (`send_message`, `create_task`, `delegate`, `handover`, `escalate`, `git_push`, `open_pr`, `request_merge`). Die 4 Startagenten mit festem Gebäude (nur Daten). Webinterface **schlicht** (Zeitleiste, Chat, Freigaben, Kontingent und Kosten, Notaus, Agentenliste). CI mit Fake-Runner und Negativtests. | CEO + Claude Code |
+| **2 – Gebäude sichtbar** | Isometrische Pixel-Art je Etage, Avatare aus Seed, Laufwege, Gedanken- und Sprechblasen, Agentendetails. **Erste echte Kundenanforderung an die Agenten**, umgesetzt per PR mit CEO-Freigabe. Das ist zugleich der Praxistest der Selbstentwicklung. | Agenten (mit Unterstützung) |
+| **3 – Selbstorganisation** | Bewerbungsverfahren (E20), Abteilungen, Rollen, Regeln, konfigurierbare Genehmigungsketten, Meetings, Schwarzes Brett, Umbau mit Layout-Engine, Arbeitsplätze und Miete, Abteilungsbudgets durch den CFO | Agenten |
+| **4 – Wissen** | Bücherregale, Bibliothek, Recherche-Läufe, Journal mit Verdichtung, Beziehungen, Leistungskennzahlen für den CHRO | Agenten |
+| **5 – Produkte** | Erste Produkt-Repos aufnehmen (Auswahl durch den CEO), Merge-Regeln der Stufe B für Produkte, Kundenanforderungen je Produkt | Agenten |
+| **6 – Reife** | Schrittweise Lockerung C → B, Querschnittsansicht, semantische Suche, optional weitere Anbieter über `LlmRunner`, Zeitraffer | Agenten |
+
+### 7.3 Abnahmekriterien für das MVP (Etappe 1)
+
+1. Der CEO schreibt im Chat eine kleine Änderung am Office. Die Agenten stimmen sich ab, ein PR auf `agent/*` entsteht, die CI ist grün. Nach der Freigabe im Webinterface merged der Supervisor und liefert über Staging aus. Der Health-Check ist grün.
+2. Ein absichtlich fehlerhaftes Release fällt im Health-Check durch, es folgt ein **automatischer Rollback**. Der Zustand bleibt erhalten.
+3. Alle drei Stufen des Notaus wirken. Pause und Stopp greifen innerhalb von Sekunden **[Annahme: Zielwert festlegen]**.
+4. Ein simuliert erreichtes 60-%-Limit verhindert neue Läufe. Nach dem Reset geht es weiter.
+5. Ein simuliertes Ping-Pong zwischen zwei Agenten löst den Schutzschalter aus, und der CEO wird benachrichtigt.
+6. Alle Negativtests aus Kap. 5.13 bestehen, ebenso die Sandbox-Tests auf dem VPS.
+7. Nach einem Neustart des VPS läuft das System ohne Eingriff wieder an.
+8. Jede Handlung erscheint in der Zeitleiste mit Agent, Kosten und Zeitpunkt.
+9. Eine Rücksicherung aus dem Backup wurde einmal erfolgreich getestet.
 
 ## 8. Offene Punkte und Risiken
 
@@ -453,16 +547,18 @@ Die Schwächen sind Absicht. Sie erzeugen echte Gegengewichte (CTO ↔ CFO, COO 
 | R3 | Der Claude-Login auf dem Server kann ablaufen, danach steht das Büro still. | Überwachung durch den Supervisor, Hinweis an den CEO |
 | R4 | `AI-Office` ist ein **öffentliches** Repo: Prompts und Pläne sind sichtbar. Fremde PRs könnten die CI angreifen. | Offen: Sichtbarkeit entscheiden (O3), Fakten in Kap. 2.2 |
 | R5 | Credentials in der Sandbox: Das CLI braucht den Claude-Login, in der Sandbox ausgeführter Code könnte ihn lesen (Fakt 9). | GitHub-Token durch E14 gelöst. Für den Claude-Login folgt die Lösung in Phase 5. |
-| R6 | Prompt-Injection über Recherche und Repo-Inhalte | Konzept in Phase 5 |
+| R6 | Prompt-Injection über Recherche, Repo-Inhalte und fremde Issues | Gemindert durch Lauftypen, Vertrauensstufen, Sandbox und Supervisor-Grenzen (5.3, 5.7, 5.9, 4.6). Restrisiko bleibt |
+| R7 | Backup und Server beim selben Anbieter | Akzeptiert (E21). Option später: Wissens-Repo zusätzlich in ein **privates** GitHub-Repo spiegeln |
+| R8 | Grafik-Assets für Pixel-Art könnten Lizenzprobleme haben oder viel Aufwand bedeuten. | Vor Etappe 2 klären (O8) |
 | O1 | Schutzschalter des Supervisors gegen Fehlschleifen (Kap. 4.3) | Entschieden (E11) |
 | O2 | Definition der 60-%-Regel (Gesamtverbrauch, Glättung) | Entschieden (E12) |
 | O3 | Sichtbarkeit von `AI-Office` | Entschieden (E15) |
-| O6 | Bewerbungsverfahren: kurzes Gespräch plus gemessene Probeaufgabe | CEO-Bestätigung ausstehend |
-| O7 | Laufen die eingebaute Sandbox (`bubblewrap`) und Docker zusammen, und mit welchen Rechten? | Vor der Umsetzung prüfen |
-| O8 | Pixel-Art-Assets: Lizenz, Herkunft, Aufwand | Offen |
-| O9 | Backup-Ziel (Ionos-Webspace per SFTP?) | CEO-Antwort ausstehend |
+| O6 | Bewerbungsverfahren | Entschieden (E20) |
+| O7 | Laufen die eingebaute Sandbox (`bubblewrap`) und Docker zusammen, und mit welchen Rechten? | Spike in Etappe 0. Falls nicht: Docker allein, mit Credential-Datei außerhalb des Arbeitsverzeichnisses und als Read-Deny |
+| O8 | Pixel-Art-Assets: Lizenz, Herkunft, Aufwand | Vor Etappe 2 |
+| O9 | Backup-Ziel | Entschieden (E21) |
 | O4 | Verhältnis zum bestehenden `project-cockpit` | Entschieden (E13) |
-| O5 | VPS-Anbieter und monatliches Budget | CEO hat Kosten zugestimmt, Betrag offen |
+| O5 | VPS-Anbieter und monatliches Budget | Auswahl in Etappe 0. Der CEO hat den Kosten zugestimmt, der Betrag ist offen. |
 
 ## 9. Protokoll der Review-Runden
 
@@ -500,4 +596,51 @@ Die Schwächen sind Absicht. Sie erzeugen echte Gegengewichte (CTO ↔ CFO, COO 
 | Kosten | Layouts per LLM wären teuer und fehleranfällig. | Deterministische Layout-Engine (5.6) |
 | Stabilität | Gedächtnis-Verdichtung könnte Wissen verlieren. | Journal bleibt versioniert in Git, Verdichtung erst ab einer Schwelle (5.2) |
 
-Weitere Runden folgen nach Phase 6.
+### Review 4 (Gesamtplan nach Phase 6)
+
+| Perspektive | Befund | Änderung |
+|---|---|---|
+| Sicherheit | Prüfungen der Verfassung im Office wären durch Eigenänderung umgehbar. | E22: Alle sicherheitsrelevanten Prüfungen im Supervisor. Kap. 4.6 |
+| Sicherheit | Ein Container könnte sich gegenüber der Office-API als anderer Agent ausgeben. | Capability-Token pro Lauf (4.6) |
+| Sicherheit | Agenten könnten in ihrem PR CI-Workflows oder Tests abschwächen. | Kritische Pfade in der Freigabeansicht hervorgehoben, `CODEOWNERS` (4.5) |
+| Sicherheit | Der Supervisor könnte ein Tag ausliefern, das nicht zum freigegebenen Merge gehört. | Prüfung der Tag-SHA gegen die gemergte SHA (4.5) |
+| Sicherheit | Der Migrationstest „auf einer Kopie des Zustands“ in der **öffentlichen** CI hätte Laufzeitdaten veröffentlicht. | CI nur mit synthetischen Daten, Test mit echter Kopie nur im Staging (4.5) |
+| Kosten | Tests mit echtem LLM würden Kontingent verbrauchen und Secrets in der CI erfordern. | E23: Fake-Runner (5.13) |
+| Kosten | Ein Planer als LLM-Agent würde ständig Tokens verbrauchen. | Der Planer ist deterministischer Code (5.4). |
+| Stabilität | Ein Rollback mit Rücksicherung hätte Ereignisse aus der Beobachtungszeit verloren. | E24: Expand/Contract-Migrationen (4.5) |
+| Stabilität | Ein Absturz mitten im Lauf hinterlässt keine Übergabenotiz, und Aufrufe könnten doppelt wirken. | Automatische Übergabenotiz, idempotente Office-API (5.7, 5.14) |
+| Betrieb | Ein Snapshot während eines Schreibvorgangs kann eine inkonsistente SQLite-Datei sichern. | Tägliche konsistente SQLite-Sicherung vor dem Snapshot (5.10) |
+| Betrieb | Die Rohausgaben der Läufe würden die Datenbank aufblähen. | Rohprotokolle komprimiert in Dateien mit Aufbewahrungsfrist (5.7) |
+| Betrieb | Fällt das Webinterface aus, gäbe es keinen Notaus. | CLI `aioffice` per SSH (5.14) |
+| Fehlerfälle | Fehlerfälle waren nicht zusammenhängend beschrieben. | Kap. 5.14 |
+| Erweiterbarkeit | Zuständigkeit für neue Anforderungen war nicht definiert, und ohne Startregel passiert nichts. | Startregel „an den COO“, als änderbare Firmenregel (5.4) |
+
+### Review 5 (Gegenprüfung nach den Änderungen aus Review 4)
+
+Geprüft wurde, ob die Änderungen aus Review 4 neue Widersprüche erzeugen und ob jeder kritische Punkt aus Abschnitt 4 des Planungs-Prompts beantwortet ist.
+
+| Kritischer Punkt (Planungs-Prompt) | Beantwortet in |
+|---|---|
+| 1 Autonomie vs. Kontrolle, Verfassung | 4.1, 4.2, 4.6 |
+| 2 Selbstmodifikation | 3.1, 4.5, 4.6, E22, E24 |
+| 3 Auslieferung mit Migrationen | 4.5, 5.10 |
+| 4 Tokens als Währung, Limits | 2.1, 6, E12 |
+| 5 Kosten der Simulation | E1, 3.3, 5.4, 5.6, 5.11 |
+| 6 Bedeutung des Gebäudes | 4.3, 5.6 |
+| 7 Persönlichkeit und Wissen | 5.1, 5.3 |
+| 8 Gedächtnis und Zustand | 5.2, 5.3 |
+| 9 Modelle | 2.3, 5.8 |
+| 10 Sicherheit | 2.2, 4.6, 5.7, 5.9 |
+| 11 Begrenzungen und Schleifen | 4.3, 5.4, 5.7, E11 |
+| 12 Nachvollziehbarkeit und Eingriffe | 3.1, 4.4, 5.11 |
+| 13 Technik des Webinterfaces | 5.11, 5.11a |
+| 14 Server und Betrieb | 3.4, 5.10, 5.14, 7.2 |
+
+| Perspektive | Befund | Änderung |
+|---|---|---|
+| Konsistenz | Kap. 4.3 verwies noch auf den offenen Punkt O1. | Verweis auf E11 korrigiert |
+| Konsistenz | Die Rücksicherung aus dem Backup war in Kap. 4.5 noch die Standardlösung für den Rollback. | Auf E24 umgestellt |
+| Sicherheit | E14 und E22 widersprechen sich nicht: Das Token liegt im Supervisor, Pushes laufen über die Office-API zum Supervisor. | Keine Änderung |
+| Kosten | Glättung (E12), Meeting-Limits, Fake-Runner und deterministischer Planer zusammen: keine unkontrollierten Verbrauchsquellen mehr erkennbar | Keine Änderung |
+
+**Ergebnis:** Im Plan selbst finde ich keine wesentlichen Schwachstellen mehr. Offen bleiben **externe Unsicherheiten**, die sich nur durch Anfragen oder Spikes klären lassen: R1 (Lizenz), R2 (Usage-Schnittstelle), O7 (Sandbox in Docker), O8 (Assets) sowie die Annahmen zu Servergröße und Rate-Limits. Sie sind in Etappe 0 bzw. vor Etappe 2 eingeplant. Für einen Teil davon hängt die Machbarkeit vom Ergebnis ab. Das gilt vor allem für R1: Würde Anthropic den Dauerbetrieb über das Abo ablehnen, wäre E2 nicht haltbar, und der Antrieb müsste neu entschieden werden.
