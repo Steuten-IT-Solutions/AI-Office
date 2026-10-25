@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). **Offen:** CEO-Entscheidung zu O13 (Restrisiko R11).
+> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O13 in Runde 10).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -55,6 +55,7 @@
 | E42 | **Laufzeit-Lease unabhängig vom Supervisor:** Jeder Container bekommt eine harte Wanduhr-Grenze in seinem Startprozess. Nach jedem Neustart gleicht der Supervisor die noch laufenden Container und ihre Reservierungen ab, **bevor** er neue Läufe zulässt. | Container laufen bei einem Absturz des Supervisors sonst unkontrolliert weiter. | Review 8 |
 | E43 | Die **60-%-Grenze ist ein Zielwert**: konservative Reservierung, Pause bei 55 %, Meldung jeder Überschreitung und automatische Absenkung der Schwelle. Eine harte Garantie ist mit den verfügbaren Messgrößen nicht beweisbar. | Copilot-Review, Befund 7 | Runde 8 |
 | E44 | **Kein Vier-Augen-Prinzip zwischen Agenten vor Etappe 3:** Bis zur ersten Einstellung schreibt nur der CTO Code, und das Review des CEO ist die einzige zweite Prüfung. | CEO-Entscheidung (Variante A). Hält das MVP klein. Folge: Das Review des CEO trägt bis dahin die volle Prüflast. | Runde 9 |
+| E45 | Das **Restrisiko R11** (Datenabfluss über eine Navigation der ganzen Seite im Browser des CEO) wird **akzeptiert**. Es gibt kein eigenes Browserprofil. | CEO-Entscheidung (Variante A). Ausnutzbar erst nach einem manipulierten Office-Release, das das CEO-Review passiert hat. | Runde 10 |
 
 ---
 
@@ -783,7 +784,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | R3 | Der volle Login beim Supervisor kann ablaufen. | Dann Pause und Benachrichtigung. Die Läufe selbst hängen davon nicht ab (E27). |
 | R4 | Öffentliches Repo: Pläne und Prompts sind sichtbar, Agenten-Branches lösen CI aus. | Gemindert durch E30, E33 |
 | R5 | Das `setup-token` im Container kann abgegriffen werden, wenn die Isolation nicht greift (Fakt 9). | Spike S1. Schaden begrenzt: nur Modellanfragen, harter Egress. Restrisiko gegebenenfalls ausdrücklich akzeptiert |
-| R11 | Datenabfluss über den Browser des CEO: Ein manipuliertes Office kann Text in eine URL schreiben und den Browser dorthin navigieren lassen. Die CSP des Supervisors sperrt Fetch, Bilder und Formulare, aber keine Navigation der ganzen Seite. | Entscheidung des CEO ausstehend (O13). Optionen: akzeptieren oder ein eigenes Browserprofil nur für das Büro, dessen Netz auf die Hosts im VPN beschränkt ist |
+| R11 | Datenabfluss über den Browser des CEO: Ein manipuliertes Office kann Text in eine URL schreiben und den Browser dorthin navigieren lassen. Die CSP des Supervisors sperrt Fetch, Bilder und Formulare, aber keine Navigation der ganzen Seite. | **Vom CEO akzeptiert** (O13, E45). Ausnutzbar erst, wenn manipulierter Office-Code das CEO-Review passiert hat. |
 | R6 | Prompt-Injection über Recherche, Bücher, Repo-Inhalte und Fremde | Gemindert durch Lauftypen (5.7), E29, E33 und die Supervisor-Grenzen (4.6). Restrisiko bleibt |
 | R7 | Backup und Server beim selben Anbieter | Akzeptiert (E21) |
 | R8 | Pixel-Art-Assets: Lizenz und Aufwand | Vor Etappe 2 (O8) |
@@ -794,7 +795,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O8 | Grafik-Assets | Vor Etappe 2 |
 | O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
 | O12 | Vier-Augen-Prinzip zwischen Agenten vor Etappe 3: Bis zur ersten Einstellung prüft nur der CEO den Code des CTO. Option: eine vereinfachte Einstellung schon in Etappe 2 | Entschieden (Runde 9): **Variante A**. Bis Etappe 3 ist das Review des CEO die einzige zweite Prüfung, siehe E44. |
-| O13 | Restrisiko R11 (Abfluss über Navigation im Browser des CEO): akzeptieren oder ein eigenes Browserprofil mit beschränktem Netz | CEO-Entscheidung ausstehend |
+| O13 | Restrisiko R11 (Abfluss über Navigation im Browser des CEO) | Entschieden (Runde 10): akzeptiert, siehe E45 |
 | O11 | 60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie (Verfassung Nr. 2, Kap. 6) | Bestätigt (Runde 8), siehe E43 |
 
 ---
