@@ -13,98 +13,53 @@
 Reihenfolge so gewählt, dass nichts auf etwas Späteres wartet. Punkte mit ⚠ wirken nach außen oder
 kosten Geld.
 
-### 1.1 VPS mit Backup-Option auswählen ⚠
+### 1.1 Zielmaschine: Entwicklungsmaschine des CEO (VPS zurückgestellt)
 
-**Anforderung aus dem Plan:** Ubuntu LTS, 4 vCPU, 8–16 GB RAM, ≥ 80 GB SSD (Kap. 3.4, endgültig nach
-S3), Backup-Angebot des Anbieters (E21), Standort in der EU.
+**CEO-Entscheidung (25.10.2026):** In der Entwicklungsphase läuft das AI-Office auf der
+Entwicklungsmaschine des CEO. Der VPS (E8, O5) und das Backup des Anbieters (E21) sind
+zurückgestellt. Der Anbietervergleich vom 25.10.2026 steht im ersten Commit dieses PR (`ddec55c`);
+die Preise müssen vor einer späteren Bestellung ohnehin neu geprüft werden.
 
-**Vergleich (Preise vom 25.10.2026, aus den Produktseiten der Anbieter):**
+**Folgen für den Plan:**
+- Das Rechtemodell aus Kap. 4.7 setzt Linux voraus: getrennte Unix-Nutzer, nftables-Regel für die
+  UID von `aio-office`, `SO_PEERCRED` am Unix-Socket, Docker ohne Zugriff für `aio-office`,
+  systemd. Auf einer Linux-Maschine lässt sich das vollständig nachbauen. Unter macOS oder Windows
+  laufen Container in einer VM von Docker Desktop; dann lassen sich nftables, `SO_PEERCRED` und die
+  Netztrennung nicht so umsetzen wie geplant, und die Abnahmekriterien 8 und 10 wären nur
+  eingeschränkt prüfbar **[Annahme, je nach Betriebssystem in S1 zu klären]**.
+- **Sicherheit:** Lauf-Container laufen dann auf einem Rechner mit Ihren persönlichen Daten und
+  Zugängen. Die Container sehen nur ihren Arbeitsbereich (Kap. 4.7), aber jede Lücke in der
+  Isolation trifft Ihre Arbeitsmaschine statt eines leeren Servers. Deshalb gilt: Office und
+  Supervisor laufen unter eigenen Nutzern, nie unter Ihrem Konto. Der Docker-Zugriff liegt nur bei
+  `aio-sup`.
+- **S3** misst die Statik auf der Entwicklungsmaschine. Die Servergröße für später leite ich daraus
+  ab.
+- **Backup (E21) und Abnahmekriterium 12** entfallen vorerst. Ersatz: tägliche SQLite-Sicherung
+  (Paket S15) in ein lokales Verzeichnis außerhalb von `/var/lib/aio-office`.
+- **Abnahmekriterium 10** („Neustart des VPS“) gilt sinngemäß für den Neustart der
+  Entwicklungsmaschine.
+- **VPN** ist nur nötig, wenn Sie von anderen Geräten zugreifen wollen. Lokal reicht der Zugriff
+  über Loopback.
 
-| Anbieter / Tarif | vCPU | RAM | SSD | Preis/Monat | Backup | Quelle |
-|---|---|---|---|---|---|---|
-| **Hetzner Cloud CX43** (Cost-Optimized, Intel/AMD, shared) | 8 | 16 GB | 160 GB NVMe | 16,49 € netto | automatisch täglich, 7 Slots; Preis „related to instance“, ab 1,198 € netto | [hetzner.com/cloud/cost-optimized](https://www.hetzner.com/cloud/cost-optimized), [Backup-Doku](https://docs.hetzner.com/cloud/servers/backups-snapshots/overview/) |
-| Hetzner Cloud CX33 | 4 | 8 GB | 80 GB NVMe | 8,99 € netto | wie oben | wie oben |
-| Hetzner Cloud CPX32 (Regular Performance) | 4 | 8 GB | 160 GB NVMe | 35,99 € netto | wie oben | [hetzner.com/cloud/regular-performance](https://www.hetzner.com/cloud/regular-performance) |
-| IONOS VPS L+ | 4 | 8 GB | 240 GB NVMe | 22 € brutto (erste 3 Monate 7 €), 10 € Einrichtung | optional „ab 6 Cent pro GB/Monat“ | [ionos.de/server/vps](https://www.ionos.de/server/vps) |
-| IONOS VPS XL+ | 8 | 16 GB | 480 GB NVMe | 41 € brutto (erste 3 Monate 12 €), 10 € Einrichtung | wie oben | wie oben |
-| netcup VPS 1000 G12.5 | 4 | 8 GB | 128 GB | 16,68 € brutto bei 12 Monaten Laufzeit | nur „Snapshots“ genannt, kein automatisches Backup-Angebot gefunden | [netcup.com/de/server/vps](https://www.netcup.com/de/server/vps) |
-
-**Wichtige Befunde:**
-- **Hetzner zeigt derzeit bei allen Cloud-Tarifen** „This product is currently unavailable“. Die
-  Statusseite führt seit 26.06.2026 06:00 UTC den Hinweis „Limited availability of cloud instances“
-  ([status.hetzner.com](https://status.hetzner.com/)). Nach Berichten Dritter schränkt Hetzner die
-  Neuanlage für neue und zufällig ausgewählte Bestandskunden ein; das habe ich in keiner
-  Primärquelle von Hetzner im Wortlaut gefunden **[Annahme]**. Ob Sie bestellen können, zeigt nur
-  die Hetzner Console.
-- **Backup-Preis bei Hetzner:** Die Seite nennt nur „ab 1,198 €“. Das sind genau 20 % von 5,99 €
-  (CX23). Daraus leite ich ab, dass das Backup 20 % des Serverpreises kostet. Für den CX43 wären das
-  3,30 € netto **[Annahme, abgeleitet]**.
-- **IONOS:** Mindestvertragslaufzeit, Inhalt und Aufbewahrung des Backups stehen nicht auf der
-  Produktseite. Vor einer Bestellung im Konfigurator prüfen.
-- **netcup** erfüllt E21 nach den gefundenen Angaben nicht (kein automatisches Backup-Angebot).
-- **Contabo** konnte ich nicht prüfen (die Seite verweigert den Abruf mit HTTP 403).
-
-**Empfehlung: Hetzner Cloud CX43 im Standort Nürnberg (NBG1), mit Backups.**
-Kosten: 16,49 € + ca. 3,30 € = ca. 19,79 € netto, ca. 23,55 € brutto pro Monat **[Backup-Anteil
-abgeleitet]**.
-Begründung:
-- 16 GB RAM und 160 GB Platte liegen am oberen Rand der Anforderung. Speicher ist ein
-  Admission-Kriterium (Kap. 5.7). Docker-Images, Registry-Cache und Arbeitsbereiche mit 5 GB je Lauf
-  würden 80 GB schnell füllen.
-- Automatisches tägliches Backup mit 7 Slots ist im Produkt enthalten (E21).
-- Abrechnung pro Stunde mit monatlicher Obergrenze, also keine Vertragsbindung. Ein Wechsel nach S3
-  kostet nichts außer Aufwand.
-- Standort Deutschland.
-
-Nachteil: „shared vCPU“, Builds können durch Nachbarn langsamer werden. Für das MVP ist das
-vertretbar; S3 misst es.
-
-**Rückfallebene, falls Hetzner nicht bestellbar ist:** IONOS VPS L+ (Anforderung erfüllt, 22 €
-brutto plus Backup) oder XL+, wenn S3 mehr verlangt. Vorher Laufzeit und Backup-Bedingungen im
-Konfigurator prüfen und mir nennen.
-
-**Schritte (Hetzner):**
-1. Konto anlegen bzw. anmelden, Projekt „ai-office“ anlegen.
-2. SSH-Schlüssel hinterlegen (Ed25519, auf Ihrem Rechner: `ssh-keygen -t ed25519`). **Kein**
-   Passwort-Login.
-3. Server: Standort NBG1, Image Ubuntu 24.04 LTS (oder die neueste LTS, die angeboten wird), Typ
-   CX43, IPv4 + IPv6, **Backups aktivieren**.
-4. Hetzner-Firewall anlegen: eingehend nur UDP 51820 (WireGuard) und vorübergehend TCP 22 von Ihrer
-   aktuellen IP. Nach Einrichtung des VPN wird TCP 22 auf das VPN beschränkt (siehe 1.2).
-5. Mir mitteilen: Anbieter, Tarif, Standort, IP-Adresse. Keine Zugangsdaten schicken.
-
-### 1.2 Grundeinrichtung des Servers und VPN
-
-**Empfehlung VPN: WireGuard, selbst betrieben.**
-Begründung: Der kostenlose Tailscale-Tarif „Personal“ ist laut Anbieter „only suitable for
-non-commercial use“ ([tailscale.com/pricing](https://tailscale.com/pricing)). Das AI-Office arbeitet
-für Ihre Firma; ich halte das nicht für sicher nicht-kommerziell. WireGuard ist im Linux-Kernel
-enthalten, kostet nichts und hat keinen Dritten im Kontrollpfad.
-
-**Schritte:**
-1. Per SSH als root anmelden, Updates einspielen: `apt update && apt full-upgrade`, danach Neustart.
-2. Persönlichen Admin-Nutzer anlegen (mit `sudo`), Root-Login und Passwort-Login für SSH abschalten
-   (`PermitRootLogin no`, `PasswordAuthentication no`).
-3. `unattended-upgrades` aktivieren (Kap. 5.10).
-4. WireGuard: `apt install wireguard`, Server-Schlüssel erzeugen, Schnittstelle `wg0` mit einem
-   privaten Netz (Vorschlag `10.77.0.0/24`), je ein Peer für Ihre Geräte (Laptop, Smartphone). Die
-   genaue Konfiguration liefere ich als Skript per PR, wenn Sie wollen.
-5. SSH nur noch über das VPN erlauben, TCP 22 aus der Hetzner-Firewall entfernen.
-6. **Erst prüfen, dann sperren:** Vor Schritt 5 aus einer zweiten Sitzung testen, dass SSH über
-   das VPN funktioniert. Die Hetzner-Konsole im Browser bleibt als Notzugang.
+**Schritte für Sie:**
+1. Mir Betriebssystem und Version der Entwicklungsmaschine nennen, außerdem CPU-Kerne, RAM und
+   freien Plattenplatz.
+2. Unter Linux: Docker Engine installieren (nicht Docker Desktop), damit Container direkt auf dem
+   Host-Kernel laufen. Das Provisionierungsskript (Paket S16) legt die Nutzer `aio-sup` und
+   `aio-office` an.
 
 **Interne Namen und TLS (neu, im Plan bisher nicht ausgeführt):**
-- Die Cookies mit Präfix `__Host-` (Kap. 4.7) verlangen `Secure`, also HTTPS auch im VPN.
+- Die Cookies mit Präfix `__Host-` (Kap. 4.7) verlangen `Secure`. Ob Browser das auf
+  `http://localhost` akzeptieren, prüfe ich vor Paket P09 **[Annahme]**. Für den späteren Server
+  braucht es HTTPS und eine eigene kleine Zertifizierungsstelle.
 - Der Plan nennt `.aio.intern` als Beispiel. `.intern` ist **nicht** reserviert. Reserviert für
   private Nutzung ist `.internal` (ICANN-Beschluss vom 29.07.2024, zitiert in
   [draft-davies-internal-tld-06](https://www.ietf.org/archive/id/draft-davies-internal-tld-06.html)).
-  Vorschlag: `office.aio.internal` und `konsole.aio-sup.internal` (verschiedene Domains, wie in Kap.
-  5.11 empfohlen).
-- Für HTTPS braucht es eine eigene kleine Zertifizierungsstelle. Ihr Stammzertifikat installieren
-  Sie einmalig auf Ihren Geräten. Ich liefere das Skript; Sie müssen nur das Zertifikat auf Ihren
-  Geräten als vertrauenswürdig eintragen.
+  Vorschlag für den Server: `office.aio.internal` und `konsole.aio-sup.internal` (verschiedene
+  Domains, wie in Kap. 5.11 empfohlen). Für die lokale Entwicklung klärt P09 bzw. S12, wie Office
+  und Konsole getrennte Origins und Cookies bekommen.
 
-### 1.3 GitHub App ⚠
+### 1.2 GitHub App ⚠
 
 Rechte nach Kap. 5.9. **Der private Schlüssel kommt nie in ein Repo, eine Nachricht oder diesen
 Chat.**
@@ -129,12 +84,12 @@ Chat.**
 8. **Installieren** nur auf `AI-Office` („Only select repositories“), **nicht** auf
    `ai-office-supervisor` (E35). Für Spike S1 zusätzlich vorübergehend auf ein Test-Repo (siehe 3.1).
 
-### 1.4 Repo `ai-office-supervisor` ⚠
+### 1.3 Repo `ai-office-supervisor` ⚠
 
 Anlegen in der Organisation, nur Sie haben Schreibrechte, App nicht installiert (E35).
 Sichtbarkeit: siehe Rückfrage 3.
 
-### 1.5 Repo-Einstellungen `AI-Office` ⚠
+### 1.4 Repo-Einstellungen `AI-Office` ⚠
 
 Nach Kap. 5.9. Pfad: Repo → **Settings**.
 
@@ -157,9 +112,9 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
 4. Die Schritte 2 und 3 erst nach dem Merge von P01 aktivieren. Sonst kann P01 selbst nicht
    gemergt werden. Bis dahin merged nur der CEO.
 
-### 1.6 Claude: `setup-token` und voller Login ⚠
+### 1.5 Claude: `setup-token` und voller Login ⚠
 
-Nach E27 gibt es zwei Zugänge. Beide stellen Sie selbst her, beide auf dem VPS als Nutzer `aio-sup`
+Nach E27 gibt es zwei Zugänge. Beide stellen Sie selbst her, beide auf der Entwicklungsmaschine als Nutzer `aio-sup`
 (der Nutzer entsteht mit dem Provisionierungsskript aus Paket S16; für die Spikes reicht vorerst ein
 eigenes Spike-Verzeichnis).
 
@@ -176,7 +131,7 @@ eigenes Spike-Verzeichnis).
 3. Das Token **nicht** in eine Shell-Profildatei schreiben. Laut Doku wird `CLAUDE_CODE_OAUTH_TOKEN`
    in jeder neuen Sitzung gelesen, solange es dort steht.
 
-### 1.7 Anfrage an Anthropic abschicken ⚠
+### 1.6 Anfrage an Anthropic abschicken ⚠
 
 Text in Abschnitt 2. Weg: Laut Doku sind Fragen zu zulässigen Authentifizierungsmethoden an den
 Vertrieb zu richten: „For questions about permitted authentication methods for your use case, please
@@ -185,12 +140,12 @@ Ergänzend der Support-Messenger in claude.ai (Initialen unten links → „Get 
 message“; nur schriftlich, [Support-Artikel](https://support.claude.com/en/articles/9015913)).
 Empfehlung: über beide Wege, mit Datum notieren. Die Antwort bitte schriftlich aufheben.
 
-### 1.8 Freigaben, die ich vor den Spikes brauche
+### 1.7 Freigaben, die ich vor den Spikes brauche
 
 - Test-Repo für S1, z. B. `aio-spike-s1`, leer und **öffentlich**, weil Branch-Schutz für private
   Repos im Free-Tarif fehlt (Plan Fakt 14) und S1e ihn braucht. Es wird nach dem Spike gelöscht.
   Dazu die vorübergehende Installation der App darauf.
-- Ein Kontingent-Budget und ein ruhiges Zeitfenster für S2 (siehe Rückfrage 4).
+- Ein Kontingent-Budget und ein ruhiges Zeitfenster für S2 (siehe 3.2).
 
 ---
 
@@ -205,7 +160,7 @@ Auf Englisch, weil Vertrieb und Support englischsprachig arbeiten. Platzhalter i
 > I am a Claude Max 5x subscriber (account: `<E-Mail-Adresse des Abos>`). Before I put a project into continuous operation, I would like to confirm in writing whether it is permitted under my subscription. Your Claude Code documentation says that questions about permitted authentication methods should go to sales, so I am writing to you.
 >
 > **What I am building**
-> A personal orchestration tool ("AI-Office") on my own Linux server. It runs several role-based AI agents (e.g. CTO, COO) that work on software repositories in my own GitHub organization, including the tool's own code. Every code change goes through a pull request that I review and approve personally.
+> A personal orchestration tool ("AI-Office") on my own computer (later on a dedicated server of mine). It runs several role-based AI agents (e.g. CTO, COO) that work on software repositories in my own GitHub organization, including the tool's own code. Every code change goes through a pull request that I review and approve personally.
 >
 > **How Claude is used**
 > - Each agent step is a separate invocation of the unmodified, version-pinned Claude Code CLI in non-interactive mode (`claude -p`), started by my own scheduler.
@@ -235,7 +190,7 @@ Beschreibung beruht, wäre wertlos. Die Zitate stammen aus den
 ## 3. Plan für die Spikes S1–S3
 
 **Allgemein:**
-- Alle Spikes laufen auf dem VPS in `/opt/aio-spikes` mit Skripten, die per PR in dieses Repo
+- Alle Spikes laufen auf der Entwicklungsmaschine in `/opt/aio-spikes` mit Skripten, die per PR in dieses Repo
   kommen (Verzeichnis `spikes/`). Sie geben **nie** ein Token aus, sondern nur „gefunden / nicht
   gefunden“ bzw. Prüfsummen.
 - Ergebnisse als Bericht `spikes/ergebnisse/S<n>.md` per PR, ohne Rohdaten, die Geheimnisse enthalten
@@ -252,7 +207,7 @@ Beschreibung beruht, wäre wertlos. Die Zitate stammen aus den
 | S1b | Welche Anthropic-Endpunkte braucht das CLI? Funktioniert ein TLS-terminierender Proxy mit Allowlist? | `mitmproxy` als Proxy, CA per `NODE_EXTRA_CA_CERTS`. Drei typische Läufe (nur Text, mit Werkzeugen, mit einem lokalen MCP-Server). Protokoll: Host, Methode, Pfad (ohne Header und Inhalte). Mit `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, das laut [Doku](https://code.claude.com/docs/en/env-vars) Telemetrie, Fehlerberichte, Auto-Updates und Feature-Flags abschaltet. Danach zweiter Durchgang mit Allowlist und Prüfung, dass nur unser Token im `Authorization`-Header akzeptiert wird. | Die Läufe funktionieren mit Allowlist; ein Aufruf mit fremdem Key wird blockiert | Kanal als Restrisiko unter R6 entscheiden (Kap. 5.7) |
 | S1c | Lehnt GitHub einen Push auf `.github/workflows/` ab, wenn die App keine Berechtigung „Workflows“ hat? (Plan Fakt 17, Annahme) | Im Test-Repo mit Installations-Token der App: (1) `git push` eines Commits, der eine Workflow-Datei anlegt; (2) dasselbe über die Contents-API; (3) Änderung einer bestehenden Workflow-Datei. | Alle drei abgelehnt | Workflow-Änderungen zusätzlich im Git-Gate sperren (Pfadfilter), Plan anpassen |
 | S1d | Reichen die Rate-Limits der App für Polling? | Doku: mindestens 5.000 Anfragen pro Stunde je Installation, höchstens 12.500 ([GitHub-Doku](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)). Gemessen wird der tatsächliche Bedarf eines Poll-Zyklus (PR-Liste, Reviews, Checks je offenem PR) über die Header `x-ratelimit-*`, auch für bedingte Anfragen mit `ETag` (ob 304-Antworten zählen, sagt die Doku nicht). | Bedarf bei 10 offenen PRs und 60-s-Intervall < 20 % des Limits | Intervall verlängern oder Webhook über einen Relay prüfen (Plan anpassen) |
-| S1e | Gilt der Merge der App über die API trotz Branch-Schutz nur mit CEO-Approve? | Im Test-Repo: Schutzregel wie 1.5, Merge-Versuch der App ohne Approve, mit Approve auf altem SHA, mit Approve auf aktuellem SHA; mit und ohne App in „Restrict who can push“. | Merge nur im letzten Fall möglich | Einstellungen in 1.5 korrigieren |
+| S1e | Gilt der Merge der App über die API trotz Branch-Schutz nur mit CEO-Approve? | Im Test-Repo: Schutzregel wie 1.4, Merge-Versuch der App ohne Approve, mit Approve auf altem SHA, mit Approve auf aktuellem SHA; mit und ohne App in „Restrict who can push“. | Merge nur im letzten Fall möglich | Einstellungen in 1.4 korrigieren |
 | S1f | Lädt `claude -p` Einstellungen oder MCP-Server aus dem Arbeitsbereich? | Arbeitsbereich mit präparierter `.claude/settings.json` (Hook, der eine Markerdatei schreibt) und `.mcp.json`. Aufruf mit den Flags aus Kap. 5.7. Hintergrund: Laut [Doku](https://code.claude.com/docs/en/headless) führt `-p` ohne `--bare` Hooks aus `.claude/settings.json` aus und verbindet Server aus `.mcp.json`, auch in Ordnern ohne Vertrauensfreigabe. | Keine Markerdatei, kein fremder MCP-Server in `system/init` | Zusätzliche Flags (z. B. `--strict-mcp-config`) oder Dateien vor dem Lauf entfernen; Plan anpassen |
 | S1g | Container-Netz | Aus dem Lauf-Container: Host, anderer Container, Internet direkt, DNS direkt → müssen scheitern; Proxy und Office-Port (Attrappe) → müssen gehen. | wie beschrieben | Netzaufbau korrigieren |
 
@@ -288,12 +243,13 @@ Wochenzähler um mehr als die freigegebene Menge gestiegen ist.
 **Ergebnis statt Go/No-Go:** Statik = min(⌊(RAM − Reserve) / RAM-Spitze je Lauf⌋,
 ⌊(Platte frei − Reserve) / Platte je Lauf⌋, CPU-Grenze aus S3c). Reserve **[Annahme]**: 3 GB RAM
 für Supervisor, Office, Proxy und Betriebssystem, 20 GB Platte. **No-Go** nur, wenn weniger als
-2 gleichzeitige Werkbank-Läufe möglich sind; dann größeren Server vorschlagen.
+2 gleichzeitige Werkbank-Läufe möglich sind; dann die Parallelität entsprechend begrenzen und den späteren Server größer
+dimensionieren.
 
 ### 3.4 Reihenfolge und Abhängigkeiten
 
-1. S1c, S1d, S1e (brauchen nur GitHub, kein VPS) → sofort nach Freigabe des Test-Repos.
-2. S1a, S1b, S1f, S1g, S3a (brauchen VPS und `setup-token`).
+1. S1c, S1d, S1e (brauchen nur GitHub) → sofort nach Freigabe des Test-Repos.
+2. S1a, S1b, S1f, S1g, S3a (brauchen die Entwicklungsmaschine und `setup-token`).
 3. S2 (braucht vollen Login und das ruhige Zeitfenster).
 4. S3b–S3d (brauchen P01, damit ein echtes Repo gebaut werden kann).
 
@@ -337,7 +293,7 @@ AK = Abnahmekriterium aus Kap. 7.4. Jedes Paket = ein Branch, ein PR.
 | **S14** | SUP | Benachrichtigung | E-Mail bei Eskalation, Schutzschalter, Anmeldung, Stillstand, Überschreitung | S03 | S | 6, 7 |
 | **S15** | SUP | Backup + Rücksicherung | Tägliche SQLite-Sicherung beider DBs vor dem Anbieter-Backup, Rücksicherungsskript, Test | S01, P03 | S | 12 |
 | **S16** | SUP | Host-Provisionierung | Nutzer `aio-sup`/`aio-office`, Verzeichnisse und Rechte, nftables für `aio-office` (E41), systemd-Units mit Watchdog, Docker-Log-Limits, interne CA und Hostnamen | S01 | M | 10 |
-| **I01** | beide | Abnahme auf dem VPS | Testprotokoll für AK 1–12, Ergebnis als Bericht | alle | M | 1–12 |
+| **I01** | beide | Abnahme auf der Entwicklungsmaschine | Testprotokoll für AK 1–12, Ergebnis als Bericht | alle | M | 1–12 |
 
 ### 4.2 Reihenfolge
 
@@ -410,7 +366,11 @@ eigenen PR vor.
 2. **Managed Settings des Lauf-Containers:** Kap. 5.7 legt sie ins Image, das Image ändern Agenten
    per PR. Vorschlag: Der Supervisor bindet die Datei schreibgeschützt aus seinem eigenen Repo ein.
    Dann kann ein Image-PR die Rechte der Läufe nicht verändern.
-3. **Interne Hostnamen:** `.internal` statt `.intern` (siehe 1.2), TLS über eine eigene CA ergänzen.
-4. **VPN:** Tailscale als Beispiel streichen oder auf die Lizenzgrenze hinweisen (siehe 1.2).
+3. **Interne Hostnamen:** `.internal` statt `.intern` (siehe 1.1), TLS über eine eigene CA ergänzen.
+4. **VPN (für den späteren Server):** Tailscale als Beispiel streichen oder auf die Lizenzgrenze
+   hinweisen: Der kostenlose Tarif ist laut Anbieter „only suitable for non-commercial use“
+   ([tailscale.com/pricing](https://tailscale.com/pricing)). Empfehlung: WireGuard.
 5. **Repo-Inhalte im Arbeitsbereich:** Prüfung S1f ergänzen (Hooks und `.mcp.json` aus dem Repo).
-6. **O5:** nach Ihrer Entscheidung zum VPS schließen.
+6. **E8, E21, O5:** In der Entwicklungsphase läuft das System auf der Entwicklungsmaschine des
+   CEO, VPS und Anbieter-Backup sind zurückgestellt (siehe 1.1). Abnahmekriterien 10 und 12
+   entsprechend anpassen.
