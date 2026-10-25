@@ -48,7 +48,9 @@ Warum nicht WSL 2 oder Docker Desktop:
   Windows-Zugangsdaten.
 - **S3** misst die Statik innerhalb der VM. Die Servergröße für später leite ich daraus ab.
 - **Backup (E21) und Abnahmekriterium 12:** Ersatz ist die tägliche SQLite-Sicherung (Paket S15)
-  plus Hyper-V-Prüfpunkte oder ein VM-Export vor riskanten Schritten. Der Rücksicherungstest läuft
+  plus Hyper-V-Prüfpunkte vor riskanten Schritten (nur kurzzeitig, sie belegen Platz auf D:) und
+  ein regelmäßiger VM-Export auf die HDD F: oder G:. Die Sicherung liegt damit auf einem anderen
+  Datenträger als die VM. Der Rücksicherungstest läuft
   gegen diese Sicherung.
 - **Abnahmekriterium 10** („Neustart des VPS“) gilt für den Neustart der VM und den Neustart von
   Windows. Die VM startet mit Windows automatisch (automatische Startaktion in Hyper-V).
@@ -63,8 +65,11 @@ Warum nicht WSL 2 oder Docker Desktop:
    - Generation 2, Name `aio-dev`
    - Arbeitsspeicher 16 GB, **dynamischer Arbeitsspeicher aus** (feste Grenzen für die Statik)
    - 8 virtuelle Prozessoren (der Ryzen hat 6 Kerne mit 12 Threads)
-   - virtuelle Festplatte 200 GB, dynamisch erweiterbar, auf einem **SSD-Laufwerk** mit
-     ausreichend Platz
+   - virtuelle Festplatte dynamisch erweiterbar, Obergrenze 100 GB, auf **D:** (SSD). Bedarf in
+     Etappe 1 geschätzt 40–60 GB: Ubuntu, Docker-Images, Registry-Cache, Arbeitsbereiche,
+     Prüfpunkte **[Annahme, S3 misst es]**. Auf einer HDD wären Paketinstallationen und
+     Docker-Schichten deutlich langsamer, und S3 würde nicht zum späteren Server mit SSD passen.
+     Eine zusätzliche SSD lohnt sich erst, wenn D: zu wenig Platz hat oder S3 Platzmangel zeigt.
    - Netzwerk: „Default Switch“
    - Ubuntu Server 24.04 LTS (oder die neueste LTS) als ISO von ubuntu.com
    - Sicherer Start: Vorlage „Microsoft UEFI-Zertifizierungsstelle“, sonst startet Ubuntu nicht
