@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). **Offen:** CEO-Bestätigung zu O11 (60-%-Grenze als Zielwert).
+> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O11 in Runde 8).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -53,6 +53,7 @@
 | E40 | **Supervisor-Gateway im Laufnetz:** Container übergeben sicherheitsrelevante Aufrufe (Bundle, Merge-Antrag) **direkt** an den Supervisor, nicht über das Office. Das Lauf-Token stellt der Supervisor aus und prüft es selbst. | Sonst könnte ein manipuliertes Office unter fremder Laufidentität handeln. | Review 8 |
 | E41 | **Das Office hat kein eigenes Netz nach außen.** Eine Firewall-Regel für den Nutzer `aio-office` erlaubt nur Loopback und Unix-Socket. Webzugriff (`web_fetch`) führt der Supervisor bzw. der Proxy aus, und jede URL wird protokolliert. | Das Office kennt CEO-Chat und Gedächtnis und darf sie nicht direkt versenden können. | Review 8 |
 | E42 | **Laufzeit-Lease unabhängig vom Supervisor:** Jeder Container bekommt eine harte Wanduhr-Grenze in seinem Startprozess. Nach jedem Neustart gleicht der Supervisor die noch laufenden Container und ihre Reservierungen ab, **bevor** er neue Läufe zulässt. | Container laufen bei einem Absturz des Supervisors sonst unkontrolliert weiter. | Review 8 |
+| E43 | Die **60-%-Grenze ist ein Zielwert**: konservative Reservierung, Pause bei 55 %, Meldung jeder Überschreitung und automatische Absenkung der Schwelle. Eine harte Garantie ist mit den verfügbaren Messgrößen nicht beweisbar. | Copilot-Review, Befund 7 | Runde 8 |
 
 ---
 
@@ -750,7 +751,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O7 | Sandbox in Docker | Spike S1 |
 | O8 | Grafik-Assets | Vor Etappe 2 |
 | O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
-| O11 | **60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie** (Verfassung Nr. 2, Kap. 6) | CEO-Bestätigung ausstehend. Eine harte Garantie ist mit den verfügbaren Messgrößen nicht beweisbar. |
+| O11 | 60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie (Verfassung Nr. 2, Kap. 6) | Bestätigt (Runde 8), siehe E43 |
 
 ---
 
@@ -836,6 +837,6 @@ Copilot hat 7 Befunde mit hoher Schwere gemeldet. Ich habe jeden gegen den Plan 
 | 4 | Der Office-Prozess hat keine Netzbeschränkung und könnte CEO-Chat und Gedächtnis direkt versenden. | bestätigt | E41: Egress für `aio-office` gesperrt, `web_fetch` über den Supervisor mit Protokoll der URLs |
 | 5 | Datenabfluss über GET-Anfragen an den Registry-Cache | teilweise. Den Kanal gibt es, aber ein Angreifer sieht die Anfragen nur, wenn er die Upstream-Registry betreibt. | Upstreams fest, nur Paketpfade, keine Query-Strings. Restkanal ausdrücklich akzeptiert (Kap. 5.7, R6) |
 | 6 | Container laufen nach einem Absturz des Supervisors unkontrolliert weiter. | bestätigt | E42: harte Lease im Container, Abgleich vor neuer Admission, Kap. 4.5 Punkt 9 und 5.14 korrigiert |
-| 7 | Die Reservierung garantiert die 60-%-Grenze nicht. | bestätigt | Konservative Reservierung, Selbstkorrektur. 60 % offen als Zielwert deklariert, **CEO-Bestätigung ausstehend (O11)** |
+| 7 | Die Reservierung garantiert die 60-%-Grenze nicht. | bestätigt | Konservative Reservierung, Selbstkorrektur. 60 % als Zielwert, vom CEO bestätigt (O11, E43) |
 
 **Einordnung:** Die Befunde 1, 3, 4 und 6 betreffen erneut die Grenze „Office gegen Supervisor“. Review 6 hatte hier die großen Lücken geschlossen; Review 8 findet nun die verbliebenen Seitenkanäle: Protokoll, Identität, Netz, Laufzeit. Nach Review 8 ist der Grundsatz durchgängig umgesetzt: **Was das Office tut, ist für die Sicherheit irrelevant.** Der Preis ist ein etwas größerer Supervisor (R10).
