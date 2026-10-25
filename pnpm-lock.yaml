@@ -35,6 +35,8 @@ importers:
 
   packages/office: {}
 
+  spikes/s1-github: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':

@@ -1,5 +1,6 @@
 packages:
   - "packages/*"
+  - "spikes/*"
 
 # Lieferkette (E34): Abhängigkeiten führen beim Installieren keine Skripte aus.
 # Ein Paket mit Build-Skript bricht die Installation ab, bis es hier ausdrücklich
