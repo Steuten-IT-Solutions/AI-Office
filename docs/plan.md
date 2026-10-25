@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O11 in Runde 8).
+> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). **Offen:** CEO-Entscheidung zu O12 (Vier-Augen-Prinzip vor Etappe 3).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
