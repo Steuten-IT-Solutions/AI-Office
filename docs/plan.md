@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). **Offen:** CEO-Entscheidung zu O12 (Vier-Augen-Prinzip vor Etappe 3).
+> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O12 in Runde 9).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -54,6 +54,7 @@
 | E41 | **Das Office hat kein eigenes Netz nach außen.** Eine Firewall-Regel für den Nutzer `aio-office` erlaubt nur Loopback und Unix-Socket. Webzugriff (`web_fetch`) führt der Supervisor bzw. der Proxy aus, und jede URL wird protokolliert. | Das Office kennt CEO-Chat und Gedächtnis und darf sie nicht direkt versenden können. | Review 8 |
 | E42 | **Laufzeit-Lease unabhängig vom Supervisor:** Jeder Container bekommt eine harte Wanduhr-Grenze in seinem Startprozess. Nach jedem Neustart gleicht der Supervisor die noch laufenden Container und ihre Reservierungen ab, **bevor** er neue Läufe zulässt. | Container laufen bei einem Absturz des Supervisors sonst unkontrolliert weiter. | Review 8 |
 | E43 | Die **60-%-Grenze ist ein Zielwert**: konservative Reservierung, Pause bei 55 %, Meldung jeder Überschreitung und automatische Absenkung der Schwelle. Eine harte Garantie ist mit den verfügbaren Messgrößen nicht beweisbar. | Copilot-Review, Befund 7 | Runde 8 |
+| E44 | **Kein Vier-Augen-Prinzip zwischen Agenten vor Etappe 3:** Bis zur ersten Einstellung schreibt nur der CTO Code, und das Review des CEO ist die einzige zweite Prüfung. | CEO-Entscheidung (Variante A). Hält das MVP klein. Folge: Das Review des CEO trägt bis dahin die volle Prüflast. | Runde 9 |
 
 ---
 
@@ -640,7 +641,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
 - Meetings nur mit Agenda
 - Entscheidungen mit Begründung im Ereignisprotokoll
 
-**Bekannte Lücke der Startbelegschaft:** Nur der CTO hat eine Werkbank. Bis zur ersten Einstellung schreibt und prüft er also allein, und das zweite Paar Augen ist nur das Review des CEO. Die Einstellung neuer Agenten ist erst ab Etappe 3 vorgesehen (offener Punkt O12).
+**Bekannte Lücke der Startbelegschaft:** Nur der CTO hat eine Werkbank. Bis zur ersten Einstellung schreibt und prüft er also allein, und das zweite Paar Augen ist nur das Review des CEO. Die Einstellung neuer Agenten ist erst ab Etappe 3 vorgesehen. Der CEO hat entschieden, das bis dahin so zu belassen (O12, E44).
 
 ### 5.13 Teststrategie
 
@@ -773,7 +774,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O7 | Sandbox in Docker | Spike S1 |
 | O8 | Grafik-Assets | Vor Etappe 2 |
 | O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
-| O12 | Vier-Augen-Prinzip zwischen Agenten vor Etappe 3: Bis zur ersten Einstellung prüft nur der CEO den Code des CTO. Option: eine vereinfachte Einstellung schon in Etappe 2 | CEO-Entscheidung ausstehend |
+| O12 | Vier-Augen-Prinzip zwischen Agenten vor Etappe 3: Bis zur ersten Einstellung prüft nur der CEO den Code des CTO. Option: eine vereinfachte Einstellung schon in Etappe 2 | Entschieden (Runde 9): **Variante A**. Bis Etappe 3 ist das Review des CEO die einzige zweite Prüfung, siehe E44. |
 | O11 | 60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie (Verfassung Nr. 2, Kap. 6) | Bestätigt (Runde 8), siehe E43 |
 
 ---
