@@ -131,7 +131,7 @@
 - **Rechtliche Grauzone (R1):** Ob ein autonomes Mehragentensystem im Dauerbetrieb noch „ordinary, individual usage“ ist, ist nicht geklärt (Fakt 3, Fakt 4). **Empfehlung:** vor dem Dauerbetrieb bei Anthropic schriftlich anfragen. Bis dahin halten Pausen im Betrieb, die 60-%-Grenze und eine sparsame Modellwahl die Nutzung so nah wie möglich an einem individuellen Gebrauch.
 - **Kapazität ist die Engpassressource.** Das Kontingent wird gemessen, vorhergesagt und rationiert (Kap. 6).
 - **ChatGPT-Abo:** nicht im MVP (Fakt 12). Für später ist der Adapter `LlmRunner` vorgesehen.
-- **Authentifizierung (E27):** In den Läufen nur das `setup-token`. Es kann ausschließlich Modellanfragen stellen und muss nicht erneuert werden (Fakt 2). Der volle Login liegt nur beim Supervisor, für `/usage` (Fakt 7). Läuft dieser Login ab, fehlt nur die Kontingentmessung. Das Büro pausiert dann vorsorglich (R3).
+- **Authentifizierung (E27):** In den Läufen nur das `setup-token`. Es kann ausschließlich Modellanfragen stellen und läuft **ein Jahr** (Fakt 2). Der Supervisor speichert das Ablaufdatum, warnt den CEO 30 Tage vorher (E37) und pausiert das Büro, sobald Läufe mit Authentifizierungsfehlern enden. Neu ausgestellt wird es vom CEO per `claude setup-token`. Der volle Login liegt nur beim Supervisor, für `/usage` (Fakt 7). Läuft dieser Login ab, fehlt nur die Kontingentmessung. Das Büro pausiert dann vorsorglich (R3).
 - **GitHub (Fakten 14–17):** Ein öffentliches Repo ist für die CI nicht nötig. Es liefert aber kostenlose Minuten und Branch-Schutz. Weil Agenten-Branches im selben Repo liegen, braucht es die CI-Härtung aus E30.
 
 ---
@@ -384,7 +384,7 @@ Alle anderen Aufrufe sind reine Daten im Office.
 | Unix-Nutzer `aio-sup` | Führt den Supervisor aus. Mitglied der Gruppe `docker`. Besitzer von `/opt/aio-supervisor`, `/etc/aio/secrets` (Modus 0600) und der Audit-DB |
 | Unix-Nutzer `aio-office` | Führt das Office aus. **Nicht** in der Gruppe `docker`. Keine Leserechte auf Supervisor und Secrets. Schreibrechte nur auf `/var/lib/aio-office`. **Neue ausgehende Verbindungen gesperrt** per nftables-Regel für diese UID (`meta skuid`). Antwortverkehr auf eingehende Verbindungen bleibt erlaubt (`ct state established,related accept` vor der Sperre), damit Webinterface, WebSocket und MCP-Verbindungen der Container funktionieren. Neue Verbindungen sind nur über Loopback zu den internen Ports und den Unix-Socket erlaubt (E41). |
 | IPC | Unix-Socket `/run/aio/supervisor.sock`, schreibbar nur für `aio-office`. Eine schmale, versionierte API (Kap. 4.6, Liste). Der Supervisor authentifiziert über `SO_PEERCRED`. |
-| Lauf-Container | Nicht privilegiert, `--cap-drop ALL`, `no-new-privileges`, Limits für CPU, RAM und PIDs, Arbeitsbereich mit Größenlimit, eigenes Netz. Kein Docker-Socket, kein Host-Mount außer dem Arbeitsbereich |
+| Lauf-Container | Nicht privilegiert, `--cap-drop ALL`, `no-new-privileges`, Limits für CPU, RAM und PIDs, **schreibgeschütztes Root-Dateisystem** (`--read-only`). Schreibbar sind nur der Arbeitsbereich mit Größenlimit sowie `/tmp` und das CLI-Konfigurationsverzeichnis als `tmpfs` mit festem Größenlimit, damit kein Lauf die Platte des VPS füllen kann. Eigenes Netz. Kein Docker-Socket, kein Host-Mount außer dem Arbeitsbereich |
 | Supervisor-Konsole | **Eigener Hostname** (z. B. `konsole.aio.intern`), nur über VPN erreichbar. Eigener Login mit zweitem Faktor. Sitzungscookie mit Präfix `__Host-`, also ohne `Domain`-Attribut, mit `Secure`, `HttpOnly` und `SameSite=Strict`. Eine Trennung nur über den Port würde nicht reichen, weil Browser Cookies nicht nach Port trennen. Freigaben sind an das Objekt gebunden (ID, bei PRs der SHA). |
 | Office-Webinterface | **Eigener Hostname** (z. B. `office.aio.intern`), Login über VPN, Cookie ebenfalls mit Präfix `__Host-`. Kann nichts freigeben. |
 
@@ -921,3 +921,12 @@ Copilot hat 4 Befunde geliefert, alle als niedrige Schwere eingestuft.
 | 1 | hoch | Konsole und Office sind dieselbe Site. `SameSite=Strict` schützt die Konsole nicht vor CSRF durch das Office. | bestätigt, Fehler aus Review 11 | CSRF-Token, exakte Prüfung der `Origin`, keine Zustandsänderung per GET, Empfehlung für verschiedene Domains (5.11) |
 | 2 | hoch | Der Ausgangsfilter prüft keine Dateiinhalte, und der Branch ist schon vor dem Review öffentlich. | bestätigt | Filter vor jedem Push auf alle Dateiinhalte und Pfade aller Commits, auch auf wieder gelöschte Inhalte (5.9) |
 | 3 | mittel (bisher übersehen) | Eine reine Host-Allowlist für Anthropic erlaubt Uploads in die Files-API mit einem fremden API-Key. | bestätigt | TLS-Proxy mit Allowlist für Endpunkte und Prüfung des eigenen Tokens. Machbarkeit in Spike S1, sonst ausdrücklich als Restrisiko (5.7) |
+
+### Review 13 – Copilot-Review in PR #1, Runde 5
+
+Copilot meldet **keine offenen Befunde** mehr. Zusätzlich nennt die Zusammenfassung 2 „bisher übersehene“ Punkte mit niedriger Schwere in Text, der unverändert geblieben war. Beide sind berechtigt.
+
+| # | Befund | Änderung |
+|---|---|---|
+| 1 | „Muss nicht erneuert werden“ widerspricht der Laufzeit des `setup-token` von einem Jahr. | Ablaufdatum speichern, Warnung 30 Tage vorher, Pause bei Authentifizierungsfehlern, Neuausstellung durch den CEO (2.3) |
+| 2 | Die beschreibbare Container-Schicht hat kein Größenlimit. | Schreibgeschütztes Root-Dateisystem, `tmpfs` mit Größenlimit (4.7) |
