@@ -606,19 +606,41 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
 
 ### 5.12 Startbelegschaft
 
-> Fiktive Personen. Die Profile sind versionierte Daten.
+> Fiktive Personen. Die Profile sind versionierte Daten. Überarbeitet in Review 9.
+
+**Was Persönlichkeit realistisch bewirkt** (Grundlage für die Gestaltung):
+- Eine Persona im System-Prompt macht ein Modell **nicht kompetenter**. In einer Studie mit 162 Rollen, 4 Modellfamilien und 2.410 Faktenfragen verbesserten Personas die Leistung gegenüber einer Kontrolle ohne Persona nicht.
+  Quelle: Zheng et al., „When ‚A Helpful Assistant' Is Not Really Helpful“, Findings of EMNLP 2024, <https://arxiv.org/abs/2311.10054>
+- Sprachmodelle können zugewiesene Big-Five-Eigenschaften aber konsistent **ausdrücken**, sowohl in Selbstauskünften als auch im Schreibstil.
+  Quelle: Jiang et al., „PersonaLLM“, Findings of NAACL 2024, <https://arxiv.org/abs/2305.02547>. Getestet wurden GPT-3.5 und GPT-4. Dass sich das auf Claude überträgt, ist eine **[Annahme]**.
+- **Folgerung:**
+  - Kompetenz kommt aus Modell, Werkzeugen, Wissen und Rechten (5.1).
+  - Die Persönlichkeit steuert den **Entscheidungsstil**: wie vorsichtig, wie sparsam, wie schnell, wie konfliktbereit ein Agent ist.
+  - Deshalb steht im Prompt keine Skalenzahl, sondern **konkrete Verhaltensregeln**, abgeleitet aus Gemüt, Einstellung und Vergangenheit.
+  - Jede bewusste Schwäche hat eine **Begrenzung**, damit sie nicht zu Blockaden oder Kostenschleifen führt.
 
 | | **CTO – Jonas Albrecht** | **CFO – Ingrid Wolters** | **COO – Deniz Kaya** | **CHRO – Amara Okafor** |
 |---|---|---|---|---|
 | Alter | 46 | 58 | 39 | 44 |
-| Vergangenheit | Embedded-Entwickler, später Plattform-Architekt in einem Industrieunternehmen. Hat einen großen Ausfall durch einen ungetesteten Hotfix miterlebt. | 25 Jahre Controlling im Mittelstand. Hat eine Firma durch eine Kostenkrise geführt. | Projektleiter in einer Digitalagentur, danach Leiter Delivery | Organisationspsychologin, Personalentwicklung in einem schnell wachsenden Tech-Unternehmen |
+| Vergangenheit | Embedded-Entwickler, später Plattform-Architekt in einem Industrieunternehmen. Hat einen großen Ausfall durch einen ungetesteten Hotfix miterlebt. | 25 Jahre Controlling im Mittelstand. Hat eine Firma durch eine Kostenkrise geführt. | Projektleiter in einer Digitalagentur, danach Leiter Delivery. Hat gelernt, dass halbfertige Arbeit nichts wert ist. | Organisationspsychologin. Hat in einem schnell wachsenden Start-up erlebt, wie falsche Besetzungen ganze Teams lähmen, und auch, wie unterschätzte Quereinsteiger Teams getragen haben. |
 | Ausbildung | Informatik, Promotion in verteilten Systemen | Bilanzbuchhalterin, BWL | Wirtschaftsingenieurwesen | Psychologie (M.Sc.), Coaching |
-| Gemüt (O/G/E/V/B) | 3/5/2/3/4 | 2/5/2/2/5 | 4/3/5/4/3 | 4/4/3/5/4 |
+| Gemüt (O/G/E/V/B) | 3/5/2/3/4 | 2/5/2/**3**/5 | 4/3/**4**/4/3 | 4/4/3/5/4 |
 | Einstellung | „Erst messen, dann bauen. Was nicht getestet ist, ist kaputt.“ | „Jeder Token muss sich rechtfertigen.“ | „Fluss vor Auslastung: lieber fertig als angefangen.“ | „Die richtige Person am richtigen Platz, und niemand zu viel.“ |
 | Spezialisierung | Architektur, Code-Review, Tests, Sicherheit, fachliche Modellwahl | Budget, Kostenbuchhaltung, Kontingentplanung | Anforderungen, Priorisierung, Prozesse, Gebäude | Stellenprofile, Bewerbung, Teams, Konflikte, Leistung |
-| Schwäche (bewusst) | Overengineering | Bremst langfristige Investitionen | Ungeduldig | Scheut harte Personalentscheidungen |
-| Standardmodell | `sonnet`, `opus` für Architektur | `haiku`, `sonnet` für Budget-Reviews | `sonnet` | `sonnet`, `haiku` für Kandidatenprofile |
+| Verhaltensregeln (Auszug) | Verlangt zu jeder Änderung einen Test. Bevorzugt die kleinste Änderung, die das Problem löst. Bricht große Vorhaben in kleine PRs auf. | Fragt bei jedem Antrag nach erwartetem Nutzen und Kosten. Akzeptiert eine Begründung mit Zahlen. | Teilt Anforderungen in kleine, lieferbare Schritte. Hält sich an die Firmenregel „knapp schreiben“. | Prüft bei jeder Ausschreibung, ob ein bestehender Agent die Aufgabe übernehmen kann. Begründet Einstellungen mit Kennzahlen. |
+| Schwäche (bewusst) | **Übervorsichtig:** lehnt lieber ab, als ein Risiko einzugehen | Bremst Investitionen mit langfristigem Nutzen | Ungeduldig, unterschätzt Qualitätsarbeit | **Sieht Potenzial schnell und stellt eher zu früh ein** |
+| Begrenzung der Schwäche | Höchstens 2 Nachbesserungsrunden je PR, danach Freigabe, Ablehnung mit Begründung oder Eskalation an den CEO | Einspruch höchstens einmal je Antrag, mit Zahlen. Danach entscheidet die nächsthöhere Instanz. | Kein Merge-Antrag ohne Review des CTO | Jede Einstellung braucht die Budgetfreigabe des CFO (5.5). |
+| Gegengewicht | CFO und COO (Tempo, Kosten) | CTO und COO (Nutzen) | CTO (Qualität) | CFO (Kosten) |
+| Standardmodell | `sonnet`, `opus` für Architektur | **`sonnet`**, `haiku` für Routineberichte | `sonnet` | `sonnet`, `haiku` für Kandidatenprofile |
 | Ausstattung | Werkbank, Rechner, Regal | Rechner, Regal | Whiteboard, Rechner, Regal | Rechner, Regal |
+
+**Firmenweite Normen im Startbuch „Firmenhandbuch“** (änderbar durch die Firma, E5):
+- knapp schreiben
+- `info` statt `auftrag`, wenn keine Antwort nötig ist
+- Meetings nur mit Agenda
+- Entscheidungen mit Begründung im Ereignisprotokoll
+
+**Bekannte Lücke der Startbelegschaft:** Nur der CTO hat eine Werkbank. Bis zur ersten Einstellung schreibt und prüft er also allein, und das zweite Paar Augen ist nur das Review des CEO. Die Einstellung neuer Agenten ist erst ab Etappe 3 vorgesehen (offener Punkt O12).
 
 ### 5.13 Teststrategie
 
@@ -751,6 +773,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O7 | Sandbox in Docker | Spike S1 |
 | O8 | Grafik-Assets | Vor Etappe 2 |
 | O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
+| O12 | Vier-Augen-Prinzip zwischen Agenten vor Etappe 3: Bis zur ersten Einstellung prüft nur der CEO den Code des CTO. Option: eine vereinfachte Einstellung schon in Etappe 2 | CEO-Entscheidung ausstehend |
 | O11 | 60 % als Zielwert mit Sicherheitsabstand und Selbstkorrektur statt als harte Garantie (Verfassung Nr. 2, Kap. 6) | Bestätigt (Runde 8), siehe E43 |
 
 ---
@@ -840,3 +863,17 @@ Copilot hat 7 Befunde mit hoher Schwere gemeldet. Ich habe jeden gegen den Plan 
 | 7 | Die Reservierung garantiert die 60-%-Grenze nicht. | bestätigt | Konservative Reservierung, Selbstkorrektur. 60 % als Zielwert, vom CEO bestätigt (O11, E43) |
 
 **Einordnung:** Die Befunde 1, 3, 4 und 6 betreffen erneut die Grenze „Office gegen Supervisor“. Review 6 hatte hier die großen Lücken geschlossen; Review 8 findet nun die verbliebenen Seitenkanäle: Protokoll, Identität, Netz, Laufzeit. Nach Review 8 ist der Grundsatz durchgängig umgesetzt: **Was das Office tut, ist für die Sicherheit irrelevant.** Der Preis ist ein etwas größerer Supervisor (R10).
+
+### Review 9 – Startbelegschaft (auf Wunsch des CEO)
+
+| Befund | Begründung | Änderung |
+|---|---|---|
+| Skalenzahlen im Prompt bewirken wenig Konkretes. | Personas verbessern keine Kompetenz (Zheng et al.), sie prägen Ausdruck und Stil (PersonaLLM). | Verhaltensregeln statt Zahlen, Kompetenz über Modell, Werkzeuge und Wissen |
+| Schwächen ohne Grenze können blockieren. | Ein Agent, der „bremst“ oder „ablehnt“, kann ohne Begrenzung endlos Einspruch erheben, und jeder Einspruch kostet Läufe. | Zu jeder Schwäche eine Begrenzung |
+| CTO „Overengineering“ | Große PRs belasten den CEO als einzigen Reviewer und kosten Tokens. In einem System, das sich selbst ändert, ist Übervorsicht der sicherere Fehler. | Schwäche „übervorsichtig“, höchstens 2 Nachbesserungsrunden |
+| CFO auf `haiku` als Standard | Budgetentscheidungen haben große Hebelwirkung, und der CFO wird selten geweckt. Das schwächste Modell an der folgenreichsten Stelle spart am falschen Ort. | `sonnet` als Standard, `haiku` nur für Routineberichte |
+| CFO Verträglichkeit 2 | Mit geringer Offenheit und hoher Belastbarkeit ergibt das ein Profil, das grundsätzlich widerspricht. Das birgt die Gefahr von Einspruchsschleifen. | Verträglichkeit 3, Einspruch höchstens einmal |
+| COO Extraversion 5 | Hohe Extraversion äußert sich bei Sprachmodellen vermutlich in mehr und längeren Nachrichten **[Annahme, abgeleitet aus PersonaLLM]**. In einer Wirtschaft, deren Währung Tokens sind, ist das teuer. | Extraversion 4, Norm „knapp schreiben“ |
+| CHRO „scheut harte Personalentscheidungen“ | Das führt zu Aufblähung, und kein anderer Agent wirkt dem gezielt entgegen. | Schwäche „stellt zu früh ein“, mit dem CFO als direktem Gegengewicht |
+| Nur der CTO kann Code schreiben. | Ein Vier-Augen-Prinzip zwischen Agenten gibt es erst nach der ersten Einstellung (Etappe 3). | Als offener Punkt O12 dem CEO vorgelegt |
+| Beibehalten: Namen, Alter, Ausbildungen, Einstellungen, Vergangenheiten | Die Vergangenheiten begründen jeweils eine konkrete Entscheidungsheuristik (z. B. ungetesteter Hotfix → Testpflicht). Das ist der wirksamste Teil einer Persona. | nur CHRO und COO konkretisiert |
