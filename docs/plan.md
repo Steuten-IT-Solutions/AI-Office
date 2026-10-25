@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.1 – **zur Freigabe durch den CEO**. Überarbeitet nach einem unabhängigen Review (Review 6) und dessen Gegenprüfung (Review 7). Vier Entscheidungen sind als **Vorschlag** markiert und brauchen noch die Bestätigung des CEO.
+> **Status:** Version 1.2 – **zur Freigabe durch den CEO**. Überarbeitet nach einem unabhängigen Review (Review 6) und dessen Gegenprüfung (Review 7). Alle Entscheidungen sind vom CEO bestätigt (Runde 7).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -36,18 +36,18 @@
 | E23 | **CI und Tests rufen nie ein echtes LLM auf.** Ein Fake-`LlmRunner` spielt aufgezeichnete Läufe ab. | Kostet kein Kontingent, ist deterministisch und braucht keine Secrets in der öffentlichen CI. | Review 4 |
 | E24 | **Migrationen nach dem Muster Expand/Contract** mit Regeln für Vorwärtskompatibilität (Kap. 4.5) | Rollback ohne Rücksicherung, keine verlorenen Ereignisse | Review 4, Review 6 |
 | E25 | **Nur der Supervisor startet Container.** Das Office läuft als eigener Unix-Nutzer ohne Docker-Zugriff und ohne Zugriff auf Secrets. Kommunikation nur über einen Unix-Socket (Kap. 4.7). | Wer Container starten kann, ist faktisch Root. Ohne Trennung wäre der Supervisor keine Grenze. | Review 6 |
-| E26 | **Vorschlag:** Die **Merge-Freigabe** für `AI-Office` erteilt der CEO als **PR-Review direkt in GitHub**. Der Supervisor merged nur, wenn ein Approve des CEO auf genau dem aktuellen Head-SHA vorliegt. Alle übrigen Freigaben der Stufe C und der Notaus liegen in einer **eigenen, kleinen Supervisor-Konsole**. | GitHub zeigt den echten Diff an, hat eigene Zwei-Faktor-Authentifizierung und kann von den Agenten nicht verändert werden. Eine Freigabe-Oberfläche im Office wäre manipulierbar. | Review 6 |
+| E26 | Die **Merge-Freigabe** für `AI-Office` erteilt der CEO als **PR-Review direkt in GitHub**. Der Supervisor merged nur, wenn ein Approve des CEO auf genau dem aktuellen Head-SHA vorliegt. **Die PRs sind im Webinterface eingebunden:** Liste, Status, CI, kritische Pfade, Zusammenfassung und ein Direktlink zum Review in GitHub (Kap. 5.11). Der Klick auf „Approve“ erfolgt in GitHub. Alle übrigen Freigaben der Stufe C und der Notaus liegen in einer **eigenen, kleinen Supervisor-Konsole**. | GitHub zeigt den echten Diff an, hat eigene Zwei-Faktor-Authentifizierung und kann von den Agenten nicht verändert werden. Ein Freigabeknopf im Office müsste einen GitHub-Zugang des CEO halten. Eine Office-Version mit Fehler oder Manipulation könnte ihn dann missbrauchen. | Review 6, Runde 7 |
 | E27 | **Zwei Arten von Claude-Zugang:** In den Lauf-Containern nur ein **`setup-token`**, das ausschließlich Modellanfragen stellen kann. Der volle Login liegt nur beim Supervisor und dient nur der Abfrage des Kontingents. | Kleinerer Schaden, wenn ein Zugang abgegriffen wird. Kein Konflikt beim Erneuern der Anmeldung. | Review 6 |
 | E28 | **Git-Übergabe als `git bundle`:** Der Host führt nie Git im Verzeichnis eines Agenten aus. Der Supervisor importiert in ein eigenes Bare-Repo ohne Hooks und ohne Repo-Konfiguration. | Git-Hooks und Git-Konfiguration aus Agentenhand würden sonst auf dem Host laufen. | Review 6 |
 | E29 | **Egress-Härtung:** Paket-Registries nur über einen Pull-through-Cache, der nur lesend zugreift. Kein direktes DNS. Recherche-Läufe ohne Bash, ohne Repo, mit Webzugriff nur über ein Werkzeug der Office-API. | Verhindert Datenabfluss über Registries, DNS und WebFetch. | Review 6 |
 | E30 | **CI-Härtung:** Workflows haben standardmäßig nur Leserechte. Ein Pflicht-Check zählt nur, wenn die Workflow-Dateien im PR unverändert sind. Die GitHub App bekommt **keine** Berechtigung für Workflows, also ändert nur der CEO Workflows. | Agenten-Branches liegen im selben Repo. Die Freigabe für Forks greift dort nicht, und Pushes mit einem App-Token lösen Workflows aus. | Review 6 |
-| E31 | **Vorschlag:** Admission nach **Prognose**: Der Spielraum für den nächsten Lauf wird vor dem Start reserviert, es gibt eine Tages-Zielkurve, alle gemeldeten Zeitfenster werden beachtet und der Sicherheitsabstand liegt bei **55 %**, damit das Büro auch beim Überschießen unter 60 % bleibt. | Mit periodischen Abfragen und unbegrenzter Parallelität wäre 60 % sonst nicht einzuhalten. | Review 6 |
+| E31 | Admission nach **Prognose**: Der Spielraum für den nächsten Lauf wird vor dem Start reserviert, es gibt eine Tages-Zielkurve, alle gemeldeten Zeitfenster werden beachtet und der Sicherheitsabstand liegt bei **55 %**, damit das Büro auch beim Überschießen unter 60 % bleibt. | Mit periodischen Abfragen und unbegrenzter Parallelität wäre 60 % sonst nicht einzuhalten. | Review 6, Runde 7 |
 | E32 | **Weckregeln:** Postfächer werden gebündelt, reine Informationen wecken niemanden, jeder Agent hat ein Weckbudget pro Tag (im Supervisor), Zyklen im gesamten Nachrichtengraphen werden erkannt, das Firmenhandbuch hat eine feste Obergrenze, Subagenten und Hintergrundaufgaben des CLI sind abgeschaltet. | Jeder Lauf hat Grundkosten. Eine Weckkette ohne Bremse wäre die größte Verbrauchsquelle. | Review 6 |
 | E33 | **Fremdinhalte trennen:** Texte von Fremden und externe Bücher kommen nur in Läufe **ohne** Werkbank. Die Stufe `extern-geprüft` vergibt nur der CEO. Ausgehende Texte ins öffentliche Repo laufen durch einen Filter im Supervisor. | Begrenzt Prompt-Injection und versehentliche Veröffentlichung | Review 6 |
 | E34 | **Build in einem Wegwerf-Container** ohne Install-Skripte (`--ignore-scripts` bzw. pnpm-Allowlist). Ausgeliefert wird nur das Artefakt. Health-Checks und Sicherheits-Negativtests gehören zum Supervisor. | Verhindert Codeausführung auf dem Host durch Abhängigkeiten und stellt sicher, dass Agenten die Prüfungen nicht abschwächen können. | Review 6 |
-| E35 | **Vorschlag:** Der Supervisor liegt in einem **eigenen Repo** `ai-office-supervisor`. Dort ist die GitHub App nicht installiert. Releases dort nur durch den CEO. | Dass Agenten den Supervisor nicht ändern, wird dann technisch durchgesetzt statt nur vereinbart. | Review 6 |
+| E35 | Der Supervisor liegt in einem **eigenen Repo** `ai-office-supervisor`. Dort ist die GitHub App nicht installiert. Releases dort nur durch den CEO. | Dass Agenten den Supervisor nicht ändern, wird dann technisch durchgesetzt statt nur vereinbart. | Review 6, Runde 7 |
 | E36 | **Stillstands-Erkennung:** Offene Anforderungen ohne Fortschritt lösen eine Meldung aus. Es gibt eine Obergrenze für offene, nicht freigegebene PRs. | Leerlauf kostet nichts und fällt deshalb sonst niemandem auf. | Review 6 |
-| E37 | **Vorschlag:** **Benachrichtigung des CEO außerhalb des Webinterfaces** bei Eskalation, Schutzschalter, abgelaufener Anmeldung und Stillstand, standardmäßig per E-Mail. | Ohne Benachrichtigung bleiben Eskalationen unbemerkt, wenn der CEO nicht hineinschaut. | Review 6 |
+| E37 | **Benachrichtigung des CEO außerhalb des Webinterfaces** bei Eskalation, Schutzschalter, abgelaufener Anmeldung und Stillstand, per E-Mail. | Ohne Benachrichtigung bleiben Eskalationen unbemerkt, wenn der CEO nicht hineinschaut. | Review 6, Runde 7 |
 
 ---
 
@@ -230,7 +230,7 @@ flowchart TB
 | Bereich | Wahl | Begründung / Alternative |
 |---|---|---|
 | Sprache | TypeScript auf Node.js LTS, pnpm-Monorepo | Eine Sprache für alles, strenge Typen. Alternative Python: schwächere Typen, zwei Sprachen |
-| Repos | `AI-Office` (öffentlich, Office + Webinterface), `ai-office-supervisor` (Vorschlag E35) | Technische Trennung der Vertrauensstufen |
+| Repos | `AI-Office` (öffentlich, Office + Webinterface), `ai-office-supervisor` (E35) | Technische Trennung der Vertrauensstufen |
 | Agentenantrieb | Unverändertes `claude`-CLI, **Version gepinnt**, Auto-Updater aus. Adapter `LlmRunner` | Rechtslage (Kap. 2), R9 |
 | Persistenz | SQLite im WAL-Modus. Office-DB und Audit-DB getrennt | Ein Schreiber je Datei, einfache Backups |
 | Wissenssuche | SQLite FTS5 | Keine Kosten für Embeddings |
@@ -577,6 +577,12 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
   - Cookies `SameSite=Strict`, CSRF-Token.
   - Freigaben gibt es hier ohnehin nicht (E26).
 - **Bedienelemente:** Agentendetails, Organigramm, Kosten und Kontingent, Chat, Zeitleiste mit Zeitraffer, Link zur Supervisor-Konsole.
+- **PR-Ansicht (E26):**
+  - Liste der offenen PRs aller Repos mit Status, CI-Ergebnis, beteiligten Agenten, verbrauchten Kosten, Zusammenfassung und hervorgehobenen kritischen Pfaden
+  - im Gebäude als Aktenstapel im CEO-Büro sichtbar
+  - Knopf „In GitHub prüfen und freigeben“ öffnet den PR direkt in GitHub
+  - Das Office hält **keinen** GitHub-Zugang des CEO. Die Daten liefert der Supervisor lesend über die GitHub App.
+  - **Verbindlich ist die Ansicht in GitHub.** Das Webinterface ist selbst veränderbarer Code, seine Darstellung kann fehlerhaft sein. Deshalb zeigt es diesen Hinweis bei jeder PR-Ansicht.
 
 #### 5.11a Perspektive: Abwägung
 
@@ -646,7 +652,7 @@ claude -p --output-format stream-json --model <m> --max-turns <n> --max-budget-u
 - **Kalibrierung:** Aus Messungen vor und nach jedem Lauf lernt der Supervisor je Modell und Fenster den Faktor „geschätzte USD → Prozentpunkte“. Annahme: Der Faktor ist ausreichend stabil (Spike S2).
 - **Admission nach Prognose (E31):**
   - **Reservierung:** Vor dem Start wird der erwartete Verbrauch des Laufs (aus `--max-budget-usd` und dem Faktor) vom Spielraum abgezogen und nach dem Lauf verrechnet. Viele parallele Läufe können deshalb das Limit nicht zwischen zwei Abfragen gemeinsam überschreiten.
-  - **Sicherheitsabstand:** Pause ab **55 %** Gesamtverbrauch der Woche, damit Überschießen unter 60 % bleibt (Vorschlag, Wert justierbar).
+  - **Sicherheitsabstand:** Pause ab **55 %** Gesamtverbrauch der Woche, damit Überschießen unter 60 % bleibt (E31, Wert justierbar).
   - **Tages-Zielkurve (E12):** Das Büro startet nur Läufe, solange der Gesamtverbrauch der Woche unter `55 % × (vergangene Tage + 1) / 7` liegt. Die Kurve bezieht sich auf den Gesamtzähler, so wie es E12 vorgibt. Nutzt der CEO an einem Tag viel, bekommt das Büro an diesem Tag entsprechend weniger.
   - **5-Stunden-Fenster:** Pause ab **70 %** **[Annahme, justieren]**, damit der CEO jederzeit selbst arbeiten kann.
   - **Parallelität:** Ergibt sich aus dem Spielraum. Ein neuer Lauf startet nur, wenn seine Reservierung noch hineinpasst.
@@ -691,7 +697,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 
 | Etappe | Inhalt | Wer baut |
 |---|---|---|
-| **1 – MVP: Kernkreislauf** | **Supervisor:** Admission mit Prognose, Weckbudget, Schutzschalter, Notaus; Container-Manager; Git-Gate mit Bundle, Secret-Scan und Ausgangsfilter; Merge-Gate per GitHub-Review; Build-Container; Blue/Green mit Health-Check und Rollback; Audit; Konsole mit 2FA. **Office:** Ereignisprotokoll, Planer mit Weckregeln, Kontextaufbau, Office-API mit Minimalumfang (`send_message`, `create_task`, `delegate`, `handover`, `escalate`, `submit_bundle`, `open_pr`, `request_merge`). Lauftypen `werkbank` und `buero`. Die 4 Startagenten, festes Gebäude als Daten. Webinterface schlicht (Zeitleiste, Chat, Kosten und Kontingent, Agentenliste), mit XSS-Schutz. E-Mail-Benachrichtigung. Fake-Runner, Negativtests. | CEO + Claude Code |
+| **1 – MVP: Kernkreislauf** | **Supervisor:** Admission mit Prognose, Weckbudget, Schutzschalter, Notaus; Container-Manager; Git-Gate mit Bundle, Secret-Scan und Ausgangsfilter; Merge-Gate per GitHub-Review; Build-Container; Blue/Green mit Health-Check und Rollback; Audit; Konsole mit 2FA. **Office:** Ereignisprotokoll, Planer mit Weckregeln, Kontextaufbau, Office-API mit Minimalumfang (`send_message`, `create_task`, `delegate`, `handover`, `escalate`, `submit_bundle`, `open_pr`, `request_merge`). Lauftypen `werkbank` und `buero`. Die 4 Startagenten, festes Gebäude als Daten. Webinterface schlicht (Zeitleiste, Chat, Kosten und Kontingent, Agentenliste, PR-Ansicht mit Link zu GitHub), mit XSS-Schutz. E-Mail-Benachrichtigung. Fake-Runner, Negativtests. | CEO + Claude Code |
 | **2 – Gebäude sichtbar** | Isometrische Pixel-Art, Avatare, Laufwege, Blasen. Das ist die **erste Kundenanforderung an die Agenten** und der Praxistest der Selbstentwicklung. | Agenten |
 | **3 – Selbstorganisation** | Bewerbung, Abteilungen, Regeln, Genehmigungsketten, Meetings, Schwarzes Brett, Umbau mit Layout-Engine, Arbeitsplätze, Abteilungsbudgets. Staging mit Parallelbetrieb | Agenten |
 | **4 – Wissen** | Bücher, Bibliothek, Lauftyp `recherche` mit `web_fetch`, Journal, Beziehungen, Kennzahlen | Agenten |
@@ -732,7 +738,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | O5 | VPS-Anbieter und Budget | Etappe 0 |
 | O7 | Sandbox in Docker | Spike S1 |
 | O8 | Grafik-Assets | Vor Etappe 2 |
-| O10 | **CEO-Bestätigung der Vorschläge E26, E31, E35, E37** | ausstehend |
+| O10 | CEO-Bestätigung der Vorschläge E26, E31, E35, E37 | Bestätigt (Runde 7). E26 ergänzt um die PR-Ansicht im Webinterface |
 
 ---
 
@@ -796,7 +802,7 @@ Die Einwände des Reviewers zur Faktenlage habe ich so behandelt:
 
 | Prüfung | Ergebnis |
 |---|---|
-| Widerspricht E26 (Freigabe in GitHub) E10 (Chat im Webinterface)? | Nein. Kommuniziert wird weiterhin im Webinterface, nur die Merge-Freigabe läuft über GitHub. Das ist zusätzlicher Aufwand für den CEO, deshalb als Vorschlag markiert. |
+| Widerspricht E26 (Freigabe in GitHub) E10 (Chat im Webinterface)? | Nein. Kommuniziert wird weiterhin im Webinterface. Die PRs werden dort angezeigt (Runde 7), nur der Klick auf „Approve“ erfolgt in GitHub. |
 | Widerspricht E31 (Parallelität aus dem Spielraum) E4? | Nein. Es gibt weiterhin keine feste Zahl. Begrenzt wird nur durch physikalische Grenzen und das Kontingent, wie in E4 vorgesehen. |
 | Hat E27 eine Lücke, wenn der volle Login abläuft? | Nein. Die Läufe können zwar technisch weiterarbeiten, sind aber ohne Messung nicht abgesichert. Deshalb pausiert das Büro (Kap. 5.14). |
 | Brauchen E28 und E14 noch die Office-API? | Die Office-API nimmt das Bundle nur entgegen und reicht es weiter. Geprüft wird nur im Supervisor (Kap. 4.6). |
