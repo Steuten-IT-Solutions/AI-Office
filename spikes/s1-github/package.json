@@ -1,0 +1,12 @@
+{
+  "name": "@ai-office/spike-s1-github",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "s1c": "node src/s1c-workflows.ts",
+    "s1d": "node src/s1d-ratelimit.ts",
+    "s1e": "node src/s1e-merge.ts"
+  }
+}
