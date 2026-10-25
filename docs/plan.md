@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.3 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Review 6, 7) und dem Copilot-Review in PR #1 (Review 8). Alle Entscheidungen sind vom CEO bestätigt (zuletzt O13 in Runde 10).
+> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt O13 in Runde 10).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -972,3 +972,24 @@ Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene
 |---|---|---|---|
 | 1 | hoch | Die Netzsperre für `aio-office` verhindert keinen Datenabfluss über den Browser des CEO. Eine CSP, die das Office selbst liefert, ist keine unabhängige Grenze. | Der Reverse-Proxy des Supervisors setzt die CSP (Fetch, Bilder, Formulare nur zum eigenen Host). Den Restkanal über Navigation der ganzen Seite muss der CEO entscheiden (R11, O13). |
 | 2 | mittel (bisher übersehen) | Über frei wählbare Branch-Namen kann Text vor dem Review veröffentlicht werden. | Der Supervisor vergibt die Branch-Namen, und nur der zugewiesene Ref wird akzeptiert (4.5). |
+
+### Review 18 – Copilot-Review in PR #1, Runde 10
+
+**Keine offenen und keine bisher übersehenen Befunde.** Damit ist die vom CEO gewünschte Review-Schleife („bis Copilot nichts mehr findet“) abgeschlossen.
+
+**Gesamtbilanz der Copilot-Runden:**
+
+| Runde | Offen | Bisher übersehen |
+|---|---|---|
+| 1 | 7 (hoch) | – |
+| 2 | 4 (niedrig) | – |
+| 3 | 4 (niedrig) | – |
+| 4 | 2 (hoch) | 1 (mittel) |
+| 5 | 0 | 2 (niedrig) |
+| 6 | 0 | 3 (niedrig) |
+| 7 | 0 | 3 (niedrig) |
+| 8 | 2 (hoch, mittel) | – |
+| 9 | 1 (hoch) | 1 (mittel) |
+| 10 | **0** | **0** |
+
+Einordnung: Mehrere Befunde betrafen Fehler in meinen eigenen Korrekturen aus Vorrunden. Ohne nochmalige Prüfung wären sie im Plan geblieben. Dass keine Befunde mehr kommen, ist **keine Garantie für Fehlerfreiheit**. Es heißt nur, dass ein weiterer Reviewer mit demselben Blickwinkel nichts mehr findet. Die externen Unsicherheiten (S1–S4, vor allem R1) bleiben bestehen.
