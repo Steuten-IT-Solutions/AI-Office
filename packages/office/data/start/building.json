@@ -1,0 +1,61 @@
+{
+  "id": "firmengebaeude",
+  "name": "Firmengebäude",
+  "floors": [
+    {
+      "id": "eg",
+      "name": "Erdgeschoss",
+      "rooms": [
+        {
+          "id": "eingang",
+          "name": "Eingang",
+          "kind": "eingang",
+          "workplaces": 0,
+          "equipment": []
+        },
+        {
+          "id": "eingangsbereich",
+          "name": "Eingangsbereich",
+          "kind": "eingangsbereich",
+          "workplaces": 0,
+          "equipment": []
+        },
+        {
+          "id": "buero-ceo",
+          "name": "Büro CEO",
+          "kind": "buero",
+          "workplaces": 0,
+          "equipment": []
+        },
+        {
+          "id": "buero-coo",
+          "name": "Büro COO",
+          "kind": "buero",
+          "workplaces": 1,
+          "equipment": ["whiteboard", "rechner", "regal"]
+        },
+        {
+          "id": "buero-cto",
+          "name": "Büro CTO",
+          "kind": "buero",
+          "workplaces": 1,
+          "equipment": ["werkbank", "rechner", "regal"]
+        },
+        {
+          "id": "buero-cfo",
+          "name": "Büro CFO",
+          "kind": "buero",
+          "workplaces": 1,
+          "equipment": ["rechner", "regal"]
+        },
+        {
+          "id": "buero-chro",
+          "name": "Büro CHRO",
+          "kind": "buero",
+          "workplaces": 1,
+          "equipment": ["rechner", "regal"]
+        }
+      ]
+    }
+  ]
+}
