@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt O13 in Runde 10).
+> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E46 am 31.10.2026).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -56,6 +56,7 @@
 | E43 | Die **60-%-Grenze ist ein Zielwert**: konservative Reservierung, Pause bei 55 %, Meldung jeder Überschreitung und automatische Absenkung der Schwelle. Eine harte Garantie ist mit den verfügbaren Messgrößen nicht beweisbar. | Copilot-Review, Befund 7 | Runde 8 |
 | E44 | **Kein Vier-Augen-Prinzip zwischen Agenten vor Etappe 3:** Bis zur ersten Einstellung schreibt nur der CTO Code, und das Review des CEO ist die einzige zweite Prüfung. | CEO-Entscheidung (Variante A). Hält das MVP klein. Folge: Das Review des CEO trägt bis dahin die volle Prüflast. | Runde 9 |
 | E45 | Das **Restrisiko R11** (Datenabfluss über eine Navigation der ganzen Seite im Browser des CEO) wird **akzeptiert**. Es gibt kein eigenes Browserprofil. | CEO-Entscheidung (Variante A). Ausnutzbar erst nach einem manipulierten Office-Release, das das CEO-Review passiert hat. | Runde 10 |
+| E46 | **Zielbild „CEO-Kommunikation nur über den COO“:** Sobald die Firma stabil läuft, spricht der CEO nur noch mit dem COO, in beide Richtungen. Die übrigen Agenten schreiben dem CEO dann nicht mehr direkt, auch Eskalationen laufen über den COO. Wann es so weit ist, legt der CEO per **Weisung** fest, nicht eine Kennzahl. Bis dahin berichten die Startagenten direkt an den CEO. Benachrichtigungen des Supervisors (E37) sind nicht betroffen. Umsetzung in Kap. 5.4. | CEO-Entscheidung. Folgt dem Ziel aus E6, dass der CEO langfristig nur bei Eskalationen eingreift. | Review 19 |
 
 ---
 
@@ -304,7 +305,7 @@ Der CEO will keine feste Agentenzahl. Die Kontrolle sollen die Vorgesetzten übe
   Der Notaus liegt **nicht** im Office-Webinterface (E26). Dort gibt es nur einen Link.
 - **Weisung:** Eine CEO-Entscheidung wird als Ereignis gespeichert und in jeden betroffenen Kontext geladen.
 - **Überstimmen:** Jede Entscheidung der Stufe B kann der CEO zurücknehmen; dafür wird ein Gegenereignis geschrieben. Wirkungen nach außen macht das nicht rückgängig. Dafür erzeugt der Supervisor eine Gegenmaßnahme, etwa einen Revert-PR, oder er meldet, was sich nicht rückgängig machen lässt.
-- **Chat (E10):** im Office-Webinterface. Eine CEO-Nachricht startet einen Lauf beim Empfänger.
+- **Chat (E10):** im Office-Webinterface. Eine CEO-Nachricht startet einen Lauf beim Empfänger. Gilt die Weisung aus E46, ist der Empfänger immer der COO.
 - **Benachrichtigung (E37)** außerhalb des Webinterfaces.
 
 ### 4.5 Selbstmodifikation und Auslieferung
@@ -461,6 +462,14 @@ Alle anderen Aufrufe sind reine Daten im Office.
 - **Zyklenerkennung** im gesamten Nachrichtengraphen, nicht nur bei Ping-Pong zwischen zwei Agenten.
 
 **Startregel:** CEO-Nachrichten ohne Adressat und neue Kundenanforderungen gehen an den COO. Das ist eine änderbare Firmenregel.
+
+**Zielbild: CEO-Kommunikation nur über den COO (E46).** Im Startzustand berichten alle Startagenten direkt an den CEO. Sobald der CEO per Weisung feststellt, dass die Firma stabil läuft, gilt:
+- Der CEO schreibt nur noch dem COO. Der Chat im Webinterface hat dann nur den COO als Empfänger.
+- Die übrigen Agenten schreiben dem CEO nicht mehr direkt. Fragen und Berichte an den CEO gehen an den COO, der sie bündelt.
+- **Eskalationen** an den CEO gehen zuerst an den COO. **[Vorschlag]** Antwortet der COO nicht innerhalb des Eskalations-Timeouts, geht die Eskalation trotzdem an den CEO. Sonst wäre der COO ein einzelner Punkt, an dem Eskalationen hängen bleiben.
+- Die Benachrichtigungen des Supervisors (E37) und die Stillstands-Erkennung (E36) bleiben unverändert, weil sie nicht von Agenten kommen.
+- Als Weisung hat die Regel Vorrang vor Firmenregeln (Verfassung Nr. 1); die Agenten können sie also nicht selbst aufheben. Der CEO kann sie jederzeit zurücknehmen.
+- **Durchsetzung:** Im Office prüft die Office-API den Empfänger (Komfort, E22). **[Vorschlag]** Weil „Eskalation an den CEO“ ohnehin zu den Aufrufen gehört, die der Supervisor prüft (Kap. 4.6), prüft er bei aktiver Weisung zusätzlich, dass nur der COO oder eine abgelaufene Eskalation den CEO erreicht.
 
 **Der Planer ist Code, kein Agent** und verbraucht keine Tokens.
 
@@ -993,3 +1002,7 @@ Wieder **keine offenen Befunde**. Die Zusammenfassung nennt 3 bisher übersehene
 | 10 | **0** | **0** |
 
 Einordnung: Mehrere Befunde betrafen Fehler in meinen eigenen Korrekturen aus Vorrunden. Ohne nochmalige Prüfung wären sie im Plan geblieben. Dass keine Befunde mehr kommen, ist **keine Garantie für Fehlerfreiheit**. Es heißt nur, dass ein weiterer Reviewer mit demselben Blickwinkel nichts mehr findet. Die externen Unsicherheiten (S1–S4, vor allem R1) bleiben bestehen.
+
+### Review 19 – Entscheidung des CEO zur Kommunikation (31.10.2026)
+
+Bei der Freigabe der Startdaten von P05 (alle Startagenten berichten an den CEO) hat der CEO festgelegt, dass im stabilen Betrieb die Kommunikation nur noch über den COO läuft. Auf Rückfrage: in beide Richtungen, und der CEO entscheidet per Weisung, wann es so weit ist. Aufgenommen als E46 und in Kap. 5.4. Die beiden mit **[Vorschlag]** markierten Punkte in Kap. 5.4 (Eskalation nach Timeout trotzdem an den CEO, Prüfung im Supervisor) sind noch nicht bestätigt.
