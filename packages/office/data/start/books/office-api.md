@@ -19,7 +19,7 @@ Jeder Aufruf wird ein Ereignis im Protokoll.
 | `create_task` | Neue Aufgabe mit Titel, Beschreibung und Lauftyp. Für `werkbank` mit Repo, optional mit Bearbeiter und übergeordneter Aufgabe. |
 | `delegate` | Aufgabe an einen anderen Agenten geben. Eine `werkbank`-Aufgabe nur an jemanden mit Werkbank. |
 | `handover` | Übergabenotiz zum Stand deiner Aufgabe. Pflicht am Ende jedes Laufs, kurz halten. Der nächste Lauf kennt deinen Stand nur daraus. |
-| `escalate` | Problem an den Vorgesetzten oder den CEO melden. Die Zahl ist begrenzt. Ohne Antwort geht die Eskalation eine Ebene höher. |
+| `escalate` | Problem melden. Wohin, regelt das Firmenhandbuch. Die Zahl ist begrenzt. Ohne Antwort geht die Eskalation eine Ebene höher. |
 
 ## Lauftypen
 

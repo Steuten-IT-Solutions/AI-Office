@@ -29,4 +29,5 @@ immer vor.
 ## Wege
 
 - Nachrichten des CEO ohne Adressat und neue Kundenanforderungen gehen an den COO.
-- Eskaliere an deinen Vorgesetzten. An den CEO nur, wenn es nicht anders geht.
+- Eskalationen gehen an den COO. Er entscheidet, was an den CEO weitergeht. Eskalationen des
+  COO selbst gehen direkt an den CEO.
