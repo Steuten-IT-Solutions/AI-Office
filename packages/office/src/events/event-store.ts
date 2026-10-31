@@ -228,6 +228,13 @@ export class EventStore {
     return rows.map(fromRow);
   }
 
+  /** Ereignis zu einem Idempotenzschlüssel, falls schon geschrieben. */
+  findByIdempotencyKey(key: string): StoredEvent | undefined {
+    const row = this.db.prepare("SELECT * FROM events WHERE idempotency_key = ?").get(key) as
+      EventRow | undefined;
+    return row === undefined ? undefined : fromRow(row);
+  }
+
   /** Kopf der Kette für die Sicherung durch den Supervisor (E38). */
   head(): ChainHead {
     const last = this.db.prepare("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1").get() as

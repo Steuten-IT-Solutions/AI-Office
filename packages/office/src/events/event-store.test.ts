@@ -77,6 +77,8 @@ describe("EventStore", () => {
     });
     expect(again).toEqual(first);
     expect(store.read()).toHaveLength(1);
+    expect(store.findByIdempotencyKey("r-1:1")).toEqual(first);
+    expect(store.findByIdempotencyKey("r-1:2")).toBeUndefined();
     expect(() =>
       store.append({
         type: "task.created",
