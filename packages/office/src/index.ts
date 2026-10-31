@@ -116,3 +116,17 @@ export {
   type TaskStatus,
 } from "./domain/task.ts";
 export { ValidationError, type Parsed } from "./domain/validation.ts";
+export {
+  MAX_HANDBOOK_START_TOKENS,
+  MAX_PERSONA_TOKENS,
+  TRUST_LEVELS,
+  estimateTokens,
+  loadStartBooks,
+  loadStartPersonas,
+  parseBook,
+  parsePersona,
+  splitFrontMatter,
+  type Book,
+  type Persona,
+  type TrustLevel,
+} from "./domain/start-content.ts";
