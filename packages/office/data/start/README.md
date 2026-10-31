@@ -14,9 +14,9 @@ Es sind fiktive Personen (plan.md Kap. 5.12). Laufzeitdaten gehören nicht hierh
 
 Die Persona-Texte für den Prompt und die Startbücher gehören zu P11.
 
-## Annahmen
+## Festlegungen ohne Grundlage im Plan
 
-Diese Werte stehen nicht im Plan und sind deshalb **[Annahme]**:
+Diese Werte stehen nicht im Plan. Der CEO hat sie am 31.10.2026 im Review von P05 bestätigt:
 
 - **Vorgesetzter** aller vier Startagenten ist der CEO (`supervisorId: "ceo"`). Der Plan nennt
   das Feld (Kap. 5.1), aber keine Berichtslinie der Startbelegschaft.
