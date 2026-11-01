@@ -53,7 +53,8 @@ export interface OfficeApiOptions {
   gate: EscalationGate;
   /** Weisung aus E46 aktiv? Standard: nein. */
   ceoViaCooOnly?: () => boolean;
-  /** Uhr für Tokens und Tagesgrenzen. Standard: die Uhr des Office (`Office.now`). */
+  /** Uhr für die Gültigkeit der Tokens. Standard: die Uhr des Office (`Office.now`). Die
+   * Tagesgrenze für Eskalationen folgt immer der Uhr des Office, die auch die Zeitstempel setzt. */
   now?: () => Date;
   /** Für Fehler, die nicht ans Modell gehen. Standard: `console.error`. */
   log?: (message: string, error: unknown) => void;
@@ -113,11 +114,14 @@ export function decodeHeaderValue(value: string): string {
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of req) {
+  // Ohne `destroyOnReturn: false` zerstört das Verlassen der Schleife die Anfrage. Die Antwort 413
+  // käme zwar noch an, aber Node verwürfe danach den ganzen Rest des Inhalts auf derselben
+  // Verbindung. `connection: close` beendet die Verbindung, sobald 413 gesendet ist.
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = chunk as Buffer;
     size += buffer.length;
     if (size > MAX_BODY_BYTES) {
-      throw new HttpError({ status: 413 });
+      throw new HttpError({ status: 413, headers: { connection: "close" } });
     }
     chunks.push(buffer);
   }
@@ -200,7 +204,16 @@ export class OfficeApi {
     if (typeof id !== "string" && !Number.isSafeInteger(id)) {
       return rpcError(400, null, ERRORS.invalidRequest, "id muss Text oder ganze Zahl sein");
     }
-    return this.dispatch(req, grant, id as RequestId, message["method"], message["params"]);
+    try {
+      return await this.dispatch(req, grant, id as RequestId, message["method"], message["params"]);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      // Die id ist bekannt; die Fehlerantwort muss sie nennen (MCP 2026-07-28, „Error Responses“).
+      (this.options.log ?? console.error)("Office-API: Fehler", error);
+      return rpcError(500, id as RequestId, ERRORS.internal, "Interner Fehler");
+    }
   }
 
   /** Office-Token prüfen. Ein abgeschlossener Lauf darf nichts mehr tun. */
@@ -253,6 +266,15 @@ export class OfficeApi {
     }
     if (header(req, "mcp-method") !== method) {
       return rpcError(400, id, ERRORS.headerMismatch, "Mcp-Method passt nicht zur Anfrage");
+    }
+    if (!isRecord(meta["io.modelcontextprotocol/clientCapabilities"])) {
+      // Pflichtfeld jeder Anfrage; fehlt es, ist die Anfrage fehlerhaft (basic/index, „_meta“).
+      return rpcError(
+        400,
+        id,
+        ERRORS.invalidParams,
+        "_meta.io.modelcontextprotocol/clientCapabilities fehlt",
+      );
     }
     switch (method) {
       case "server/discover":
@@ -327,7 +349,6 @@ export class OfficeApi {
           idempotencyKey: idempotencyKey(grant.runId, name, args as JsonValue),
           gate: this.options.gate,
           ceoViaCooOnly: this.options.ceoViaCooOnly ?? (() => false),
-          now: this.now(),
           revalidate,
         },
         new Reader(args),

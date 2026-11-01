@@ -37,12 +37,19 @@ let gateCalls: { runId: string; agentId: string; text: string }[];
 let gateAnswer: string | null;
 /** Wenn gesetzt, wartet das Gate auf dieses Versprechen. */
 let gateHold: Promise<void> | null;
+/** Wenn gesetzt, scheitert das Gate mit diesem Fehler (z. B. Supervisor nicht erreichbar). */
+let gateError: Error | null;
+/** Uhr des Office; Tests können sie vorstellen. */
+let clock: Date;
 
 const gate: EscalationGate = {
   async checkEscalationToCeo(input) {
     gateCalls.push(input);
     if (gateHold !== null) {
       await gateHold;
+    }
+    if (gateError !== null) {
+      throw gateError;
     }
     return gateAnswer;
   },
@@ -52,13 +59,15 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "aio-api-"));
   const start = loadStartData();
   store = EventStore.open(join(dir, "office.db"));
-  office = Office.open(store, start.building, { now: () => NOW });
+  clock = NOW;
+  office = Office.open(store, start.building, { now: () => clock });
   seedStartAgents(office, start.agents);
   tokens = new RunTokens();
   ceoViaCooOnly = false;
   gateCalls = [];
   gateAnswer = null;
   gateHold = null;
+  gateError = null;
   server = createOfficeApiServer({
     office,
     tokens,
@@ -233,7 +242,9 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
         headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
         body,
       });
-    expect((await post("x".repeat(300 * 1024))).status).toBe(413);
+    const tooBig = await post("x".repeat(300 * 1024));
+    expect(tooBig.status).toBe(413);
+    expect(tooBig.headers.get("connection")).toBe("close");
     const broken = await post("{kaputt");
     expect(broken.status).toBe(400);
     expect(((await broken.json()) as RpcBody).error?.code).toBe(ERRORS.parse);
@@ -241,6 +252,76 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
     const note = await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/x" }));
     expect(note.status).toBe(202);
     expect(await note.text()).toBe("");
+  });
+
+  it("schließt nach 413 die Verbindung, statt den Rest des Inhalts anzunehmen", async () => {
+    const t = token(CTO);
+    const chunk = Buffer.alloc(64 * 1024, 120);
+    const limit = 400; // 25 MiB, weit über MAX_BODY_BYTES
+    const result = await new Promise<{ status: number; written: number }>((resolve) => {
+      let status = 0;
+      let written = 0;
+      const req = request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+      });
+      req.on("response", (res) => {
+        status = res.statusCode ?? 0;
+        res.resume();
+      });
+      // Nach dem Schließen meldet das Schreiben EPIPE oder ECONNRESET; das ist hier gewollt.
+      req.on("error", () => undefined);
+      req.on("close", () => {
+        clearInterval(timer);
+        resolve({ status, written });
+      });
+      const timer = setInterval(() => {
+        if (written >= limit) {
+          clearInterval(timer);
+          req.end();
+          return;
+        }
+        written++;
+        req.write(chunk);
+      }, 2);
+    });
+    expect(result.status).toBe(413);
+    expect(result.written).toBeLessThan(limit);
+  });
+
+  it("verlangt die Fähigkeiten des Clients in _meta", async () => {
+    const t = token(CTO);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${t}`,
+        "mcp-protocol-version": PROTOCOL_VERSION,
+        "mcp-method": "tools/list",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/list",
+        params: { _meta: { "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION } },
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as RpcBody;
+    expect(body.id).toBe(7);
+    expect(body.error?.code).toBe(ERRORS.invalidParams);
+  });
+
+  it("nennt bei einem internen Fehler die id der Anfrage", async () => {
+    gateError = new Error("Supervisor nicht erreichbar");
+    const reply = await rpc(token(COO), "tools/call", {
+      name: "escalate",
+      arguments: { text: "Dringend" },
+    });
+    expect(reply.status).toBe(500);
+    expect(reply.body?.id).toBe(nextId - 1);
+    expect(reply.body?.error?.code).toBe(ERRORS.internal);
+    expect(office.state.escalations()).toEqual([]);
   });
 
   it("prüft Version und gespiegelte Header gegen den Inhalt", async () => {
@@ -475,7 +556,10 @@ describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
       params: {
         name: "send_message",
         arguments: { toId: COO, kind: "info", text: "spät" },
-        _meta: { "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION },
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
       },
     });
     const status = await new Promise<number>((resolve, reject) => {
@@ -559,6 +643,27 @@ describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
     expect(again.data).toEqual(first.data);
     expect(again.data["assigneeId"]).toBe(CFO);
     expect(office.state.task(task.id)?.assigneeId).toBe(COO);
+  });
+
+  it("zählt nach dem Supervisor mit dem aktuellen Tag, auch über Mitternacht", async () => {
+    // Vier gleichzeitige Eskalationen an den CEO starten kurz vor Mitternacht ...
+    clock = new Date("2026-11-02T23:59:59Z");
+    const t = token(COO, { expiresAt: new Date("2026-11-04T00:00:00Z") });
+    let release: () => void = () => undefined;
+    gateHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const calls = [1, 2, 3, 4].map((i) => tool(t, "escalate", { text: `Nacht ${String(i)}` }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(gateCalls).toHaveLength(4);
+    // ... und der Supervisor gibt sie erst danach frei. Gezählt wird der Tag, an dem gebucht wird.
+    clock = new Date("2026-11-03T00:00:01Z");
+    release();
+    const results = await Promise.all(calls);
+    expect(results.filter((r) => r.isError === false)).toHaveLength(MAX_ESCALATIONS_PER_DAY);
+    expect(office.state.escalations().map((e) => e.occurredAt.slice(0, 10))).toEqual(
+      Array(MAX_ESCALATIONS_PER_DAY).fill("2026-11-03"),
+    );
   });
 
   it("zählt Eskalationen nach dem Tag des Office, nicht nach der Systemzeit", async () => {

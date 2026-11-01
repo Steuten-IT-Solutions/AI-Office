@@ -208,6 +208,9 @@ export class Office {
     input: { text: string; taskId?: string | null },
     options: CommandOptions = {},
   ): Escalation {
+    // Erst nachlesen: Den COO kann eine andere Instanz eingestellt oder geändert haben, und die
+    // frühere Eskalation einer Wiederholung kann von dort stammen.
+    this.sync();
     // Wiederholung: Der Empfänger bleibt der von damals, auch wenn es inzwischen einen anderen
     // COO gibt. Text, Aufgabe und Handelnder müssen trotzdem übereinstimmen.
     const existing =

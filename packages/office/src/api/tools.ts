@@ -33,7 +33,6 @@ export interface ToolContext {
   gate: EscalationGate;
   /** Weisung aus E46: Nur der COO schreibt dem CEO. Standard: aus. */
   ceoViaCooOnly: () => boolean;
-  now: Date;
   /**
    * Prüft Token und Lauf erneut und wirft, wenn sie nicht mehr gelten. Werkzeuge rufen das nach
    * jedem `await` vor dem Schreiben auf.
@@ -244,7 +243,9 @@ const escalate: ToolDefinition = {
       if (office.hasCommitted(context.idempotencyKey)) {
         return;
       }
-      const day = context.now.toISOString().slice(0, 10);
+      // Live die Uhr des Office: Mit ihr bekommt die Eskalation ihren Zeitstempel, auch wenn
+      // zwischen erster und zweiter Prüfung Mitternacht liegt.
+      const day = office.now().toISOString().slice(0, 10);
       const today = office.state
         .escalations({ fromId: grant.agentId })
         .filter((e) => e.occurredAt.slice(0, 10) === day).length;
