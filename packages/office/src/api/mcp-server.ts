@@ -222,7 +222,9 @@ export class OfficeApi {
 
   /** Office-Token prüfen. Ein abgeschlossener Lauf darf nichts mehr tun. */
   private authenticate(req: IncomingMessage): RunGrant {
-    const match = /^Bearer ([\x21-\x7e]+)$/.exec(header(req, "authorization") ?? "");
+    // Das Schema ist unabhängig von Groß- und Kleinschreibung, danach folgt mindestens ein
+    // Leerzeichen (RFC 7235, Abschnitt 2.1: `credentials = auth-scheme [ 1*SP ... ]`).
+    const match = /^Bearer +([\x21-\x7e]+)$/i.exec(header(req, "authorization") ?? "");
     const token = match === null ? null : (match[1] as string);
     const check = (): RunGrant => {
       const grant = token === null ? null : this.options.tokens.resolve(token, this.now());

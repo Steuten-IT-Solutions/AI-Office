@@ -7,6 +7,7 @@ import type { Building } from "./building.ts";
 import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
+  ESCALATION_ANSWERED,
   ESCALATION_RAISED,
   MESSAGE_SENT,
   RUN_FINISHED,
@@ -173,7 +174,16 @@ export class Office {
     return this.state.task(taskId) as Task;
   }
 
+  /**
+   * Nachricht senden. Zeigt `replyToId` auf eine Eskalation, ist das eine Antwort darauf: Die
+   * Nachricht selbst trägt dann kein `replyToId`, denn die Vorversion kennt keine Eskalationen
+   * und würde sie überspringen (E24). Kommt sie vom Empfänger der Eskalation, folgt
+   * `escalation.answered` mit dem abgeleiteten Schlüssel `<Schlüssel>:antwort`.
+   */
   sendMessage(actor: string, input: NewMessage, options: CommandOptions = {}): Message {
+    this.sync();
+    const replyToId = input.replyToId ?? null;
+    const escalation = replyToId === null ? undefined : this.state.escalation(replyToId);
     const payload = valid(
       "Nachricht",
       parseMessageSent({
@@ -181,11 +191,37 @@ export class Office {
         kind: input.kind,
         text: input.text,
         taskId: input.taskId ?? null,
-        replyToId: input.replyToId ?? null,
+        replyToId: escalation === undefined ? replyToId : null,
       }),
     );
     const event = this.commit(MESSAGE_SENT, actor, payload, options);
+    if (escalation !== undefined && escalation.toId === actor) {
+      this.answerEscalation(actor, escalation.id, event.id, {
+        ...options,
+        ...(options.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: `${options.idempotencyKey}:antwort` }),
+      });
+    }
     return this.state.message(event.id) as Message;
+  }
+
+  /**
+   * Verknüpft eine Antwort mit der Eskalation, falls die noch offen ist. Eine Wiederholung mit
+   * demselben Schlüssel liefert das gespeicherte Ereignis.
+   */
+  private answerEscalation(
+    actor: string,
+    escalationId: string,
+    messageId: string,
+    options: CommandOptions,
+  ): void {
+    const committed =
+      options.idempotencyKey !== undefined && this.hasCommitted(options.idempotencyKey);
+    if (!committed && this.state.escalation(escalationId)?.answeredSeq !== null) {
+      return;
+    }
+    this.commit(ESCALATION_ANSWERED, actor, { escalationId, messageId }, options);
   }
 
   /**

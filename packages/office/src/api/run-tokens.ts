@@ -31,10 +31,16 @@ function digest(token: string): string {
 export class RunTokens {
   private readonly grants = new Map<string, RunGrant>();
 
-  /** Meldet ein Token an. Wirft bei zu kurzen Tokens und doppelten Tokens oder Lauf-IDs. */
+  /**
+   * Meldet ein Token an. Wirft bei zu kurzen Tokens, doppelten Tokens oder Lauf-IDs und bei einem
+   * ungültigen Ablaufdatum (sonst liefe das Token nie ab: Vergleiche mit `NaN` sind immer falsch).
+   */
   register(token: string, grant: RunGrant): void {
     if (token.length < MIN_TOKEN_LENGTH) {
       throw new Error(`Office-Token ist kürzer als ${String(MIN_TOKEN_LENGTH)} Zeichen`);
+    }
+    if (!Number.isFinite(grant.expiresAt.getTime())) {
+      throw new Error("Office-Token braucht ein gültiges Ablaufdatum");
     }
     const key = digest(token);
     if (this.grants.has(key)) {
@@ -43,7 +49,8 @@ export class RunTokens {
     if ([...this.grants.values()].some((g) => g.runId === grant.runId)) {
       throw new Error(`Lauf ${grant.runId} hat bereits ein Office-Token`);
     }
-    this.grants.set(key, { ...grant });
+    // Eigene Kopie des Datums: Ein Aufrufer soll den Ablauf nicht nachträglich ändern.
+    this.grants.set(key, { ...grant, expiresAt: new Date(grant.expiresAt.getTime()) });
   }
 
   /** Liefert den Lauf zum Token oder `null`, wenn es unbekannt oder abgelaufen ist. */
@@ -52,7 +59,7 @@ export class RunTokens {
     if (grant === undefined || grant.expiresAt.getTime() <= now.getTime()) {
       return null;
     }
-    return { ...grant };
+    return { ...grant, expiresAt: new Date(grant.expiresAt.getTime()) };
   }
 
   /** Zieht das Token eines Laufs zurück, z. B. am Laufende oder beim Notaus. */

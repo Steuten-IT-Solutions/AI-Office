@@ -238,6 +238,9 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
 
     const t = token(CTO, { runId: "lauf-fertig" });
     expect((await rpc(t, "tools/list")).status).toBe(200);
+    // Das Schema „Bearer“ gilt ohne Rücksicht auf Groß- und Kleinschreibung.
+    expect((await rpc(null, "tools/list", {}, { authorization: `bearer ${t}` })).status).toBe(200);
+    expect((await rpc(null, "tools/list", {}, { authorization: `BEARER  ${t}` })).status).toBe(200);
     office.recordRunFinished(
       CTO,
       {
@@ -550,6 +553,16 @@ describe("Werkzeuge", () => {
       replyToId: escalationId,
     });
     expect(office.state.escalation(escalationId)?.answeredSeq).toBe(office.state.lastSeq);
+    const inbox = buildContext({
+      state: office.state,
+      agentId: CFO,
+      taskId: null,
+      constitution: "# Verfassung\n\n1. Der CEO ist oberste Instanz.",
+      directives: [],
+      books: loadStartBooks(),
+      personas: loadStartPersonas(),
+    });
+    expect(inbox.prompt).toContain(`- Antwort auf die Eskalation: \`${escalationId}\``);
   });
 
   it("begrenzt die Zahl der Aufrufe je Lauf", async () => {
@@ -766,5 +779,17 @@ describe("Office-Tokens", () => {
     registry.prune(later);
     registry.register("c".repeat(32), { ...grant, expiresAt: new Date(later.getTime() + 1) });
     expect(registry.resolve("c".repeat(32), later)).not.toBeNull();
+  });
+
+  it("verlangt ein gültiges Ablaufdatum und lässt es sich nicht nachträglich ändern", () => {
+    const registry = new RunTokens();
+    expect(() => {
+      registry.register("d".repeat(32), { ...grant, expiresAt: new Date("kaputt") });
+    }).toThrow("gültiges Ablaufdatum");
+    const expiresAt = new Date(NOW.getTime() + 1000);
+    registry.register("d".repeat(32), { ...grant, expiresAt });
+    expiresAt.setTime(Number.MAX_SAFE_INTEGER);
+    registry.resolve("d".repeat(32), NOW)?.expiresAt.setTime(Number.MAX_SAFE_INTEGER);
+    expect(registry.resolve("d".repeat(32), new Date(NOW.getTime() + 1000))).toBeNull();
   });
 });

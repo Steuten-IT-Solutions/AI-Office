@@ -45,6 +45,8 @@ export interface Escalation {
   text: string;
   taskId: string | null;
   runId: string | null;
-  /** Sequenznummer der ersten Antwort des Empfängers, sonst `null`. */
+  /** Sequenznummer von `escalation.answered`, sonst `null`. */
   answeredSeq: number | null;
+  /** Nachricht, die die Eskalation beantwortet, sonst `null`. */
+  answerId: string | null;
 }

@@ -332,12 +332,18 @@ function taskLabel(state: OfficeState, taskId: string): string {
   return task === undefined ? `\`${taskId}\`` : `${oneLine(task.title)} (\`${taskId}\`)`;
 }
 
+function answerFact(state: OfficeState, m: Message): string[] {
+  const escalation = state.escalationAnsweredBy(m.id);
+  return escalation === undefined ? [] : [`- Antwort auf die Eskalation: \`${escalation.id}\``];
+}
+
 function renderMessage(state: OfficeState, m: Message, text: string): string {
   const head = [
     `## Von ${agentLabel(state, m.fromId)} · ${m.kind}`,
     `- Nachricht: \`${m.id}\`, ${m.occurredAt}`,
     ...(m.taskId === null ? [] : [`- Aufgabe: ${taskLabel(state, m.taskId)}`]),
     ...(m.replyToId === null ? [] : [`- Antwort auf: \`${m.replyToId}\``]),
+    ...answerFact(state, m),
   ];
   const [title, ...facts] = head;
   return `${title as string}\n\n${facts.join("\n")}\n\n${quote(text)}`;
