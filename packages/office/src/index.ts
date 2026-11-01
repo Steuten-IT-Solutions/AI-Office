@@ -1,5 +1,4 @@
-/** Version des Office-Kerns. Wird mit dem ersten Release durch den Build ersetzt. */
-export const OFFICE_VERSION = "0.0.0";
+export { OFFICE_VERSION } from "./version.ts";
 
 export { canonicalJson, type JsonValue } from "./events/canonical-json.ts";
 export {
@@ -74,6 +73,7 @@ export {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
+  ESCALATION_RAISED,
   MAX_HANDOVER_CHARS,
   MAX_TEXT_CHARS,
   MAX_THOUGHT_CHARS,
@@ -89,6 +89,7 @@ export {
   TASK_STATUS_CHANGED,
   type AgentHired,
   type AgentProfileChanged,
+  type EscalationRaised,
   type MessageSent,
   type RunFinished,
   type RunThought,
@@ -97,8 +98,15 @@ export {
   type TaskHandover,
   type TaskStatusChanged,
 } from "./domain/events.ts";
-export { MESSAGE_KINDS, mayWake, type Message, type MessageKind } from "./domain/message.ts";
 export {
+  MESSAGE_KINDS,
+  mayWake,
+  type Escalation,
+  type Message,
+  type MessageKind,
+} from "./domain/message.ts";
+export {
+  CeoApprovalRequired,
   DomainError,
   Office,
   type CommandOptions,
@@ -162,3 +170,24 @@ export {
   RunEvaluation,
   type RunInfo,
 } from "./domain/run-evaluation.ts";
+export {
+  ERRORS,
+  MAX_BODY_BYTES,
+  MAX_CALLS_PER_RUN,
+  MCP_PATH,
+  OfficeApi,
+  PROTOCOL_VERSION,
+  SUPPORTED_VERSIONS,
+  createOfficeApiServer,
+  decodeHeaderValue,
+  idempotencyKey,
+  type OfficeApiOptions,
+} from "./api/mcp-server.ts";
+export { MIN_TOKEN_LENGTH, RunTokens, type RunGrant } from "./api/run-tokens.ts";
+export {
+  MAX_ESCALATIONS_PER_DAY,
+  TOOLS,
+  ToolError,
+  type EscalationGate,
+  type ToolDefinition,
+} from "./api/tools.ts";

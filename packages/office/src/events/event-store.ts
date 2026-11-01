@@ -152,69 +152,93 @@ export class EventStore {
     this.db.close();
   }
 
+  /**
+   * Hängt ein Ereignis an. Innerhalb von `transaction` gehört es zu deren Transaktion, sonst hat
+   * es eine eigene.
+   */
   append(input: NewEvent): StoredEvent {
+    return this.transaction(() => this.insert(input));
+  }
+
+  /**
+   * Führt `fn` in einer Transaktion aus: Alle Ereignisse aus `fn` werden zusammen geschrieben oder
+   * keines. Wirft `fn`, wird zurückgerollt. Verschachtelt läuft `fn` in der äußeren Transaktion.
+   */
+  transaction<T>(fn: () => T): T {
+    if (this.inTransaction()) {
+      return fn();
+    }
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (input.idempotencyKey !== undefined) {
-        const existing = this.db
-          .prepare("SELECT * FROM events WHERE idempotency_key = ?")
-          .get(input.idempotencyKey) as EventRow | undefined;
-        if (existing !== undefined) {
-          this.db.exec("COMMIT");
-          const stored = fromRow(existing);
-          if (
-            stored.type !== input.type ||
-            canonicalJson(stored.payload) !== canonicalJson(input.payload)
-          ) {
-            throw new Error(
-              `Idempotenzschlüssel ${input.idempotencyKey} wurde mit anderem Inhalt wiederverwendet`,
-            );
-          }
-          return stored;
-        }
-      }
-      const last = this.db
-        .prepare("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1")
-        .get() as { seq: number; hash: string } | undefined;
-      const unhashed: Omit<StoredEvent, "hash"> = {
-        seq: (last?.seq ?? 0) + 1,
-        id: randomUUID(),
-        type: input.type,
-        version: input.version ?? 1,
-        actor: input.actor,
-        runId: input.runId ?? null,
-        payload: input.payload,
-        idempotencyKey: input.idempotencyKey ?? null,
-        occurredAt: (input.occurredAt ?? new Date()).toISOString(),
-        prevHash: last?.hash ?? GENESIS_HASH,
-      };
-      const event: StoredEvent = { ...unhashed, hash: eventHash(unhashed) };
-      this.db
-        .prepare(
-          `INSERT INTO events (seq, id, type, version, actor, run_id, payload, idempotency_key,
-             occurred_at, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          event.seq,
-          event.id,
-          event.type,
-          event.version,
-          event.actor,
-          event.runId,
-          canonicalJson(event.payload),
-          event.idempotencyKey,
-          event.occurredAt,
-          event.prevHash,
-          event.hash,
-        );
+      const result = fn();
       this.db.exec("COMMIT");
-      return event;
+      return result;
     } catch (error) {
-      if (this.db.isTransaction) {
+      // `fn` oder `COMMIT` kann die Transaktion schon beendet haben.
+      if (this.inTransaction()) {
         this.db.exec("ROLLBACK");
       }
       throw error;
     }
+  }
+
+  /** Als Methode, damit jede Abfrage den aktuellen Stand der Verbindung liest. */
+  private inTransaction(): boolean {
+    return this.db.isTransaction;
+  }
+
+  private insert(input: NewEvent): StoredEvent {
+    if (input.idempotencyKey !== undefined) {
+      const existing = this.db
+        .prepare("SELECT * FROM events WHERE idempotency_key = ?")
+        .get(input.idempotencyKey) as EventRow | undefined;
+      if (existing !== undefined) {
+        const stored = fromRow(existing);
+        if (
+          stored.type !== input.type ||
+          canonicalJson(stored.payload) !== canonicalJson(input.payload)
+        ) {
+          throw new Error(
+            `Idempotenzschlüssel ${input.idempotencyKey} wurde mit anderem Inhalt wiederverwendet`,
+          );
+        }
+        return stored;
+      }
+    }
+    const last = this.db.prepare("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1").get() as
+      { seq: number; hash: string } | undefined;
+    const unhashed: Omit<StoredEvent, "hash"> = {
+      seq: (last?.seq ?? 0) + 1,
+      id: randomUUID(),
+      type: input.type,
+      version: input.version ?? 1,
+      actor: input.actor,
+      runId: input.runId ?? null,
+      payload: input.payload,
+      idempotencyKey: input.idempotencyKey ?? null,
+      occurredAt: (input.occurredAt ?? new Date()).toISOString(),
+      prevHash: last?.hash ?? GENESIS_HASH,
+    };
+    const event: StoredEvent = { ...unhashed, hash: eventHash(unhashed) };
+    this.db
+      .prepare(
+        `INSERT INTO events (seq, id, type, version, actor, run_id, payload, idempotency_key,
+           occurred_at, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        event.seq,
+        event.id,
+        event.type,
+        event.version,
+        event.actor,
+        event.runId,
+        canonicalJson(event.payload),
+        event.idempotencyKey,
+        event.occurredAt,
+        event.prevHash,
+        event.hash,
+      );
+    return event;
   }
 
   read(options: ReadOptions = {}): StoredEvent[] {

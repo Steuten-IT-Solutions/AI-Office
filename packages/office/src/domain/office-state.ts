@@ -7,6 +7,8 @@ import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
+  ESCALATION_ANSWERED,
+  ESCALATION_RAISED,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_THOUGHT,
@@ -14,6 +16,8 @@ import {
   TASK_DELEGATED,
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
+  type EscalationAnswered,
+  type EscalationRaised,
   type MessageSent,
   type RunFinished,
   type RunThought,
@@ -22,7 +26,7 @@ import {
   type TaskHandover,
   type TaskStatusChanged,
 } from "./events.ts";
-import type { Message } from "./message.ts";
+import type { Escalation, Message } from "./message.ts";
 import { CLOSED_STATUSES, canTransition, isReopen, type Task } from "./task.ts";
 import type { RunType } from "../llm/runner.ts";
 
@@ -93,6 +97,10 @@ export class OfficeState {
   private readonly taskById = new Map<string, Task>();
   private readonly messageList: Message[] = [];
   private readonly messageById = new Map<string, Message>();
+  private readonly escalationList: Escalation[] = [];
+  private readonly escalationById = new Map<string, Escalation>();
+  /** Eskalation je beantwortender Nachricht. */
+  private readonly escalationByAnswer = new Map<string, Escalation>();
   private readonly thoughtList: Thought[] = [];
   private readonly runById = new Map<string, RunRecord>();
   /** Je Agent: bis zu dieser Sequenznummer hat ein abgeschlossener Lauf das Postfach gelesen. */
@@ -132,6 +140,25 @@ export class OfficeState {
     return this.messageList.filter(
       (m) =>
         (options.toId === undefined || m.toId === options.toId) && m.seq > (options.afterSeq ?? 0),
+    );
+  }
+
+  escalation(id: string): Escalation | undefined {
+    return this.escalationById.get(id);
+  }
+
+  /** Die Eskalation, die diese Nachricht beantwortet. */
+  escalationAnsweredBy(messageId: string): Escalation | undefined {
+    return this.escalationByAnswer.get(messageId);
+  }
+
+  /** Eskalationen in Reihenfolge des Protokolls, gefiltert wie `messages`. */
+  escalations(options: { toId?: string; fromId?: string; afterSeq?: number } = {}): Escalation[] {
+    return this.escalationList.filter(
+      (e) =>
+        (options.toId === undefined || e.toId === options.toId) &&
+        (options.fromId === undefined || e.fromId === options.fromId) &&
+        e.seq > (options.afterSeq ?? 0),
     );
   }
 
@@ -232,6 +259,10 @@ export class OfficeState {
         return this.checkRunEvent(actor, runId);
       case RUN_FINISHED.type:
         return this.checkRunFinished(actor, payload as RunFinished, runId);
+      case ESCALATION_RAISED.type:
+        return this.checkEscalation(actor, payload as EscalationRaised);
+      case ESCALATION_ANSWERED.type:
+        return this.checkEscalationAnswered(actor, payload as EscalationAnswered);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -299,6 +330,33 @@ export class OfficeState {
         };
         this.messageList.push(message);
         this.messageById.set(message.id, message);
+        return;
+      }
+      case ESCALATION_RAISED.type: {
+        const p = payload as EscalationRaised;
+        const escalation: Escalation = {
+          id: event.id,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+          fromId: event.actor,
+          toId: p.toId,
+          text: p.text,
+          taskId: p.taskId,
+          runId: event.runId,
+          answeredSeq: null,
+          answerId: null,
+        };
+        this.escalationList.push(escalation);
+        this.escalationById.set(escalation.id, escalation);
+        return;
+      }
+      case ESCALATION_ANSWERED.type: {
+        const p = payload as EscalationAnswered;
+        const escalation = this.escalationById.get(p.escalationId) as Escalation;
+        const answered = { ...escalation, answeredSeq: event.seq, answerId: p.messageId };
+        this.escalationList[this.escalationList.indexOf(escalation)] = answered;
+        this.escalationById.set(answered.id, answered);
+        this.escalationByAnswer.set(p.messageId, answered);
         return;
       }
       case TASK_HANDOVER.type: {
@@ -520,6 +578,48 @@ export class OfficeState {
     }
     if (p.replyToId !== null && !this.messageById.has(p.replyToId)) {
       return `Nachricht ${p.replyToId} existiert nicht`;
+    }
+    return null;
+  }
+
+  /** Antworten darf nur der Empfänger, mit einer eigenen Nachricht, und nur einmal. */
+  private checkEscalationAnswered(actor: string, p: EscalationAnswered): string | null {
+    const escalation = this.escalationById.get(p.escalationId);
+    if (escalation === undefined) {
+      return `Eskalation ${p.escalationId} existiert nicht`;
+    }
+    if (escalation.toId !== actor) {
+      return `Nur ${escalation.toId} beantwortet die Eskalation ${p.escalationId}`;
+    }
+    if (escalation.answeredSeq !== null) {
+      return `Eskalation ${p.escalationId} ist schon beantwortet`;
+    }
+    const message = this.messageById.get(p.messageId);
+    if (message === undefined) {
+      return `Nachricht ${p.messageId} existiert nicht`;
+    }
+    if (message.fromId !== actor) {
+      return `Nachricht ${p.messageId} ist nicht von ${actor}`;
+    }
+    return null;
+  }
+
+  /**
+   * Den Weg (COO, beim COO der CEO) legt der Befehl fest. Hier gelten nur die Grundregeln, damit
+   * eine spätere Weitergabe nach Timeout (`system`, P06) dasselbe Ereignis nutzen kann.
+   */
+  private checkEscalation(actor: string, p: EscalationRaised): string | null {
+    if (actor !== "system" && this.agent(actor) === undefined) {
+      return `Handelnder ${actor} ist kein Agent`;
+    }
+    if (!this.isParticipant(p.toId)) {
+      return `Empfänger ${p.toId} ist unbekannt`;
+    }
+    if (p.toId === actor) {
+      return "Absender und Empfänger sind gleich";
+    }
+    if (p.taskId !== null && !this.taskById.has(p.taskId)) {
+      return `Aufgabe ${p.taskId} existiert nicht`;
     }
     return null;
   }

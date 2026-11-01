@@ -90,6 +90,23 @@ describe("EventStore", () => {
     store.close();
   });
 
+  it("schreibt in einer Transaktion alle Ereignisse oder keines", () => {
+    const store = EventStore.open(path);
+    const event = (title: string) => ({ type: "task.created", actor: "coo", payload: { title } });
+    const both = store.transaction(() => [store.append(event("A")), store.append(event("B"))]);
+    expect(both.map((e) => e.seq)).toEqual([1, 2]);
+    expect(() =>
+      store.transaction(() => {
+        store.append(event("C"));
+        throw new Error("Abbruch");
+      }),
+    ).toThrow("Abbruch");
+    expect(store.read().map((e) => e.payload)).toEqual([{ title: "A" }, { title: "B" }]);
+    // Nach dem Zurückrollen geht die Kette lückenlos weiter.
+    expect(store.append(event("D")).prevHash).toBe(both[1]?.hash);
+    store.close();
+  });
+
   it("bleibt nach dem Schließen und erneuten Öffnen konsistent", () => {
     const store = EventStore.open(path);
     const event = store.append({ type: "x", actor: "system", payload: { n: 1 } });

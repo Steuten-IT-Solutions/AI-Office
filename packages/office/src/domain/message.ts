@@ -32,3 +32,21 @@ export interface Message {
 export function mayWake(kind: MessageKind): boolean {
   return kind !== "info";
 }
+
+/** Eskalation (Kap. 5.4, E47). Weckt den Empfänger immer. */
+export interface Escalation {
+  /** ID des Ereignisses `escalation.raised`. */
+  id: string;
+  seq: number;
+  occurredAt: string;
+  /** Agent oder `system` (z. B. Weitergabe nach Timeout, P06). */
+  fromId: string;
+  toId: string;
+  text: string;
+  taskId: string | null;
+  runId: string | null;
+  /** Sequenznummer von `escalation.answered`, sonst `null`. */
+  answeredSeq: number | null;
+  /** Nachricht, die die Eskalation beantwortet, sonst `null`. */
+  answerId: string | null;
+}

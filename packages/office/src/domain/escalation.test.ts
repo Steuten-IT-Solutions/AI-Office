@@ -1,0 +1,174 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventStore } from "../events/event-store.ts";
+import type { AgentProfile } from "./agent.ts";
+import { Office } from "./office.ts";
+import { OfficeState } from "./office-state.ts";
+import { loadStartData, seedStartAgents, type StartData } from "./start-data.ts";
+
+const CTO = "jonas-albrecht";
+const COO = "deniz-kaya";
+
+let dir: string;
+let path: string;
+let start: StartData;
+let store: EventStore;
+let office: Office;
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "aio-escalation-"));
+  path = join(dir, "office.db");
+  start = loadStartData();
+  store = EventStore.open(path);
+  office = Office.open(store, start.building);
+});
+
+afterEach(() => {
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe("Eskalation (Kap. 5.4, E47)", () => {
+  it("behält bei einer Wiederholung den ursprünglichen Empfänger", () => {
+    seedStartAgents(office, start.agents);
+    const options = { runId: "r1", idempotencyKey: "r1:escalate:1" };
+    const first = office.escalate(CTO, { text: "Blockiert" }, options);
+    expect(first.toId).toBe(COO);
+    const coo = office.state.agent(COO) as AgentProfile;
+    office.changeProfile("ceo", { ...coo, version: coo.version + 1, role: "Berater" });
+    expect(office.escalationTarget(CTO)).toBe("ceo");
+    expect(office.escalate(CTO, { text: "Blockiert" }, options)).toEqual(first);
+    expect(() => office.escalate(CTO, { text: "Anders" }, options)).toThrow("wiederverwendet");
+  });
+
+  it("liest vor der Wahl des Empfängers die Ereignisse anderer Instanzen nach", () => {
+    const other = Office.open(store, start.building);
+    seedStartAgents(other, start.agents);
+    expect(office.escalate(CTO, { text: "Blockiert" }).toId).toBe(COO);
+
+    // Wiederholung eines Aufrufs, den die andere Instanz gebucht hat, nachdem der COO wegfiel.
+    const options = { runId: "r2", idempotencyKey: "r2:escalate:1" };
+    const first = other.escalate(CTO, { text: "Noch blockiert" }, options);
+    const coo = other.state.agent(COO) as AgentProfile;
+    other.changeProfile("ceo", { ...coo, version: coo.version + 1, role: "Berater" });
+    expect(office.escalate(CTO, { text: "Noch blockiert" }, options)).toEqual(first);
+  });
+
+  it("geht an den CEO, solange es keinen COO gibt", () => {
+    office.hireAgent("system", start.agents.find((a) => a.id === CTO) as AgentProfile);
+    expect(office.cooId()).toBeNull();
+    expect(office.escalate(CTO, { text: "Hilfe" }).toId).toBe("ceo");
+  });
+
+  it("geht an den COO, die des COO an den CEO, und übersteht das Einlesen", () => {
+    seedStartAgents(office, start.agents);
+    const task = office.createTask("ceo", {
+      title: "Planung",
+      description: "Plan erstellen",
+      runType: "buero",
+      assigneeId: CTO,
+    });
+    const first = office.escalate(CTO, { text: "Blockiert", taskId: task.id }, { runId: "r1" });
+    expect(first).toMatchObject({ fromId: CTO, toId: COO, taskId: task.id, runId: "r1" });
+    expect(office.escalate(COO, { text: "Weiter" }).toId).toBe("ceo");
+    expect(() => office.escalate("ceo", { text: "x" })).toThrow("Handelnder ceo ist kein Agent");
+    office.sendMessage(COO, { toId: CTO, kind: "info", text: "Erledigt", replyToId: first.id });
+
+    store.close();
+    store = EventStore.open(path);
+    const again = Office.open(store, start.building);
+    expect(again.state.skipped).toEqual([]);
+    expect(again.state.escalations().map((e) => [e.fromId, e.toId])).toEqual([
+      [CTO, COO],
+      [COO, "ceo"],
+    ]);
+    expect(again.state.escalation(first.id)?.answeredSeq).toBe(again.state.lastSeq);
+  });
+
+  it("verknüpft die Antwort über ein eigenes Ereignis, einmal und nur durch den Empfänger", () => {
+    seedStartAgents(office, start.agents);
+    const escalation = office.escalate(CTO, { text: "Blockiert" });
+    const reply = { toId: CTO, kind: "info" as const, text: "Erledigt", replyToId: escalation.id };
+    const options = { runId: "r1", idempotencyKey: "r1:send_message:1" };
+
+    // Nicht der Empfänger: nur eine Nachricht, keine Antwort.
+    office.sendMessage("ceo", reply);
+    expect(office.state.escalation(escalation.id)?.answeredSeq).toBeNull();
+
+    const message = office.sendMessage(COO, reply, options);
+    expect(message.replyToId).toBeNull();
+    const answer = store.findByIdempotencyKey("r1:send_message:1:antwort");
+    expect(answer).toMatchObject({
+      type: "escalation.answered",
+      actor: COO,
+      payload: { escalationId: escalation.id, messageId: message.id },
+    });
+    expect(office.state.escalation(escalation.id)).toMatchObject({
+      answeredSeq: answer?.seq,
+      answerId: message.id,
+    });
+    expect(office.state.escalationAnsweredBy(message.id)?.id).toBe(escalation.id);
+
+    // Wiederholung: dieselbe Nachricht, kein zweites Ereignis.
+    const lastSeq = office.state.lastSeq;
+    expect(office.sendMessage(COO, reply, options)).toEqual(message);
+    expect(office.state.lastSeq).toBe(lastSeq);
+    // Eine zweite Antwort ist eine Nachricht, ändert die Antwort aber nicht.
+    office.sendMessage(COO, { ...reply, text: "Nachtrag" });
+    expect(office.state.escalation(escalation.id)?.answerId).toBe(message.id);
+    expect(office.state.skipped).toEqual([]);
+  });
+
+  it("schreibt Antwort und Verknüpfung zusammen oder gar nicht", () => {
+    seedStartAgents(office, start.agents);
+    const escalation = office.escalate(CTO, { text: "Blockiert" });
+    const reply = { toId: CTO, kind: "info" as const, text: "Erledigt", replyToId: escalation.id };
+    const options = { runId: "r1", idempotencyKey: "r1:send_message:1" };
+    const lastSeq = office.state.lastSeq;
+
+    // Das zweite Anhängen scheitert, etwa weil die Platte voll ist.
+    const append = store.append.bind(store);
+    const spy = vi
+      .spyOn(store, "append")
+      .mockImplementationOnce(append)
+      .mockImplementationOnce(() => {
+        throw new Error("Platte voll");
+      });
+    expect(() => office.sendMessage(COO, reply, options)).toThrow("Platte voll");
+    spy.mockRestore();
+    expect(store.read({ afterSeq: lastSeq })).toEqual([]);
+    expect(office.state.lastSeq).toBe(lastSeq);
+    expect(office.state.messages({ toId: CTO })).toEqual([]);
+
+    // Die Wiederholung bucht beides.
+    const message = office.sendMessage(COO, reply, options);
+    expect(office.state.escalation(escalation.id)?.answerId).toBe(message.id);
+    expect(store.read({ afterSeq: lastSeq }).map((e) => e.type)).toEqual([
+      "message.sent",
+      "escalation.answered",
+    ]);
+  });
+
+  it("bleibt für eine Vorversion ohne Eskalationen lesbar (E24)", () => {
+    seedStartAgents(office, start.agents);
+    const escalation = office.escalate(CTO, { text: "Blockiert" });
+    office.sendMessage(COO, {
+      toId: CTO,
+      kind: "info",
+      text: "Erledigt",
+      replyToId: escalation.id,
+    });
+
+    // Die Vorversion kennt `escalation.*` nicht und überspringt diese Ereignistypen ungelesen.
+    const older = new OfficeState(start.building);
+    for (const event of store.read({ limit: 10_000 })) {
+      if (!event.type.startsWith("escalation.")) {
+        older.apply(event);
+      }
+    }
+    expect(older.skipped).toEqual([]);
+    expect(older.messages({ toId: CTO }).map((m) => m.text)).toEqual(["Erledigt"]);
+  });
+});
