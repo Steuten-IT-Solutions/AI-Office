@@ -238,7 +238,14 @@ export class OfficeApi {
       return grant;
     };
     const grant = check();
-    this.revalidators.set(grant, () => void check());
+    this.revalidators.set(grant, () => {
+      // Dasselbe Token kann inzwischen einem anderen Lauf gehören; diese Anfrage handelt aber
+      // weiter für den ersten. Gilt das Token nicht mehr für genau diesen Lauf, ist Schluss.
+      const current = check();
+      if (current.runId !== grant.runId || current.agentId !== grant.agentId) {
+        throw new HttpError({ status: 401, headers: { "www-authenticate": "Bearer" } });
+      }
+    });
     return grant;
   }
 

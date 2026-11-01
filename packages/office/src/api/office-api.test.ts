@@ -622,6 +622,27 @@ describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
     expect(office.state.messages()).toEqual([]);
   });
 
+  it("lehnt ab, wenn das Token während der Anfrage einem anderen Lauf zugeordnet wird", async () => {
+    let release: () => void = () => undefined;
+    gateHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const t = token(COO, { runId: "lauf-alt" });
+    const pending = rpc(t, "tools/call", { name: "escalate", arguments: { text: "Dringend" } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    tokens.revoke("lauf-alt");
+    tokens.register(t, {
+      runId: "lauf-neu",
+      agentId: COO,
+      taskId: null,
+      runType: "buero",
+      expiresAt: new Date(NOW.getTime() + 3_600_000),
+    });
+    release();
+    expect((await pending).status).toBe(401);
+    expect(office.state.escalations()).toEqual([]);
+  });
+
   it("schreibt keine Eskalation, wenn der Lauf während der Prüfung des Supervisors endet", async () => {
     let release: () => void = () => undefined;
     gateHold = new Promise((resolve) => {
