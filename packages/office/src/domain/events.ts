@@ -94,6 +94,17 @@ export interface RunFinished {
   inboxUpToSeq: number;
 }
 
+/**
+ * Eskalation (Kap. 5.4, E47): an den COO, Eskalationen des COO an den CEO. Den Empfänger legt
+ * der Befehl fest, nicht der Agent. Eine Antwort ist eine Nachricht mit `replyToId` auf die
+ * Eskalation.
+ */
+export interface EscalationRaised {
+  toId: string;
+  text: string;
+  taskId: string | null;
+}
+
 export interface MessageSent {
   toId: string;
   kind: MessageKind;
@@ -190,6 +201,15 @@ export function parseMessageSent(payload: unknown): Parsed<MessageSent> {
   });
 }
 
+export function parseEscalationRaised(payload: unknown): Parsed<EscalationRaised> {
+  const r = new Reader(payload).only("toId", "text", "taskId");
+  return parsed(r, {
+    toId: r.id("toId"),
+    text: r.string("text", { maxLength: MAX_TEXT_CHARS }),
+    taskId: eventRef(r, "taskId", true),
+  });
+}
+
 export function parseTaskHandover(payload: unknown): Parsed<TaskHandover> {
   const r = new Reader(payload).only("taskId", "note", "auto");
   return parsed(r, {
@@ -273,6 +293,7 @@ export const MESSAGE_SENT = eventType("message.sent", parseMessageSent);
 export const TASK_HANDOVER = eventType("task.handover", parseTaskHandover);
 export const RUN_THOUGHT = eventType("run.thought", parseRunThought);
 export const RUN_FINISHED = eventType("run.finished", parseRunFinished);
+export const ESCALATION_RAISED = eventType("escalation.raised", parseEscalationRaised);
 
 export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   AGENT_HIRED,
@@ -284,4 +305,5 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   TASK_HANDOVER,
   RUN_THOUGHT,
   RUN_FINISHED,
+  ESCALATION_RAISED,
 ];

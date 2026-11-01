@@ -2,11 +2,12 @@ import { canonicalJson, type JsonValue } from "../events/canonical-json.ts";
 import type { EventStore, StoredEvent } from "../events/event-store.ts";
 import type { EventType } from "../events/event-types.ts";
 import type { RunType } from "../llm/runner.ts";
-import { parseAgentProfile, type AgentProfile } from "./agent.ts";
+import { CEO_ID, parseAgentProfile, type AgentProfile } from "./agent.ts";
 import type { Building } from "./building.ts";
 import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
+  ESCALATION_RAISED,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_THOUGHT,
@@ -14,6 +15,7 @@ import {
   TASK_DELEGATED,
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
+  parseEscalationRaised,
   parseMessageSent,
   parseRunFinished,
   parseRunThought,
@@ -23,7 +25,7 @@ import {
   parseTaskStatusChanged,
   type RunFinished,
 } from "./events.ts";
-import type { Message, MessageKind } from "./message.ts";
+import type { Escalation, Message, MessageKind } from "./message.ts";
 import { OfficeState, type RunRecord, type Thought } from "./office-state.ts";
 import type { Task, TaskStatus } from "./task.ts";
 import { ValidationError, type Parsed } from "./validation.ts";
@@ -167,6 +169,47 @@ export class Office {
     );
     const event = this.commit(MESSAGE_SENT, actor, payload, options);
     return this.state.message(event.id) as Message;
+  }
+
+  /**
+   * Empfänger einer Eskalation (Kap. 5.4, E47): der COO; für den COO selbst und solange es
+   * keinen COO gibt der CEO. COO ist der Agent mit der Rolle `COO`, bei mehreren der erste nach ID.
+   */
+  escalationTarget(actor: string): string {
+    const coo = this.cooId();
+    return coo === null || coo === actor ? CEO_ID : coo;
+  }
+
+  /** Der Agent mit der Rolle `COO`, bei mehreren der erste nach ID, sonst `null`. */
+  cooId(): string | null {
+    const coo = this.state
+      .agents()
+      .filter((a) => a.role === "COO")
+      .sort((a, b) => a.id.localeCompare(b.id))[0];
+    return coo?.id ?? null;
+  }
+
+  /** Ob unter diesem Idempotenzschlüssel schon ein Ereignis geschrieben wurde. */
+  hasCommitted(idempotencyKey: string): boolean {
+    return this.store.findByIdempotencyKey(idempotencyKey) !== undefined;
+  }
+
+  /** Eskalation auf dem Weg aus Kap. 5.4. Den Empfänger wählt nicht der Agent. */
+  escalate(
+    actor: string,
+    input: { text: string; taskId?: string | null },
+    options: CommandOptions = {},
+  ): Escalation {
+    const payload = valid(
+      "Eskalation",
+      parseEscalationRaised({
+        toId: this.escalationTarget(actor),
+        text: input.text,
+        taskId: input.taskId ?? null,
+      }),
+    );
+    const event = this.commit(ESCALATION_RAISED, actor, payload, options);
+    return this.state.escalation(event.id) as Escalation;
   }
 
   /**
