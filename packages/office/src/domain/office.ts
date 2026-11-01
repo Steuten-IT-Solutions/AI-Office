@@ -76,19 +76,27 @@ function valid<T>(subject: string, result: Parsed<T>): T {
   return result.value;
 }
 
+export interface OfficeOptions {
+  /** Uhr für den Zeitstempel neuer Ereignisse. Standard: Systemzeit. In Tests fest. */
+  now?: () => Date;
+}
+
 export class Office {
   readonly state: OfficeState;
+  /** Dieselbe Uhr nutzen Ereignisse und Prüfungen, die vom Datum abhängen (z. B. Tagesgrenzen). */
+  readonly now: () => Date;
   private readonly store: EventStore;
 
-  private constructor(store: EventStore, building: Building) {
+  private constructor(store: EventStore, building: Building, options: OfficeOptions) {
     this.store = store;
+    this.now = options.now ?? (() => new Date());
     this.state = new OfficeState(building);
     this.sync();
   }
 
   /** Baut den Zustand aus dem gesamten Ereignisprotokoll auf. */
-  static open(store: EventStore, building: Building): Office {
-    return new Office(store, building);
+  static open(store: EventStore, building: Building, options: OfficeOptions = {}): Office {
+    return new Office(store, building, options);
   }
 
   /** Liest neue Ereignisse nach. */
@@ -200,10 +208,17 @@ export class Office {
     input: { text: string; taskId?: string | null },
     options: CommandOptions = {},
   ): Escalation {
+    // Wiederholung: Der Empfänger bleibt der von damals, auch wenn es inzwischen einen anderen
+    // COO gibt. Text, Aufgabe und Handelnder müssen trotzdem übereinstimmen.
+    const existing =
+      options.idempotencyKey === undefined
+        ? undefined
+        : this.store.findByIdempotencyKey(options.idempotencyKey);
+    const stored = existing === undefined ? undefined : this.state.escalation(existing.id);
     const payload = valid(
       "Eskalation",
       parseEscalationRaised({
-        toId: this.escalationTarget(actor),
+        toId: stored?.toId ?? this.escalationTarget(actor),
         text: input.text,
         taskId: input.taskId ?? null,
       }),
@@ -287,6 +302,7 @@ export class Office {
       payload: json,
       ...(options.runId === undefined ? {} : { runId: options.runId }),
       ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+      occurredAt: this.now(),
     });
     this.state.apply(event);
     return event;

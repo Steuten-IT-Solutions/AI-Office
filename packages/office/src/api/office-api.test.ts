@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import type { Server } from "node:http";
+import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,11 +35,16 @@ let url: string;
 let ceoViaCooOnly: boolean;
 let gateCalls: { runId: string; agentId: string; text: string }[];
 let gateAnswer: string | null;
+/** Wenn gesetzt, wartet das Gate auf dieses Versprechen. */
+let gateHold: Promise<void> | null;
 
 const gate: EscalationGate = {
-  checkEscalationToCeo(request) {
-    gateCalls.push(request);
-    return Promise.resolve(gateAnswer);
+  async checkEscalationToCeo(input) {
+    gateCalls.push(input);
+    if (gateHold !== null) {
+      await gateHold;
+    }
+    return gateAnswer;
   },
 };
 
@@ -47,18 +52,18 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "aio-api-"));
   const start = loadStartData();
   store = EventStore.open(join(dir, "office.db"));
-  office = Office.open(store, start.building);
+  office = Office.open(store, start.building, { now: () => NOW });
   seedStartAgents(office, start.agents);
   tokens = new RunTokens();
   ceoViaCooOnly = false;
   gateCalls = [];
   gateAnswer = null;
+  gateHold = null;
   server = createOfficeApiServer({
     office,
     tokens,
     gate,
     ceoViaCooOnly: () => ceoViaCooOnly,
-    now: () => NOW,
     log: () => undefined,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -457,6 +462,109 @@ describe("Werkzeuge", () => {
     expect(over.isError).toBe(true);
     expect(over.text).toContain("Zu viele Aufrufe");
     expect(office.state.messages()).toEqual([]);
+  });
+});
+
+describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
+  it("prüft das Token nach dem Lesen des Inhalts erneut", async () => {
+    const t = token(CTO, { runId: "lauf-langsam" });
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "send_message",
+        arguments: { toId: COO, kind: "info", text: "spät" },
+        _meta: { "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION },
+      },
+    });
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${t}`,
+            "mcp-protocol-version": PROTOCOL_VERSION,
+            "mcp-method": "tools/call",
+            "mcp-name": "send_message",
+          },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.write(body.slice(0, 10));
+      setTimeout(() => {
+        tokens.revoke("lauf-langsam");
+        req.end(body.slice(10));
+      }, 50);
+    });
+    expect(status).toBe(401);
+    expect(office.state.messages()).toEqual([]);
+  });
+
+  it("schreibt keine Eskalation, wenn der Lauf während der Prüfung des Supervisors endet", async () => {
+    let release: () => void = () => undefined;
+    gateHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const t = token(COO, { runId: "lauf-gate" });
+    const pending = rpc(t, "tools/call", { name: "escalate", arguments: { text: "Dringend" } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    tokens.revoke("lauf-gate");
+    release();
+    expect((await pending).status).toBe(401);
+    expect(office.state.escalations()).toEqual([]);
+  });
+
+  it("hält die Tagesgrenze auch bei gleichzeitigen Eskalationen an den CEO ein", async () => {
+    let release: () => void = () => undefined;
+    gateHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const t = token(COO);
+    const calls = [1, 2, 3, 4].map((i) => tool(t, "escalate", { text: `Problem ${String(i)}` }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(gateCalls).toHaveLength(4);
+    release();
+    const results = await Promise.all(calls);
+    expect(results.filter((r) => r.isError === false)).toHaveLength(MAX_ESCALATIONS_PER_DAY);
+    expect(office.state.escalations({ fromId: COO })).toHaveLength(MAX_ESCALATIONS_PER_DAY);
+  });
+
+  it("wendet die Weisung aus E46 nicht auf eine Wiederholung an", async () => {
+    const t = token(CTO);
+    const args = { toId: "ceo", kind: "info", text: "Bericht" };
+    const first = await tool(t, "send_message", args);
+    ceoViaCooOnly = true;
+    const again = await tool(t, "send_message", args);
+    expect(again).toEqual(first);
+  });
+
+  it("liefert bei einer wiederholten Delegation das ursprüngliche Ergebnis", async () => {
+    const task = office.createTask("ceo", {
+      title: "Bericht",
+      description: "Monatsbericht",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    const coo = token(COO);
+    const first = await tool(coo, "delegate", { taskId: task.id, assigneeId: CFO });
+    office.delegateTask("ceo", task.id, COO);
+    const again = await tool(coo, "delegate", { taskId: task.id, assigneeId: CFO });
+    expect(again.data).toEqual(first.data);
+    expect(again.data["assigneeId"]).toBe(CFO);
+    expect(office.state.task(task.id)?.assigneeId).toBe(COO);
+  });
+
+  it("zählt Eskalationen nach dem Tag des Office, nicht nach der Systemzeit", async () => {
+    const t = token(CFO);
+    await tool(t, "escalate", { text: "Eins" });
+    expect(office.state.escalations()[0]?.occurredAt).toBe(NOW.toISOString());
   });
 });
 

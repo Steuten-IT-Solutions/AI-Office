@@ -34,6 +34,11 @@ export interface ToolContext {
   /** Weisung aus E46: Nur der COO schreibt dem CEO. Standard: aus. */
   ceoViaCooOnly: () => boolean;
   now: Date;
+  /**
+   * Prüft Token und Lauf erneut und wirft, wenn sie nicht mehr gelten. Werkzeuge rufen das nach
+   * jedem `await` vor dem Schreiben auf.
+   */
+  revalidate: () => void;
 }
 
 export interface ToolOutput {
@@ -97,7 +102,12 @@ const sendMessage: ToolDefinition = {
     const r = args(raw, "toId", "kind", "text", "taskId", "replyToId");
     const { office, grant } = context;
     const toId = r.raw("toId");
-    if (toId === CEO_ID && context.ceoViaCooOnly() && grant.agentId !== office.cooId()) {
+    if (
+      toId === CEO_ID &&
+      !office.hasCommitted(context.idempotencyKey) &&
+      context.ceoViaCooOnly() &&
+      grant.agentId !== office.cooId()
+    ) {
       throw new ToolError(
         "An den CEO schreibt nach Weisung des CEO nur der COO (E46). Schreib dem COO.",
       );
@@ -168,15 +178,17 @@ const delegate: ToolDefinition = {
   ),
   run(context, raw) {
     const r = args(raw, "taskId", "assigneeId");
-    const task = context.office.delegateTask(
-      context.grant.agentId,
-      r.raw("taskId") as string,
-      r.raw("assigneeId") as string,
-      { runId: context.grant.runId, idempotencyKey: context.idempotencyKey },
-    );
+    const taskId = r.raw("taskId") as string;
+    const assigneeId = r.raw("assigneeId") as string;
+    context.office.delegateTask(context.grant.agentId, taskId, assigneeId, {
+      runId: context.grant.runId,
+      idempotencyKey: context.idempotencyKey,
+    });
+    // Aus den Argumenten, nicht aus dem Zustand: Bei einer Wiederholung kann die Aufgabe
+    // inzwischen bei jemand anderem liegen.
     return {
-      text: `Aufgabe ${task.id} liegt jetzt bei ${String(task.assigneeId)}.`,
-      structured: { taskId: task.id, assigneeId: task.assigneeId },
+      text: `Aufgabe ${taskId} an ${assigneeId} delegiert.`,
+      structured: { taskId, assigneeId },
     };
   },
 };
@@ -228,8 +240,10 @@ const escalate: ToolDefinition = {
     const r = args(raw, "text", "taskId");
     const { office, grant } = context;
     const text = r.raw("text");
-    const repeated = office.hasCommitted(context.idempotencyKey);
-    if (!repeated) {
+    const checkQuota = () => {
+      if (office.hasCommitted(context.idempotencyKey)) {
+        return;
+      }
       const day = context.now.toISOString().slice(0, 10);
       const today = office.state
         .escalations({ fromId: grant.agentId })
@@ -239,16 +253,25 @@ const escalate: ToolDefinition = {
           `Du hast heute schon ${String(today)} Eskalationen gemeldet. Schreib deinem Vorgesetzten eine Nachricht.`,
         );
       }
-      if (office.escalationTarget(grant.agentId) === CEO_ID && typeof text === "string") {
-        const reason = await context.gate.checkEscalationToCeo({
-          runId: grant.runId,
-          agentId: grant.agentId,
-          text,
-        });
-        if (reason !== null) {
-          throw new ToolError(`Der Supervisor lehnt die Eskalation an den CEO ab: ${reason}`);
-        }
+    };
+    checkQuota();
+    if (
+      !office.hasCommitted(context.idempotencyKey) &&
+      office.escalationTarget(grant.agentId) === CEO_ID &&
+      typeof text === "string"
+    ) {
+      const reason = await context.gate.checkEscalationToCeo({
+        runId: grant.runId,
+        agentId: grant.agentId,
+        text,
+      });
+      if (reason !== null) {
+        throw new ToolError(`Der Supervisor lehnt die Eskalation an den CEO ab: ${reason}`);
       }
+      // Während des Wartens können Token, Lauf oder Tageszahl sich geändert haben.
+      context.revalidate();
+      office.sync();
+      checkQuota();
     }
     const escalation = office.escalate(
       grant.agentId,

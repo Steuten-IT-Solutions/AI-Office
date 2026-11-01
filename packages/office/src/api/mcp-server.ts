@@ -53,6 +53,7 @@ export interface OfficeApiOptions {
   gate: EscalationGate;
   /** Weisung aus E46 aktiv? Standard: nein. */
   ceoViaCooOnly?: () => boolean;
+  /** Uhr für Tokens und Tagesgrenzen. Standard: die Uhr des Office (`Office.now`). */
   now?: () => Date;
   /** Für Fehler, die nicht ans Modell gehen. Standard: `console.error`. */
   log?: (message: string, error: unknown) => void;
@@ -126,6 +127,8 @@ async function readBody(req: IncomingMessage): Promise<string> {
 export class OfficeApi {
   private readonly options: OfficeApiOptions;
   private readonly calls = new Map<string, number>();
+  /** Erneute Prüfung je Anfrage; Schlüssel ist das Objekt aus `authenticate`. */
+  private readonly revalidators = new WeakMap<RunGrant, () => void>();
 
   constructor(options: OfficeApiOptions) {
     this.options = options;
@@ -203,16 +206,25 @@ export class OfficeApi {
   /** Office-Token prüfen. Ein abgeschlossener Lauf darf nichts mehr tun. */
   private authenticate(req: IncomingMessage): RunGrant {
     const match = /^Bearer ([\x21-\x7e]+)$/.exec(header(req, "authorization") ?? "");
-    const now = (this.options.now ?? (() => new Date()))();
-    const grant = match === null ? null : this.options.tokens.resolve(match[1] as string, now);
-    if (grant === null) {
-      throw new HttpError({ status: 401, headers: { "www-authenticate": "Bearer" } });
-    }
-    this.options.office.sync();
-    if (this.options.office.state.run(grant.runId) !== undefined) {
-      throw new HttpError({ status: 401, headers: { "www-authenticate": "Bearer" } });
-    }
+    const token = match === null ? null : (match[1] as string);
+    const check = (): RunGrant => {
+      const grant = token === null ? null : this.options.tokens.resolve(token, this.now());
+      if (grant === null) {
+        throw new HttpError({ status: 401, headers: { "www-authenticate": "Bearer" } });
+      }
+      this.options.office.sync();
+      if (this.options.office.state.run(grant.runId) !== undefined) {
+        throw new HttpError({ status: 401, headers: { "www-authenticate": "Bearer" } });
+      }
+      return grant;
+    };
+    const grant = check();
+    this.revalidators.set(grant, () => void check());
     return grant;
+  }
+
+  private now(): Date {
+    return (this.options.now ?? this.options.office.now)();
   }
 
   private async dispatch(
@@ -303,6 +315,10 @@ export class OfficeApi {
         null,
       );
     }
+    // Zwischen Prüfung des Tokens und hier lag das Lesen des Inhalts; der Lauf kann inzwischen
+    // abgeschlossen oder das Token zurückgezogen sein.
+    const revalidate = this.revalidators.get(grant) ?? (() => undefined);
+    revalidate();
     try {
       const output = await tool.run(
         {
@@ -311,12 +327,16 @@ export class OfficeApi {
           idempotencyKey: idempotencyKey(grant.runId, name, args as JsonValue),
           gate: this.options.gate,
           ceoViaCooOnly: this.options.ceoViaCooOnly ?? (() => false),
-          now: (this.options.now ?? (() => new Date()))(),
+          now: this.now(),
+          revalidate,
         },
         new Reader(args),
       );
       return this.toolResult(id, output.text, output.structured);
     } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
       const text = toolErrorText(error);
       if (text === null) {
         throw error;

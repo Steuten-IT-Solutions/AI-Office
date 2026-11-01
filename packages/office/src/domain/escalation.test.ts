@@ -30,6 +30,18 @@ afterEach(() => {
 });
 
 describe("Eskalation (Kap. 5.4, E47)", () => {
+  it("behält bei einer Wiederholung den ursprünglichen Empfänger", () => {
+    seedStartAgents(office, start.agents);
+    const options = { runId: "r1", idempotencyKey: "r1:escalate:1" };
+    const first = office.escalate(CTO, { text: "Blockiert" }, options);
+    expect(first.toId).toBe(COO);
+    const coo = office.state.agent(COO) as AgentProfile;
+    office.changeProfile("ceo", { ...coo, version: coo.version + 1, role: "Berater" });
+    expect(office.escalationTarget(CTO)).toBe("ceo");
+    expect(office.escalate(CTO, { text: "Blockiert" }, options)).toEqual(first);
+    expect(() => office.escalate(CTO, { text: "Anders" }, options)).toThrow("wiederverwendet");
+  });
+
   it("geht an den CEO, solange es keinen COO gibt", () => {
     office.hireAgent("system", start.agents.find((a) => a.id === CTO) as AgentProfile);
     expect(office.cooId()).toBeNull();
