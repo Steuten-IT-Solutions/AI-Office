@@ -44,6 +44,15 @@ export class DomainError extends Error {
   override name = "DomainError";
 }
 
+/**
+ * Eine neue Eskalation ginge an den CEO, aber der Aufrufer hat dafür keine Freigabe (`allowCeo`).
+ * Der Weg kann sich zwischen Prüfung und Befehl geändert haben, etwa wenn eine andere Instanz
+ * den COO entfernt hat.
+ */
+export class CeoApprovalRequired extends DomainError {
+  override name = "CeoApprovalRequired";
+}
+
 export interface CommandOptions {
   runId?: string;
   /** Lauf-ID + Sequenznummer des Werkzeugaufrufs (Kap. 5.7). */
@@ -206,7 +215,11 @@ export class Office {
   escalate(
     actor: string,
     input: { text: string; taskId?: string | null },
-    options: CommandOptions = {},
+    options: CommandOptions & {
+      /** Darf eine neue Eskalation an den CEO gehen? Standard: ja. Die Office-API setzt das nur
+       * nach Freigabe durch den Supervisor (Kap. 4.6). */
+      allowCeo?: boolean;
+    } = {},
   ): Escalation {
     // Erst nachlesen: Den COO kann eine andere Instanz eingestellt oder geändert haben, und die
     // frühere Eskalation einer Wiederholung kann von dort stammen.
@@ -226,6 +239,9 @@ export class Office {
         taskId: input.taskId ?? null,
       }),
     );
+    if (stored === undefined && payload.toId === CEO_ID && options.allowCeo === false) {
+      throw new CeoApprovalRequired("Die Eskalation ginge an den CEO und braucht eine Freigabe");
+    }
     const event = this.commit(ESCALATION_RAISED, actor, payload, options);
     return this.state.escalation(event.id) as Escalation;
   }

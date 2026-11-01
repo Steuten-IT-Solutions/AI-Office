@@ -114,14 +114,14 @@ export function decodeHeaderValue(value: string): string {
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
-  // Ohne `destroyOnReturn: false` zerstört das Verlassen der Schleife die Anfrage. Die Antwort 413
-  // käme zwar noch an, aber Node verwürfe danach den ganzen Rest des Inhalts auf derselben
-  // Verbindung. `connection: close` beendet die Verbindung, sobald 413 gesendet ist.
+  // Ohne `destroyOnReturn: false` zerstört das Verlassen der Schleife die Anfrage, und die
+  // Verbindung bliebe offen, bis Node den Rest des Inhalts gelesen hat. Geschlossen wird sie in
+  // `handle`, nachdem 413 gesendet ist.
   for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = chunk as Buffer;
     size += buffer.length;
     if (size > MAX_BODY_BYTES) {
-      throw new HttpError({ status: 413, headers: { connection: "close" } });
+      throw new HttpError({ status: 413 });
     }
     chunks.push(buffer);
   }
@@ -150,9 +150,13 @@ export class OfficeApi {
       })
       .then((reply) => {
         const body = reply.body === undefined ? undefined : JSON.stringify(reply.body);
+        // Antwort vor dem Ende des Inhalts (401, 413, 415 …): Verbindung schließen. Sonst liest
+        // Node den Rest ohne Grenze weiter, auch von einem Absender ohne gültiges Token.
+        const close = !req.complete;
         res.writeHead(reply.status, {
           ...(body === undefined ? {} : { "content-type": "application/json" }),
           "cache-control": "no-store",
+          ...(close ? { connection: "close" } : {}),
           ...reply.headers,
         });
         res.end(body);

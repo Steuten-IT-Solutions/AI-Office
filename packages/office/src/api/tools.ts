@@ -1,5 +1,5 @@
 import { CEO_ID } from "../domain/agent.ts";
-import { DomainError, type Office } from "../domain/office.ts";
+import { CeoApprovalRequired, DomainError, type Office } from "../domain/office.ts";
 import { Reader, ValidationError } from "../domain/validation.ts";
 import type { JsonValue } from "../events/canonical-json.ts";
 import type { RunGrant } from "./run-tokens.ts";
@@ -239,8 +239,9 @@ const escalate: ToolDefinition = {
     const r = args(raw, "text", "taskId");
     const { office, grant } = context;
     const text = r.raw("text");
+    const isNew = () => !office.hasCommitted(context.idempotencyKey);
     const checkQuota = () => {
-      if (office.hasCommitted(context.idempotencyKey)) {
+      if (!isNew()) {
         return;
       }
       // Live die Uhr des Office: Mit ihr bekommt die Eskalation ihren Zeitstempel, auch wenn
@@ -255,30 +256,49 @@ const escalate: ToolDefinition = {
         );
       }
     };
-    checkQuota();
-    if (
-      !office.hasCommitted(context.idempotencyKey) &&
-      office.escalationTarget(grant.agentId) === CEO_ID &&
-      typeof text === "string"
-    ) {
+    const input = { text: text as string, taskId: optional(r, "taskId") as string | null };
+    const command = (allowCeo: boolean) =>
+      office.escalate(grant.agentId, input, {
+        runId: grant.runId,
+        idempotencyKey: context.idempotencyKey,
+        allowCeo,
+      });
+    /**
+     * Freigabe des Supervisors für den Weg zum CEO. Nach dem Warten wird alles erneut geprüft und
+     * im selben synchronen Schritt gebucht, damit kein gleichzeitiger Aufruf dazwischenkommt.
+     */
+    const approveAndCommit = async () => {
       const reason = await context.gate.checkEscalationToCeo({
         runId: grant.runId,
         agentId: grant.agentId,
-        text,
+        text: input.text,
       });
-      if (reason !== null) {
+      // Ein gleicher Aufruf kann während des Wartens gebucht worden sein; dann gilt sein Ergebnis.
+      if (reason !== null && isNew()) {
         throw new ToolError(`Der Supervisor lehnt die Eskalation an den CEO ab: ${reason}`);
       }
       // Während des Wartens können Token, Lauf oder Tageszahl sich geändert haben.
       context.revalidate();
       office.sync();
       checkQuota();
+      return command(true);
+    };
+
+    checkQuota();
+    let escalation;
+    if (isNew() && typeof text === "string" && office.escalationTarget(grant.agentId) === CEO_ID) {
+      escalation = await approveAndCommit();
+    } else {
+      try {
+        escalation = command(false);
+      } catch (error) {
+        // Der Befehl wählt den Empfänger auf neuerem Stand und landet doch beim CEO.
+        if (!(error instanceof CeoApprovalRequired)) {
+          throw error;
+        }
+        escalation = await approveAndCommit();
+      }
     }
-    const escalation = office.escalate(
-      grant.agentId,
-      { text: text as string, taskId: optional(r, "taskId") as string | null },
-      { runId: grant.runId, idempotencyKey: context.idempotencyKey },
-    );
     return {
       text: `Eskalation ${escalation.id} an ${escalation.toId} gemeldet.`,
       structured: { escalationId: escalation.id, toId: escalation.toId },

@@ -106,6 +106,7 @@ export {
   type MessageKind,
 } from "./domain/message.ts";
 export {
+  CeoApprovalRequired,
   DomainError,
   Office,
   type CommandOptions,

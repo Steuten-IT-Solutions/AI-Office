@@ -3,7 +3,8 @@ import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentProfile } from "../domain/agent.ts";
 import { buildContext } from "../domain/context.ts";
 import { Office } from "../domain/office.ts";
 import { loadStartBooks, loadStartPersonas } from "../domain/start-content.ts";
@@ -35,6 +36,8 @@ let url: string;
 let ceoViaCooOnly: boolean;
 let gateCalls: { runId: string; agentId: string; text: string }[];
 let gateAnswer: string | null;
+/** Antworten des Gates der Reihe nach; danach gilt `gateAnswer`. */
+let gateAnswers: (string | null)[];
 /** Wenn gesetzt, wartet das Gate auf dieses Versprechen. */
 let gateHold: Promise<void> | null;
 /** Wenn gesetzt, scheitert das Gate mit diesem Fehler (z. B. Supervisor nicht erreichbar). */
@@ -51,7 +54,7 @@ const gate: EscalationGate = {
     if (gateError !== null) {
       throw gateError;
     }
-    return gateAnswer;
+    return gateAnswers.length > 0 ? (gateAnswers.shift() as string | null) : gateAnswer;
   },
 };
 
@@ -66,6 +69,7 @@ beforeEach(async () => {
   ceoViaCooOnly = false;
   gateCalls = [];
   gateAnswer = null;
+  gateAnswers = [];
   gateHold = null;
   gateError = null;
   server = createOfficeApiServer({
@@ -80,6 +84,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await new Promise((resolve) => server.close(resolve));
   store.close();
   rmSync(dir, { recursive: true, force: true });
@@ -159,6 +164,40 @@ async function tool(bearer: string, name: string, args: Record<string, unknown>)
     text: result?.content?.[0]?.text ?? "",
     data: result?.structuredContent ?? {},
   };
+}
+
+/** Höchstzahl Blöcke à 64 KiB in `streamUntilClosed`: 25 MiB, weit über `MAX_BODY_BYTES`. */
+const STREAM_CHUNKS = 400;
+
+/** Sendet einen langen Inhalt, bis der Server die Verbindung schließt oder alles gesendet ist. */
+function streamUntilClosed(
+  headers: Record<string, string>,
+): Promise<{ status: number; written: number }> {
+  const chunk = Buffer.alloc(64 * 1024, 120);
+  return new Promise((resolve) => {
+    let status = 0;
+    let written = 0;
+    const req = request(url, { method: "POST", headers });
+    req.on("response", (res) => {
+      status = res.statusCode ?? 0;
+      res.resume();
+    });
+    // Nach dem Schließen meldet das Schreiben EPIPE oder ECONNRESET; das ist hier gewollt.
+    req.on("error", () => undefined);
+    req.on("close", () => {
+      clearInterval(timer);
+      resolve({ status, written });
+    });
+    const timer = setInterval(() => {
+      if (written >= STREAM_CHUNKS) {
+        clearInterval(timer);
+        req.end();
+        return;
+      }
+      written++;
+      req.write(chunk);
+    }, 2);
+  });
 }
 
 describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
@@ -254,39 +293,18 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
     expect(await note.text()).toBe("");
   });
 
-  it("schließt nach 413 die Verbindung, statt den Rest des Inhalts anzunehmen", async () => {
+  it("schließt nach 401, 413 und 415 die Verbindung, statt den Rest des Inhalts anzunehmen", async () => {
     const t = token(CTO);
-    const chunk = Buffer.alloc(64 * 1024, 120);
-    const limit = 400; // 25 MiB, weit über MAX_BODY_BYTES
-    const result = await new Promise<{ status: number; written: number }>((resolve) => {
-      let status = 0;
-      let written = 0;
-      const req = request(url, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
-      });
-      req.on("response", (res) => {
-        status = res.statusCode ?? 0;
-        res.resume();
-      });
-      // Nach dem Schließen meldet das Schreiben EPIPE oder ECONNRESET; das ist hier gewollt.
-      req.on("error", () => undefined);
-      req.on("close", () => {
-        clearInterval(timer);
-        resolve({ status, written });
-      });
-      const timer = setInterval(() => {
-        if (written >= limit) {
-          clearInterval(timer);
-          req.end();
-          return;
-        }
-        written++;
-        req.write(chunk);
-      }, 2);
-    });
-    expect(result.status).toBe(413);
-    expect(result.written).toBeLessThan(limit);
+    const json = { "content-type": "application/json" };
+    for (const [headers, expected] of [
+      [{ ...json, authorization: `Bearer ${t}` }, 413],
+      [json, 401],
+      [{ "content-type": "text/plain", authorization: `Bearer ${t}` }, 415],
+    ] as const) {
+      const result = await streamUntilClosed(headers);
+      expect(result.status).toBe(expected);
+      expect(result.written).toBeLessThan(STREAM_CHUNKS);
+    }
   });
 
   it("verlangt die Fähigkeiten des Clients in _meta", async () => {
@@ -664,6 +682,46 @@ describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
     expect(office.state.escalations().map((e) => e.occurredAt.slice(0, 10))).toEqual(
       Array(MAX_ESCALATIONS_PER_DAY).fill("2026-11-03"),
     );
+  });
+
+  it("holt die Freigabe nach, wenn der Weg erst im Befehl zum CEO führt", async () => {
+    // Eine andere Instanz nimmt dem COO die Rolle, nachdem das Werkzeug den Weg geprüft hat.
+    const other = Office.open(store, loadStartData().building);
+    const target = office.escalationTarget.bind(office);
+    vi.spyOn(office, "escalationTarget").mockImplementationOnce((actor) => {
+      const result = target(actor);
+      const coo = other.state.agent(COO) as AgentProfile;
+      other.changeProfile("ceo", { ...coo, version: coo.version + 1, role: "Berater" });
+      return result;
+    });
+    gateAnswer = "zu häufig";
+    const t = token(CTO);
+    const refused = await tool(t, "escalate", { text: "Blockiert" });
+    expect(refused.isError).toBe(true);
+    expect(gateCalls).toHaveLength(1);
+    expect(office.state.escalations()).toEqual([]);
+
+    gateAnswer = null;
+    const allowed = await tool(t, "escalate", { text: "Blockiert" });
+    expect(allowed.data["toId"]).toBe("ceo");
+    expect(gateCalls).toHaveLength(2);
+  });
+
+  it("liefert das gebuchte Ergebnis, wenn ein gleicher Aufruf nach der Buchung abgelehnt wird", async () => {
+    let release: () => void = () => undefined;
+    gateHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    gateAnswers = [null, "zu häufig"];
+    const t = token(COO);
+    const calls = [1, 2].map(() => tool(t, "escalate", { text: "Dringend" }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(gateCalls).toHaveLength(2);
+    release();
+    const [first, second] = await Promise.all(calls);
+    expect(first?.isError).toBe(false);
+    expect(second).toEqual(first);
+    expect(office.state.escalations()).toHaveLength(1);
   });
 
   it("zählt Eskalationen nach dem Tag des Office, nicht nach der Systemzeit", async () => {
