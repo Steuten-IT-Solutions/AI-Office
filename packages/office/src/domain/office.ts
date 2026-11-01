@@ -8,16 +8,23 @@ import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
   MESSAGE_SENT,
+  RUN_FINISHED,
+  RUN_THOUGHT,
   TASK_CREATED,
   TASK_DELEGATED,
+  TASK_HANDOVER,
   TASK_STATUS_CHANGED,
   parseMessageSent,
+  parseRunFinished,
+  parseRunThought,
   parseTaskCreated,
   parseTaskDelegated,
+  parseTaskHandover,
   parseTaskStatusChanged,
+  type RunFinished,
 } from "./events.ts";
 import type { Message, MessageKind } from "./message.ts";
-import { OfficeState } from "./office-state.ts";
+import { OfficeState, type RunRecord, type Thought } from "./office-state.ts";
 import type { Task, TaskStatus } from "./task.ts";
 import { ValidationError, type Parsed } from "./validation.ts";
 
@@ -163,6 +170,38 @@ export class Office {
   }
 
   /**
+   * Übergabenotiz zur Aufgabe (`handover`, Kap. 5.2). `auto` setzt nur die Auswertung, die dann
+   * als `system` handelt.
+   */
+  writeHandover(
+    actor: string,
+    taskId: string,
+    note: string,
+    options: CommandOptions & { auto?: boolean } = {},
+  ): Task {
+    const payload = valid(
+      "Übergabenotiz",
+      parseTaskHandover({ taskId, note, auto: options.auto ?? false }),
+    );
+    this.commit(TASK_HANDOVER, actor, payload, options);
+    return this.state.task(taskId) as Task;
+  }
+
+  /** Gedankenblase eines Laufs. Braucht die Lauf-ID. */
+  recordThought(actor: string, text: string, options: CommandOptions): Thought {
+    const payload = valid("Gedankenblase", parseRunThought({ text }));
+    const event = this.commit(RUN_THOUGHT, actor, payload, options);
+    return this.state.thoughts(event.runId ?? undefined).find((t) => t.id === event.id) as Thought;
+  }
+
+  /** Schließt einen Lauf ab und bucht seine Kosten (Kap. 6). Braucht die Lauf-ID. */
+  recordRunFinished(actor: string, input: RunFinished, options: CommandOptions): RunRecord {
+    const payload = valid("Laufabschluss", parseRunFinished(input));
+    const event = this.commit(RUN_FINISHED, actor, payload, options);
+    return this.state.run(event.runId as string) as RunRecord;
+  }
+
+  /**
    * Prüft und schreibt ein Ereignis. Ein wiederholter Aufruf mit demselben Idempotenzschlüssel
    * und demselben Inhalt liefert das bereits geschriebene Ereignis, ohne erneut zu prüfen.
    */
@@ -189,7 +228,12 @@ export class Office {
         return existing;
       }
     }
-    const reason = this.state.check({ type: eventType.type, actor, payload: json });
+    const reason = this.state.check({
+      type: eventType.type,
+      actor,
+      payload: json,
+      runId: options.runId ?? null,
+    });
     if (reason !== null) {
       throw new DomainError(reason);
     }

@@ -111,6 +111,25 @@ export class Reader {
     return value;
   }
 
+  /** Endliche Zahl, auch mit Nachkommastellen (z. B. Kosten in USD). */
+  number(key: string, min: number, max: number): number {
+    const value = this.record[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+      this.issues.push(`${this.at(key)}: Zahl von ${String(min)} bis ${String(max)} erwartet`);
+      return min;
+    }
+    return value;
+  }
+
+  boolean(key: string): boolean {
+    const value = this.record[key];
+    if (typeof value !== "boolean") {
+      this.issues.push(`${this.at(key)}: true oder false erwartet`);
+      return false;
+    }
+    return value;
+  }
+
   oneOf<T extends string>(key: string, allowed: readonly T[]): T {
     const value = this.record[key];
     if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
@@ -182,4 +201,22 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; issues: string[] }
 
 export function parsed<T>(reader: Reader, value: T): Parsed<T> {
   return reader.issues.length === 0 ? { ok: true, value } : { ok: false, issues: reader.issues };
+}
+
+/**
+ * Kürzt einen Text auf höchstens `max` UTF-16-Einheiten (wie `string.length`) und hängt `…` an,
+ * wenn gekürzt wurde. Trennt kein Ersatzzeichenpaar.
+ */
+export function truncateText(text: string, max: number): string {
+  if (text.length <= max) {
+    return text;
+  }
+  let result = "";
+  for (const char of text) {
+    if (result.length + char.length > max - 1) {
+      break;
+    }
+    result += char;
+  }
+  return `${result}…`;
 }

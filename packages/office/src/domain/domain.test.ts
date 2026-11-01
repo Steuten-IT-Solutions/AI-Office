@@ -265,7 +265,7 @@ describe("Ereignisprotokoll", () => {
   });
 
   it("übergeht fremde Typen still, neuere Versionen und Regelverstöße mit Grund", () => {
-    store.append({ type: "run.finished", actor: "system", payload: { ok: true } });
+    store.append({ type: "meeting.started", actor: "system", payload: { ok: true } });
     store.append({ type: "message.sent", version: 2, actor: CTO, payload: { neu: 1 } });
     store.append({
       type: "message.sent",
