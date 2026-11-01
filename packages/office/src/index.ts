@@ -74,17 +74,27 @@ export {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
+  MAX_HANDOVER_CHARS,
   MAX_TEXT_CHARS,
+  MAX_THOUGHT_CHARS,
   MAX_TITLE_CHARS,
   MESSAGE_SENT,
+  RATE_LIMIT_STATUSES,
+  RUN_EXITS,
+  RUN_FINISHED,
+  RUN_THOUGHT,
   TASK_CREATED,
   TASK_DELEGATED,
+  TASK_HANDOVER,
   TASK_STATUS_CHANGED,
   type AgentHired,
   type AgentProfileChanged,
   type MessageSent,
+  type RunFinished,
+  type RunThought,
   type TaskCreated,
   type TaskDelegated,
+  type TaskHandover,
   type TaskStatusChanged,
 } from "./domain/events.ts";
 export { MESSAGE_KINDS, mayWake, type Message, type MessageKind } from "./domain/message.ts";
@@ -99,7 +109,9 @@ export {
   OfficeState,
   domainRegistry,
   type PendingEvent,
+  type RunRecord,
   type SkippedEvent,
+  type Thought,
 } from "./domain/office-state.ts";
 export {
   DEFAULT_START_DIR,
@@ -113,9 +125,10 @@ export {
   canTransition,
   isReopen,
   type Task,
+  type TaskHandoverNote,
   type TaskStatus,
 } from "./domain/task.ts";
-export { ValidationError, type Parsed } from "./domain/validation.ts";
+export { ValidationError, truncateText, type Parsed } from "./domain/validation.ts";
 export {
   MAX_HANDBOOK_START_TOKENS,
   MAX_PERSONA_TOKENS,
@@ -130,3 +143,22 @@ export {
   type Persona,
   type TrustLevel,
 } from "./domain/start-content.ts";
+export {
+  CONTEXT_BOOKS,
+  DEFAULT_CONTEXT_TOKENS,
+  HANDBOOK_BOOK,
+  MAX_HANDBOOK_TOKENS,
+  MIN_INBOX_TOKENS,
+  WERKBANK_BOOKS,
+  buildContext,
+  nest,
+  quote,
+  type ContextInput,
+  type RunContext,
+} from "./domain/context.ts";
+export {
+  AUTO_HANDOVER_ANSWER_CHARS,
+  MAX_THOUGHTS_PER_RUN,
+  RunEvaluation,
+  type RunInfo,
+} from "./domain/run-evaluation.ts";

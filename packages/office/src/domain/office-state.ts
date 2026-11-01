@@ -8,12 +8,18 @@ import {
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
   MESSAGE_SENT,
+  RUN_FINISHED,
+  RUN_THOUGHT,
   TASK_CREATED,
   TASK_DELEGATED,
+  TASK_HANDOVER,
   TASK_STATUS_CHANGED,
   type MessageSent,
+  type RunFinished,
+  type RunThought,
   type TaskCreated,
   type TaskDelegated,
+  type TaskHandover,
   type TaskStatusChanged,
 } from "./events.ts";
 import type { Message } from "./message.ts";
@@ -44,6 +50,25 @@ export interface PendingEvent {
   type: string;
   actor: string;
   payload: unknown;
+  runId?: string | null;
+}
+
+/** Ein abgeschlossener Lauf, Zeile im Hauptbuch (Kap. 6). */
+export interface RunRecord extends RunFinished {
+  runId: string;
+  agentId: string;
+  seq: number;
+  occurredAt: string;
+}
+
+/** Gedankenblase eines Laufs für die Zeitleiste (Kap. 3.3 Nr. 5). */
+export interface Thought {
+  id: string;
+  seq: number;
+  occurredAt: string;
+  agentId: string;
+  runId: string;
+  text: string;
 }
 
 const DOMAIN_TYPES = new Set<string>(DOMAIN_EVENT_TYPES.map((t) => t.type));
@@ -68,6 +93,10 @@ export class OfficeState {
   private readonly taskById = new Map<string, Task>();
   private readonly messageList: Message[] = [];
   private readonly messageById = new Map<string, Message>();
+  private readonly thoughtList: Thought[] = [];
+  private readonly runById = new Map<string, RunRecord>();
+  /** Je Agent: bis zu dieser Sequenznummer hat ein abgeschlossener Lauf das Postfach gelesen. */
+  private readonly inboxRead = new Map<string, number>();
 
   constructor(building: Building) {
     this.building = building;
@@ -106,6 +135,28 @@ export class OfficeState {
     );
   }
 
+  /** Gedankenblasen in Reihenfolge des Protokolls, optional nur eines Laufs. */
+  thoughts(runId?: string): Thought[] {
+    return this.thoughtList.filter((t) => runId === undefined || t.runId === runId);
+  }
+
+  run(runId: string): RunRecord | undefined {
+    return this.runById.get(runId);
+  }
+
+  /** Abgeschlossene Läufe in Reihenfolge des Protokolls. */
+  runs(): RunRecord[] {
+    return [...this.runById.values()];
+  }
+
+  /**
+   * Sequenznummer, bis zu der der Agent sein Postfach gelesen hat. Neue Nachrichten sind die mit
+   * höherer Nummer. Der Zeiger rückt nur mit einem Lauf vor, der `completed` endete.
+   */
+  inboxReadSeq(agentId: string): number {
+    return this.inboxRead.get(agentId) ?? 0;
+  }
+
   /** Agent oder CEO. */
   isParticipant(id: string): boolean {
     return id === CEO_ID || this.profiles.has(id);
@@ -121,7 +172,7 @@ export class OfficeState {
     if (payload === null) {
       return "Payload entspricht nicht dem Schema";
     }
-    const reason = this.checkDecoded(pending.type, pending.actor, payload);
+    const reason = this.checkDecoded(pending.type, pending.actor, payload, pending.runId ?? null);
     if (reason !== null) {
       return reason;
     }
@@ -148,7 +199,7 @@ export class OfficeState {
       this.skipped.push({ seq: event.seq, type: event.type, reason });
       return;
     }
-    const reason = this.checkDecoded(event.type, event.actor, decoded.payload);
+    const reason = this.checkDecoded(event.type, event.actor, decoded.payload, event.runId);
     if (reason !== null) {
       this.skipped.push({ seq: event.seq, type: event.type, reason });
       return;
@@ -156,7 +207,12 @@ export class OfficeState {
     this.applyDecoded(event, decoded.payload);
   }
 
-  private checkDecoded(type: string, actor: string, payload: unknown): string | null {
+  private checkDecoded(
+    type: string,
+    actor: string,
+    payload: unknown,
+    runId: string | null,
+  ): string | null {
     switch (type) {
       case AGENT_HIRED.type:
         return this.checkHired(actor, (payload as { profile: AgentProfile }).profile);
@@ -170,6 +226,12 @@ export class OfficeState {
         return this.checkStatusChanged(actor, payload as TaskStatusChanged);
       case MESSAGE_SENT.type:
         return this.checkMessage(actor, payload as MessageSent);
+      case TASK_HANDOVER.type:
+        return this.checkHandover(actor, payload as TaskHandover, runId);
+      case RUN_THOUGHT.type:
+        return this.checkRunEvent(actor, runId);
+      case RUN_FINISHED.type:
+        return this.checkRunFinished(actor, payload as RunFinished, runId);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -198,6 +260,7 @@ export class OfficeState {
           parentTaskId: p.parentTaskId,
           status: "offen",
           reopenCount: 0,
+          handover: null,
           createdSeq: event.seq,
           updatedSeq: event.seq,
         });
@@ -236,6 +299,48 @@ export class OfficeState {
         };
         this.messageList.push(message);
         this.messageById.set(message.id, message);
+        return;
+      }
+      case TASK_HANDOVER.type: {
+        const p = payload as TaskHandover;
+        const task = this.taskById.get(p.taskId) as Task;
+        this.taskById.set(p.taskId, {
+          ...task,
+          handover: {
+            note: p.note,
+            auto: p.auto,
+            writtenBy: event.actor,
+            runId: event.runId,
+            seq: event.seq,
+          },
+          updatedSeq: event.seq,
+        });
+        return;
+      }
+      case RUN_THOUGHT.type: {
+        this.thoughtList.push({
+          id: event.id,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+          agentId: event.actor,
+          runId: event.runId as string,
+          text: (payload as RunThought).text,
+        });
+        return;
+      }
+      case RUN_FINISHED.type: {
+        const p = payload as RunFinished;
+        const runId = event.runId as string;
+        this.runById.set(runId, {
+          ...p,
+          runId,
+          agentId: event.actor,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+        });
+        if (p.exit === "completed" && p.inboxUpToSeq > this.inboxReadSeq(event.actor)) {
+          this.inboxRead.set(event.actor, p.inboxUpToSeq);
+        }
         return;
       }
     }
@@ -347,6 +452,55 @@ export class OfficeState {
     }
     if (!canTransition(task.status, p.status)) {
       return `Wechsel von ${task.status} nach ${p.status} ist nicht erlaubt`;
+    }
+    return null;
+  }
+
+  /** Gemeinsame Regeln für Ereignisse eines Laufs: Lauf-ID gesetzt, Lauf noch offen. */
+  private checkRun(runId: string | null): string | null {
+    if (runId === null) {
+      return "Ereignis gehört zu keinem Lauf";
+    }
+    if (this.runById.has(runId)) {
+      return `Lauf ${runId} ist bereits abgeschlossen`;
+    }
+    return null;
+  }
+
+  private checkRunEvent(actor: string, runId: string | null): string | null {
+    if (this.agent(actor) === undefined) {
+      return `Handelnder ${actor} ist kein Agent`;
+    }
+    return this.checkRun(runId);
+  }
+
+  /**
+   * Eine Übergabenotiz schreibt der Bearbeiter der Aufgabe in seinem Lauf (`handover`) oder die
+   * Auswertung als `system`, wenn der Lauf keine geschrieben hat (Kap. 5.2).
+   */
+  private checkHandover(actor: string, p: TaskHandover, runId: string | null): string | null {
+    const task = this.taskById.get(p.taskId);
+    if (task === undefined) {
+      return `Aufgabe ${p.taskId} existiert nicht`;
+    }
+    if (p.auto ? actor !== "system" : actor !== task.assigneeId) {
+      return p.auto
+        ? "Eine automatische Übergabenotiz schreibt nur das System"
+        : `Nur der Bearbeiter von ${p.taskId} schreibt die Übergabenotiz`;
+    }
+    return this.checkRun(runId);
+  }
+
+  private checkRunFinished(actor: string, p: RunFinished, runId: string | null): string | null {
+    const reason = this.checkRunEvent(actor, runId);
+    if (reason !== null) {
+      return reason;
+    }
+    if (p.taskId !== null && !this.taskById.has(p.taskId)) {
+      return `Aufgabe ${p.taskId} existiert nicht`;
+    }
+    if (p.inboxUpToSeq > this.lastSeq) {
+      return `Postfach bis ${String(p.inboxUpToSeq)} liegt hinter dem Protokoll`;
     }
     return null;
   }

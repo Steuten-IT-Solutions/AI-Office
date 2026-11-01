@@ -18,6 +18,16 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 /** Abgeschlossene Zustände. Ein Wechsel zurück nach `offen` gilt als Wiedereröffnung. */
 export const CLOSED_STATUSES: readonly TaskStatus[] = ["erledigt", "abgebrochen"];
 
+export interface TaskHandoverNote {
+  note: string;
+  /** Von der Auswertung erzeugt, weil der Lauf keine Notiz geschrieben hat. */
+  auto: boolean;
+  /** Agent oder `system`. */
+  writtenBy: string;
+  runId: string | null;
+  seq: number;
+}
+
 export interface Task {
   /** ID des Ereignisses `task.created`. */
   id: string;
@@ -35,6 +45,8 @@ export interface Task {
    * (Kap. 4.3); das zählt maßgeblich der Supervisor, hier nur für Anzeige und Planer.
    */
   reopenCount: number;
+  /** Letzte Übergabenotiz (Kap. 5.2), sonst `null`. */
+  handover: TaskHandoverNote | null;
   createdSeq: number;
   updatedSeq: number;
 }

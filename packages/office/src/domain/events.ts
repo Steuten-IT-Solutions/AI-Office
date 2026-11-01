@@ -20,6 +20,10 @@ export const RUN_TYPES: readonly RunType[] = ["werkbank", "buero", "recherche"];
 /** Obergrenzen gegen ausufernde Payloads. [Annahme: Werte im Betrieb justieren] */
 export const MAX_TITLE_CHARS = 200;
 export const MAX_TEXT_CHARS = 20_000;
+/** Übergabenotiz: „begrenzte Länge“ (Kap. 5.2). [Annahme: 2.000 Zeichen] */
+export const MAX_HANDOVER_CHARS = 2_000;
+/** Gedankenblase: „gekürzter“ Text (Kap. 3.3). [Annahme: 500 Zeichen] */
+export const MAX_THOUGHT_CHARS = 500;
 
 export interface AgentHired {
   profile: AgentProfile;
@@ -48,6 +52,46 @@ export interface TaskStatusChanged {
   taskId: string;
   status: TaskStatus;
   note: string | null;
+}
+
+/** Übergabenotiz zu einer Aufgabe (Kap. 5.2), geschrieben mit `handover` oder automatisch. */
+export interface TaskHandover {
+  taskId: string;
+  note: string;
+  /** `true`, wenn die Auswertung sie erzeugt hat, weil der Lauf keine geschrieben hat. */
+  auto: boolean;
+}
+
+/** Gedankenblase: gekürzter tatsächlicher Text eines Laufs (Kap. 3.3 Nr. 5, E1). */
+export interface RunThought {
+  text: string;
+}
+
+export const RUN_EXITS = ["completed", "error", "aborted", "no_result"] as const;
+export const RATE_LIMIT_STATUSES = ["allowed", "allowed_warning", "rejected"] as const;
+
+/** Abschluss eines Laufs mit Kosten fürs Hauptbuch (Kap. 6). Handelnder ist der Agent. */
+export interface RunFinished {
+  taskId: string | null;
+  runType: RunType;
+  model: string;
+  exit: (typeof RUN_EXITS)[number];
+  resultSubtype: string | null;
+  totalCostUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  numTurns: number;
+  rateLimitStatus: (typeof RATE_LIMIT_STATUSES)[number] | null;
+  invalidLines: number;
+  /** Werkzeugaufrufe je Werkzeugname. */
+  toolCalls: { name: string; count: number }[];
+  /**
+   * Bis zu dieser Sequenznummer hat der Lauf das Postfach im Kontext gesehen. Der Zeiger rückt
+   * nur bei `completed` vor; sonst sieht der nächste Lauf dieselben Nachrichten noch einmal.
+   */
+  inboxUpToSeq: number;
 }
 
 export interface MessageSent {
@@ -146,6 +190,66 @@ export function parseMessageSent(payload: unknown): Parsed<MessageSent> {
   });
 }
 
+export function parseTaskHandover(payload: unknown): Parsed<TaskHandover> {
+  const r = new Reader(payload).only("taskId", "note", "auto");
+  return parsed(r, {
+    taskId: eventRef(r, "taskId", false),
+    note: r.string("note", { maxLength: MAX_HANDOVER_CHARS }),
+    auto: r.boolean("auto"),
+  });
+}
+
+export function parseRunThought(payload: unknown): Parsed<RunThought> {
+  const r = new Reader(payload).only("text");
+  return parsed(r, { text: r.string("text", { maxLength: MAX_THOUGHT_CHARS }) });
+}
+
+const COUNT_MAX = Number.MAX_SAFE_INTEGER;
+
+export function parseRunFinished(payload: unknown): Parsed<RunFinished> {
+  const r = new Reader(payload).only(
+    "taskId",
+    "runType",
+    "model",
+    "exit",
+    "resultSubtype",
+    "totalCostUsd",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadInputTokens",
+    "cacheCreationInputTokens",
+    "numTurns",
+    "rateLimitStatus",
+    "invalidLines",
+    "toolCalls",
+    "inboxUpToSeq",
+  );
+  const rate = r.raw("rateLimitStatus");
+  return parsed(r, {
+    taskId: eventRef(r, "taskId", true),
+    runType: r.oneOf("runType", RUN_TYPES),
+    model: r.string("model", { maxLength: 100 }),
+    exit: r.oneOf("exit", RUN_EXITS),
+    resultSubtype: r.optionalString("resultSubtype"),
+    totalCostUsd: r.number("totalCostUsd", 0, 1_000_000),
+    inputTokens: r.integer("inputTokens", 0, COUNT_MAX),
+    outputTokens: r.integer("outputTokens", 0, COUNT_MAX),
+    cacheReadInputTokens: r.integer("cacheReadInputTokens", 0, COUNT_MAX),
+    cacheCreationInputTokens: r.integer("cacheCreationInputTokens", 0, COUNT_MAX),
+    numTurns: r.integer("numTurns", 0, COUNT_MAX),
+    rateLimitStatus: rate === null ? null : r.oneOf("rateLimitStatus", RATE_LIMIT_STATUSES),
+    invalidLines: r.integer("invalidLines", 0, COUNT_MAX),
+    toolCalls: r.objects("toolCalls").map((t) => {
+      t.only("name", "count");
+      return {
+        name: t.string("name", { maxLength: 200 }),
+        count: t.integer("count", 1, COUNT_MAX),
+      };
+    }),
+    inboxUpToSeq: r.integer("inboxUpToSeq", 0, COUNT_MAX),
+  });
+}
+
 function eventType<T>(type: string, parse: (payload: unknown) => Parsed<T>): EventType<T> {
   return {
     type,
@@ -166,6 +270,9 @@ export const TASK_CREATED = eventType("task.created", parseTaskCreated);
 export const TASK_DELEGATED = eventType("task.delegated", parseTaskDelegated);
 export const TASK_STATUS_CHANGED = eventType("task.status_changed", parseTaskStatusChanged);
 export const MESSAGE_SENT = eventType("message.sent", parseMessageSent);
+export const TASK_HANDOVER = eventType("task.handover", parseTaskHandover);
+export const RUN_THOUGHT = eventType("run.thought", parseRunThought);
+export const RUN_FINISHED = eventType("run.finished", parseRunFinished);
 
 export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   AGENT_HIRED,
@@ -174,4 +281,7 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   TASK_DELEGATED,
   TASK_STATUS_CHANGED,
   MESSAGE_SENT,
+  TASK_HANDOVER,
+  RUN_THOUGHT,
+  RUN_FINISHED,
 ];
