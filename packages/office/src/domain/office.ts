@@ -92,7 +92,8 @@ export interface OfficeOptions {
 }
 
 export class Office {
-  readonly state: OfficeState;
+  private current: OfficeState;
+  private readonly building: Building;
   /** Dieselbe Uhr nutzen Ereignisse und Prüfungen, die vom Datum abhängen (z. B. Tagesgrenzen). */
   readonly now: () => Date;
   private readonly store: EventStore;
@@ -100,13 +101,33 @@ export class Office {
   private constructor(store: EventStore, building: Building, options: OfficeOptions) {
     this.store = store;
     this.now = options.now ?? (() => new Date());
-    this.state = new OfficeState(building);
+    this.building = building;
+    this.current = new OfficeState(building);
     this.sync();
   }
 
   /** Baut den Zustand aus dem gesamten Ereignisprotokoll auf. */
   static open(store: EventStore, building: Building, options: OfficeOptions = {}): Office {
     return new Office(store, building, options);
+  }
+
+  /** Zustand aus dem Ereignisprotokoll. Nach einem zurückgerollten Befehl ein neues Objekt. */
+  get state(): OfficeState {
+    return this.current;
+  }
+
+  /**
+   * Mehrere Befehle als ein Schreibvorgang: alle Ereignisse oder keines. Bei einem Fehler wird der
+   * Zustand neu aus dem Protokoll aufgebaut, denn die ersten Ereignisse sind schon angewandt.
+   */
+  private atomically<T>(fn: () => T): T {
+    try {
+      return this.store.transaction(fn);
+    } catch (error) {
+      this.current = new OfficeState(this.building);
+      this.sync();
+      throw error;
+    }
   }
 
   /** Liest neue Ereignisse nach. */
@@ -178,7 +199,8 @@ export class Office {
    * Nachricht senden. Zeigt `replyToId` auf eine Eskalation, ist das eine Antwort darauf: Die
    * Nachricht selbst trägt dann kein `replyToId`, denn die Vorversion kennt keine Eskalationen
    * und würde sie überspringen (E24). Kommt sie vom Empfänger der Eskalation, folgt
-   * `escalation.answered` mit dem abgeleiteten Schlüssel `<Schlüssel>:antwort`.
+   * `escalation.answered` mit dem abgeleiteten Schlüssel `<Schlüssel>:antwort`, in derselben
+   * Transaktion: Ohne Verknüpfung bliebe die Eskalation trotz Antwort offen.
    */
   sendMessage(actor: string, input: NewMessage, options: CommandOptions = {}): Message {
     this.sync();
@@ -194,15 +216,20 @@ export class Office {
         replyToId: escalation === undefined ? replyToId : null,
       }),
     );
-    const event = this.commit(MESSAGE_SENT, actor, payload, options);
-    if (escalation !== undefined && escalation.toId === actor) {
-      this.answerEscalation(actor, escalation.id, event.id, {
+    if (escalation === undefined || escalation.toId !== actor) {
+      const event = this.commit(MESSAGE_SENT, actor, payload, options);
+      return this.state.message(event.id) as Message;
+    }
+    const event = this.atomically(() => {
+      const sent = this.commit(MESSAGE_SENT, actor, payload, options);
+      this.answerEscalation(actor, escalation.id, sent.id, {
         ...options,
         ...(options.idempotencyKey === undefined
           ? {}
           : { idempotencyKey: `${options.idempotencyKey}:antwort` }),
       });
-    }
+      return sent;
+    });
     return this.state.message(event.id) as Message;
   }
 

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventStore } from "../events/event-store.ts";
 import type { AgentProfile } from "./agent.ts";
 import { Office } from "./office.ts";
@@ -119,6 +119,36 @@ describe("Eskalation (Kap. 5.4, E47)", () => {
     office.sendMessage(COO, { ...reply, text: "Nachtrag" });
     expect(office.state.escalation(escalation.id)?.answerId).toBe(message.id);
     expect(office.state.skipped).toEqual([]);
+  });
+
+  it("schreibt Antwort und Verknüpfung zusammen oder gar nicht", () => {
+    seedStartAgents(office, start.agents);
+    const escalation = office.escalate(CTO, { text: "Blockiert" });
+    const reply = { toId: CTO, kind: "info" as const, text: "Erledigt", replyToId: escalation.id };
+    const options = { runId: "r1", idempotencyKey: "r1:send_message:1" };
+    const lastSeq = office.state.lastSeq;
+
+    // Das zweite Anhängen scheitert, etwa weil die Platte voll ist.
+    const append = store.append.bind(store);
+    const spy = vi
+      .spyOn(store, "append")
+      .mockImplementationOnce(append)
+      .mockImplementationOnce(() => {
+        throw new Error("Platte voll");
+      });
+    expect(() => office.sendMessage(COO, reply, options)).toThrow("Platte voll");
+    spy.mockRestore();
+    expect(store.read({ afterSeq: lastSeq })).toEqual([]);
+    expect(office.state.lastSeq).toBe(lastSeq);
+    expect(office.state.messages({ toId: CTO })).toEqual([]);
+
+    // Die Wiederholung bucht beides.
+    const message = office.sendMessage(COO, reply, options);
+    expect(office.state.escalation(escalation.id)?.answerId).toBe(message.id);
+    expect(store.read({ afterSeq: lastSeq }).map((e) => e.type)).toEqual([
+      "message.sent",
+      "escalation.answered",
+    ]);
   });
 
   it("bleibt für eine Vorversion ohne Eskalationen lesbar (E24)", () => {
