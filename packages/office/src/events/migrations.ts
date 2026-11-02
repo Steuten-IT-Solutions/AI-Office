@@ -50,6 +50,29 @@ function validate(migrations: readonly Migration[]): void {
   });
 }
 
+function readApplied(db: DatabaseSync): AppliedRow[] {
+  return db
+    .prepare("SELECT version, phase FROM schema_migrations ORDER BY version")
+    .all() as unknown as AppliedRow[];
+}
+
+/** Versionen über dem Stand des Codes; wirft, wenn darunter eine Contract-Migration ist. */
+function unknownVersions(rows: readonly AppliedRow[], codeVersion: number): AppliedRow[] {
+  const unknown = rows.filter((row) => row.version > codeVersion);
+  const unknownContract = unknown.find((row) => row.phase === "contract");
+  if (unknownContract !== undefined) {
+    throw new IncompatibleSchemaError(
+      `Datenbank enthält Contract-Migration ${String(unknownContract.version)}, die diese Version nicht kennt. Rücksicherung oder neuere Version nötig.`,
+    );
+  }
+  return unknown;
+}
+
+/**
+ * Wendet fehlende Migrationen an, jede in einer eigenen `IMMEDIATE`-Transaktion. Der Stand wird
+ * jeweils erst unter der Sperre gelesen: Öffnen zwei Prozesse gleichzeitig eine neue Datei,
+ * überspringt der zweite, was der erste inzwischen angewandt hat.
+ */
 export function migrate(db: DatabaseSync, migrations: readonly Migration[]): MigrationStatus {
   validate(migrations);
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -59,49 +82,45 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[]): Mig
     applied_at TEXT NOT NULL
   ) STRICT`);
 
-  const rows = db
-    .prepare("SELECT version, phase FROM schema_migrations ORDER BY version")
-    .all() as unknown as AppliedRow[];
   const codeVersion = migrations.length;
-  const unknown = rows.filter((row) => row.version > codeVersion);
-  const unknownContract = unknown.filter((row) => row.phase === "contract");
-  if (unknownContract.length > 0) {
-    throw new IncompatibleSchemaError(
-      `Datenbank enthält Contract-Migration ${String(unknownContract[0]?.version)}, die diese Version nicht kennt. Rücksicherung oder neuere Version nötig.`,
-    );
-  }
+  unknownVersions(readApplied(db), codeVersion);
 
-  const appliedVersions = new Set(rows.map((row) => row.version));
   const applied: number[] = [];
   const insert = db.prepare(
     "INSERT INTO schema_migrations (version, name, phase, applied_at) VALUES (?, ?, ?, ?)",
   );
   for (const migration of migrations) {
-    if (appliedVersions.has(migration.version)) {
-      continue;
-    }
-    if (unknown.length > 0) {
-      // Eine neuere Version hat schon migriert; Lücken darunter wären ein inkonsistenter Stand.
-      throw new IncompatibleSchemaError(
-        `Migration ${String(migration.version)} fehlt, obwohl neuere Migrationen angewandt sind.`,
-      );
-    }
     db.exec("BEGIN IMMEDIATE");
     try {
+      const rows = readApplied(db);
+      const unknown = unknownVersions(rows, codeVersion);
+      if (rows.some((row) => row.version === migration.version)) {
+        db.exec("COMMIT");
+        continue;
+      }
+      if (unknown.length > 0) {
+        // Eine neuere Version hat schon migriert; Lücken darunter wären ein inkonsistenter Stand.
+        throw new IncompatibleSchemaError(
+          `Migration ${String(migration.version)} fehlt, obwohl neuere Migrationen angewandt sind.`,
+        );
+      }
       migration.up(db);
       insert.run(migration.version, migration.name, migration.phase, new Date().toISOString());
       db.exec("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
       throw error;
     }
     applied.push(migration.version);
   }
 
+  const rows = readApplied(db);
   return {
     databaseVersion: Math.max(codeVersion, ...rows.map((row) => row.version), 0),
     codeVersion,
     applied,
-    unknownExpand: unknown.map((row) => row.version),
+    unknownExpand: unknownVersions(rows, codeVersion).map((row) => row.version),
   };
 }

@@ -133,10 +133,12 @@ export class EventStore {
 
   private constructor(db: DatabaseSync, migrations: readonly Migration[]) {
     this.db = db;
+    // Zuerst: Auch der Wechsel auf WAL wartet so auf Sperren anderer Verbindungen, statt sofort
+    // mit SQLITE_BUSY abzubrechen.
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = FULL");
     this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec("PRAGMA busy_timeout = 5000");
     this.migration = migrate(this.db, migrations);
   }
 
@@ -188,6 +190,19 @@ export class EventStore {
   }
 
   private insert(input: NewEvent): StoredEvent {
+    // SQLite speichert Text als UTF-8 und ersetzt ein ungepaartes Surrogat durch U+FFFD; der Hash
+    // entstünde über das Surrogat, und die Kette wäre nach dem Lesen gebrochen. Im Payload ist
+    // das kein Problem, weil kanonisches JSON es als \uXXXX escapt.
+    for (const [field, value] of [
+      ["type", input.type],
+      ["actor", input.actor],
+      ["runId", input.runId],
+      ["idempotencyKey", input.idempotencyKey],
+    ] as const) {
+      if (value !== undefined && !value.isWellFormed()) {
+        throw new Error(`${field} enthält ein ungepaartes Surrogat`);
+      }
+    }
     if (input.idempotencyKey !== undefined) {
       const existing = this.db
         .prepare("SELECT * FROM events WHERE idempotency_key = ?")
