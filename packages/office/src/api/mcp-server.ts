@@ -341,14 +341,19 @@ export class OfficeApi {
       return rpcError(200, id, ERRORS.invalidParams, "params.arguments muss ein Objekt sein");
     }
 
-    const count = (this.calls.get(grant.runId) ?? 0) + 1;
-    this.calls.set(grant.runId, count);
-    if (count > MAX_CALLS_PER_RUN) {
-      return this.toolResult(
-        id,
-        `Zu viele Aufrufe in diesem Lauf (höchstens ${String(MAX_CALLS_PER_RUN)}).`,
-        null,
-      );
+    const key = idempotencyKey(grant.runId, name, args as JsonValue);
+    // Eine Wiederholung eines schon gebuchten Aufrufs zählt nicht und liefert auch an der Grenze
+    // das gebuchte Ergebnis. Sonst bekäme der Client einen Fehler für etwas, das geschehen ist.
+    if (!this.options.office.hasCommitted(key)) {
+      const count = (this.calls.get(grant.runId) ?? 0) + 1;
+      this.calls.set(grant.runId, count);
+      if (count > MAX_CALLS_PER_RUN) {
+        return this.toolResult(
+          id,
+          `Zu viele Aufrufe in diesem Lauf (höchstens ${String(MAX_CALLS_PER_RUN)}).`,
+          null,
+        );
+      }
     }
     // Zwischen Prüfung des Tokens und hier lag das Lesen des Inhalts; der Lauf kann inzwischen
     // abgeschlossen oder das Token zurückgezogen sein.
@@ -359,7 +364,7 @@ export class OfficeApi {
         {
           office: this.options.office,
           grant,
-          idempotencyKey: idempotencyKey(grant.runId, name, args as JsonValue),
+          idempotencyKey: key,
           gate: this.options.gate,
           ceoViaCooOnly: this.options.ceoViaCooOnly ?? (() => false),
           revalidate,

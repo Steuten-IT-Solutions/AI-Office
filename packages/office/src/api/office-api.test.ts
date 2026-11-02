@@ -575,6 +575,20 @@ describe("Werkzeuge", () => {
     expect(over.text).toContain("Zu viele Aufrufe");
     expect(office.state.messages()).toEqual([]);
   });
+
+  it("liefert an der Aufrufgrenze für eine Wiederholung das gebuchte Ergebnis", async () => {
+    const t = token(CTO);
+    const args = { toId: COO, kind: "info", text: "Bericht" };
+    const first = await tool(t, "send_message", args);
+    for (let i = 1; i < MAX_CALLS_PER_RUN; i += 1) {
+      await rpc(t, "tools/call", { name: "handover", arguments: { note: `Stand ${String(i)}` } });
+    }
+    const again = await tool(t, "send_message", args);
+    expect(again).toEqual(first);
+    const over = await tool(t, "send_message", { ...args, text: "Neu" });
+    expect(over.isError).toBe(true);
+    expect(office.state.messages()).toHaveLength(1);
+  });
 });
 
 describe("Wiederholungen und Nebenläufigkeit (Review von PR #13)", () => {
