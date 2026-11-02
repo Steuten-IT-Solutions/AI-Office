@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +34,13 @@ describe("canonicalJson", () => {
     expect(() => canonicalJson(Number.NaN)).toThrow(TypeError);
     expect(() => canonicalJson(new Date())).toThrow(TypeError);
     expect(() => canonicalJson({ f: () => 1 })).toThrow(TypeError);
+  });
+
+  it("lehnt Lücken in Arrays ab statt ungültiges JSON zu erzeugen", () => {
+    expect(() => canonicalJson(new Array(1))).toThrow(TypeError);
+    expect(() => canonicalJson(new Array(2))).toThrow(TypeError);
+    expect(() => canonicalJson([1, , 3])).toThrow(TypeError); // eslint-disable-line no-sparse-arrays
+    expect(() => canonicalJson([undefined])).toThrow(TypeError);
   });
 });
 
@@ -165,6 +174,49 @@ describe("EventStore", () => {
   });
 });
 
+describe("EventStore beim Öffnen und Anhängen", () => {
+  it("lehnt ungepaarte Surrogate in Textfeldern ab, damit die Kette gültig bleibt", () => {
+    const store = EventStore.open(path);
+    expect(() => store.append({ type: "x", actor: "\ud800", payload: {} })).toThrow(/Surrogat/);
+    expect(() => store.append({ type: "x", actor: "a", runId: "r\udc00", payload: {} })).toThrow(
+      /Surrogat/,
+    );
+    // Im Payload bleibt es erhalten.
+    store.append({ type: "x", actor: "a", payload: { text: "\ud800" } });
+    store.close();
+
+    const reopened = EventStore.open(path);
+    expect(reopened.verifyChain().ok).toBe(true);
+    expect(reopened.read()[0]?.payload).toEqual({ text: "\ud800" });
+    reopened.close();
+  });
+
+  it("wartet beim ersten Öffnen auf eine Lesesperre eines anderen Prozesses", async () => {
+    // Ein zweiter Prozess hält eine Lesetransaktion 300 ms lang. Der Wechsel auf WAL braucht eine
+    // exklusive Sperre und muss warten, statt sofort mit SQLITE_BUSY abzubrechen.
+    const holder = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite");
+         const db = new DatabaseSync(process.argv[1]);
+         db.exec("BEGIN");
+         db.prepare("SELECT count(*) FROM sqlite_master").get();
+         console.log("gesperrt");
+         setTimeout(() => { db.exec("COMMIT"); db.close(); }, 300);`,
+        path,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await once(holder.stdout, "data");
+
+    const store = EventStore.open(path);
+    expect(store.head().seq).toBe(0);
+    store.close();
+    await once(holder, "close");
+  }, 20_000);
+});
+
 describe("Migrationen (Expand/Contract)", () => {
   const addColumn: Migration = {
     version: 2,
@@ -223,6 +275,37 @@ describe("Migrationen (Expand/Contract)", () => {
     db.close();
     expect(tables).toEqual([]);
     expect(versions.map((v) => v["version"])).toEqual([1]);
+  });
+
+  it("überspringt eine Migration, die ein anderer Prozess vor der Sperre angewandt hat", () => {
+    const a = new DatabaseSync(path);
+    const b = new DatabaseSync(path);
+    a.exec("PRAGMA busy_timeout = 5000");
+    let raced = false;
+    // Vor dem ersten Schreibzugriff von `a` migriert `b` dieselbe Datei.
+    const racing = new Proxy(a, {
+      get(target, key) {
+        if (key === "exec") {
+          return (sql: string) => {
+            if (!raced && sql.startsWith("BEGIN")) {
+              raced = true;
+              migrate(b, EVENT_MIGRATIONS);
+            }
+            target.exec(sql);
+          };
+        }
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+      },
+    });
+
+    const status = migrate(racing, EVENT_MIGRATIONS);
+
+    expect(raced).toBe(true);
+    expect(status.applied).toEqual([]);
+    expect(status.databaseVersion).toBe(1);
+    a.close();
+    b.close();
   });
 
   it("verlangt lückenlose Nummerierung", () => {

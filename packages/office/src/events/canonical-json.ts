@@ -21,7 +21,15 @@ export function canonicalJson(value: unknown): string {
       return JSON.stringify(value);
     case "object": {
       if (Array.isArray(value)) {
-        return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+        // Keine Lücken: `map` überspränge sie, und `[,]` wäre kein JSON.
+        const items: string[] = [];
+        for (let index = 0; index < value.length; index += 1) {
+          if (!(index in value)) {
+            throw new TypeError("Arrays mit Lücken sind kein JSON-Wert");
+          }
+          items.push(canonicalJson(value[index]));
+        }
+        return `[${items.join(",")}]`;
       }
       const prototype: unknown = Object.getPrototypeOf(value);
       if (prototype !== Object.prototype && prototype !== null) {
