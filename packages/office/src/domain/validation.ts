@@ -4,6 +4,9 @@
  * Bewusst ohne Schema-Bibliothek: Das Domänenmodell braucht nur wenige, flache Strukturen, und
  * jede neue Abhängigkeit vergrößert die Lieferkette (E34). Die Prüfungen im Office dienen nur dem
  * Komfort; sicherheitsrelevante Prüfungen liegen im Supervisor (E22).
+ *
+ * Ausnahme ist das IPC-Protokoll (`ipc/protocol.ts`, P02): Es ist eine Kopie der zod-Schemas aus
+ * dem Supervisor, damit beide Seiten dieselben Regeln prüfen.
  */
 
 export class ValidationError extends Error {

@@ -191,3 +191,23 @@ export {
   type EscalationGate,
   type ToolDefinition,
 } from "./api/tools.ts";
+export {
+  ERROR_CODES as IPC_ERROR_CODES,
+  IPC_METHODS,
+  MAX_FRAME_BYTES as IPC_MAX_FRAME_BYTES,
+  METHODS as IPC_SCHEMAS,
+  PROTOCOL_VERSION as IPC_PROTOCOL_VERSION,
+  type IpcErrorCode,
+  type IpcMethod,
+  type IpcParams,
+  type IpcResult,
+} from "./ipc/protocol.ts";
+export {
+  DEFAULT_SOCKET_PATH,
+  DEFAULT_TIMEOUT_MS as IPC_DEFAULT_TIMEOUT_MS,
+  IpcCallError,
+  IpcTransportError,
+  SupervisorClient,
+  supervisorEscalationGate,
+  type SupervisorClientOptions,
+} from "./ipc/client.ts";
