@@ -33,8 +33,13 @@ export const DEFAULT_SOCKET_PATH = "/run/aio/supervisor.sock";
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
- * Der Supervisor hat geantwortet und den Aufruf abgelehnt, oder die Anfrage war schon im Office
- * ungültig und wurde nicht gesendet. In beiden Fällen ist sicher nichts ausgeführt worden.
+ * Der Supervisor hat mit einem Fehler geantwortet, oder die Anfrage war schon im Office ungültig
+ * und wurde nicht gesendet.
+ *
+ * Bis auf `internal` ist dann sicher nichts ausgeführt: Diese Fehler entstehen im Supervisor vor
+ * dem Handler (S02). `internal` kann auch nach dem Handler kommen, wenn er mittendrin wirft oder
+ * sein Ergebnis das Schema verletzt. Dann ist `outcomeUnknown` gesetzt wie bei
+ * `IpcTransportError`, und der Aufruf darf nicht blind wiederholt werden.
  */
 export class IpcCallError extends Error {
   override name = "IpcCallError";
@@ -43,6 +48,8 @@ export class IpcCallError extends Error {
   readonly supported: readonly number[] | undefined;
   /** `false`, wenn die Anfrage schon im Office scheiterte und den Socket nie erreichte. */
   readonly sent: boolean;
+  /** Nur bei `internal`: Der Supervisor kann den Aufruf ganz oder teilweise ausgeführt haben. */
+  readonly outcomeUnknown: boolean;
 
   constructor(
     method: IpcMethod,
@@ -53,6 +60,7 @@ export class IpcCallError extends Error {
     this.code = error.code;
     this.supported = error.supported;
     this.sent = sent;
+    this.outcomeUnknown = sent && error.code === "internal";
   }
 }
 

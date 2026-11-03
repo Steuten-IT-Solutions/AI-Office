@@ -201,6 +201,26 @@ describe("SupervisorClient", () => {
     expect(connections).toBe(1);
   });
 
+  it("hält nur bei internal offen, ob der Supervisor den Aufruf ausgeführt hat", async () => {
+    await supervisor((request) =>
+      request.params["seq"] === 1
+        ? [fail(request.id, "internal", "Interner Fehler im Supervisor")]
+        : [fail(request.id, "not_available", "noch nicht umgesetzt")],
+    );
+    const supervisorClient = client();
+    const internal = await rejection(
+      supervisorClient.call("office.reportHead", { ...head, seq: 1 }),
+    );
+    expect(internal).toBeInstanceOf(IpcCallError);
+    expect(internal).toMatchObject({ code: "internal", sent: true, outcomeUnknown: true });
+    const other = await rejection(supervisorClient.call("office.reportHead", head));
+    expect(other).toMatchObject({ code: "not_available", outcomeUnknown: false });
+    const local = await rejection(
+      supervisorClient.call("office.reportHead", { seq: -1, hash: "" }),
+    );
+    expect(local).toMatchObject({ code: "invalid_params", sent: false, outcomeUnknown: false });
+  });
+
   it("ordnet eine Fehlerantwort ohne ID der ältesten offenen Anfrage zu", async () => {
     await supervisor(() => [fail(null, "invalid_request", "id: Ungültig")]);
     const error = await rejection(client().call("office.reportHead", head));
