@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E47 am 31.10.2026).
+> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E48 am 03.11.2026).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -58,6 +58,7 @@
 | E45 | Das **Restrisiko R11** (Datenabfluss über eine Navigation der ganzen Seite im Browser des CEO) wird **akzeptiert**. Es gibt kein eigenes Browserprofil. | CEO-Entscheidung (Variante A). Ausnutzbar erst nach einem manipulierten Office-Release, das das CEO-Review passiert hat. | Runde 10 |
 | E46 | **Zielbild „CEO-Kommunikation nur über den COO“:** Sobald die Firma stabil läuft, spricht der CEO nur noch mit dem COO, in beide Richtungen. Die übrigen Agenten schreiben dem CEO dann nicht mehr direkt, auch Eskalationen laufen über den COO. Wann es so weit ist, legt der CEO per **Weisung** fest, nicht eine Kennzahl. Bis dahin berichten die Startagenten direkt an den CEO. Benachrichtigungen des Supervisors (E37) sind nicht betroffen. Umsetzung in Kap. 5.4. | CEO-Entscheidung. Folgt dem Ziel aus E6, dass der CEO langfristig nur bei Eskalationen eingreift. | Review 19 |
 | E47 | **Eskalationen laufen über den COO**, schon vor E46: Eskalationen gehen an den COO, und er entscheidet, was an den CEO weitergeht. Eskalationen des COO selbst gehen direkt an den CEO. Antwortet der COO nicht innerhalb des Timeouts, geht die Eskalation nach der bestehenden Regel eine Ebene höher, also an den CEO (Kap. 5.4). | CEO-Entscheidung. Der CEO soll nicht jede Eskalation einzeln sehen, der COO filtert. | Review 20 |
+| E48 | **Branch-Schutz in zwei Stufen:** Bis zum Merge-Gate des Supervisors (Paket S09) verlangt der Branch-Schutz von `main` einen PR mit grüner Pflicht-CI auf aktuellem Stand, aber **kein Approval**. Die Freigabe erteilt der CEO, indem er selbst merged oder zu genau diesem PR ausdrücklich „Merge“ schreibt. Ab S09 öffnet die GitHub App die PRs, und es gelten Approval und Code-Owner-Review nach E26. | Die PRs der Entwicklung mit Claude Code laufen unter dem Konto des CEO, und „Pull request authors cannot approve their own pull requests“ (<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews>). Folge: Bis S09 erzwingt GitHub kein menschliches Review, E44 hält nur der Ablauf ein. | Review 21 |
 
 ---
 
@@ -1011,3 +1012,7 @@ Bei der Freigabe der Startdaten von P05 (alle Startagenten berichten an den CEO)
 ### Review 20 – Entscheidung des CEO zu Eskalationen (31.10.2026)
 
 Im Review von P11 (PR #10) hat der CEO die Norm „An den CEO nur eskalieren, wenn es nicht anders geht“ als zu endgültig abgelehnt. Stattdessen entscheidet der COO, was an den CEO eskaliert wird. Aufgenommen als E47, in Kap. 5.4 (Baustein Eskalation) und in Kap. 5.12 (Begrenzung der Schwäche des CTO). Der frühere **[Vorschlag]** aus E46 zum Timeout entfällt als eigener Punkt, weil er aus der bestehenden Regel „ohne Antwort eine Ebene höher“ folgt. Offen bleibt der **[Vorschlag]**, dass der Supervisor den Weg prüft.
+
+### Review 21 – Entscheidung des CEO zum Branch-Schutz (03.11.2026)
+
+Beim Einrichten des Branch-Schutzes fiel auf, dass der CEO die PRs aus Claude-Sitzungen nicht approven kann, weil sie unter seinem Konto eröffnet werden. Mit Pflicht-Approval und ohne Bypass wäre `main` gesperrt. Der CEO hat die Übergangsregel bestätigt. Aufgenommen als E48 und in `einrichtung.md` Teil 5.
