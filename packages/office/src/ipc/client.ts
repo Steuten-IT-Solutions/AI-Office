@@ -113,6 +113,11 @@ interface Connection {
   chunks: Buffer[];
   buffered: number;
   failed: boolean;
+  /**
+   * Erst nach dem Verbindungsaufbau gibt Node gepufferte Zeilen an den Kernel. Vorher hat der
+   * Supervisor sicher nichts erhalten; danach kann er jede gesendete Anfrage ausgeführt haben.
+   */
+  connected: boolean;
 }
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
@@ -166,13 +171,10 @@ export class SupervisorClient {
     const connection = this.connect();
     return new Promise<IpcResult<M>>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.fail(
-          connection,
-          new IpcTransportError(
-            `${method}: keine Antwort nach ${String(this.timeoutMs)} ms; Ergebnis unbekannt`,
-            true,
-          ),
-        );
+        const message = connection.connected
+          ? `${method}: keine Antwort nach ${String(this.timeoutMs)} ms; Ergebnis unbekannt`
+          : `${method}: keine Verbindung nach ${String(this.timeoutMs)} ms; nichts gesendet`;
+        this.fail(connection, new IpcTransportError(message, connection.connected));
       }, this.timeoutMs);
       connection.pending.push({
         id,
@@ -227,17 +229,23 @@ export class SupervisorClient {
     const socket = createConnection({ path: this.socketPath });
     // Eine ruhende Verbindung hält den Prozess nicht am Leben; offene Aufrufe tun es über ihren Timer.
     socket.unref();
-    const connection: Connection = { socket, pending: [], chunks: [], buffered: 0, failed: false };
+    const connection: Connection = {
+      socket,
+      pending: [],
+      chunks: [],
+      buffered: 0,
+      failed: false,
+      connected: false,
+    };
     this.connection = connection;
-    let connected = false;
     socket.on("connect", () => {
-      connected = true;
+      connection.connected = true;
     });
     socket.on("data", (chunk: Buffer) => {
       this.receive(connection, chunk);
     });
     socket.on("error", (error: NodeJS.ErrnoException) => {
-      // Vor dem Verbindungsaufbau wurde nichts übertragen; danach kann eine Anfrage angekommen sein.
+      const { connected } = connection;
       const message = connected
         ? `Verbindung zum Supervisor abgebrochen (${error.code ?? error.message})`
         : `Supervisor unter ${this.socketPath} nicht erreichbar (${error.code ?? error.message})`;
@@ -246,7 +254,7 @@ export class SupervisorClient {
     socket.on("close", () => {
       this.fail(
         connection,
-        new IpcTransportError("Supervisor hat die Verbindung geschlossen", connected),
+        new IpcTransportError("Supervisor hat die Verbindung geschlossen", connection.connected),
       );
     });
     return connection;
