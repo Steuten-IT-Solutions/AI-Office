@@ -331,30 +331,64 @@ faktisch root; Zugriff bekommt später nur der Nutzer `aio-sup` (E25).
 
 Erst nach Teil 3, weil S1e klärt, ob die App unter „Restrict who can push“ stehen muss.
 
-**Folge:** Danach kann niemand mehr ohne Ihr Approve nach `main` mergen, auch ich nicht. Das ist
-so gewollt (E26). Jeder PR wartet dann auf Ihr Review in GitHub.
+**Zwei Stufen (E48):** Solange die PRs unter Ihrem Konto eröffnet werden, können Sie sie nicht
+approven: „Pull request authors cannot approve their own pull requests“
+([GitHub-Doku](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews)).
+Mit Pflicht-Approval und ohne Bypass könnte dann niemand mehr nach `main` mergen. Deshalb gilt
+zuerst die Übergangsstufe (5.2) und erst mit dem Merge-Gate des Supervisors (Paket S09) die
+Zielstufe (5.3).
 
-1. Repo `AI-Office` → **Settings** → **Actions** → **General**:
-   - **Workflow permissions:** **Read repository contents and packages permissions**
-     **[Annahme: genaue Beschriftung]**
-   - **Fork pull request workflows from outside collaborators:** **Require approval for all
-     external contributors**
-   - **Save**
-2. **Settings** → **Branches** → **Add classic branch protection rule**:
-   - **Branch name pattern:** `main`
-   - **Require a pull request before merging**
-     - **Require approvals** (1)
-     - **Dismiss stale pull request approvals when new commits are pushed**
-     - **Require review from Code Owners**
-     - **Require approval of the most recent reviewable push**
-   - **Require status checks to pass before merging**
-     - **Require branches to be up to date before merging**
-     - Im Suchfeld `check` und `secret-scan` eintragen und auswählen
-   - **Restrict who can push to matching branches:** sich selbst eintragen; die App nur, wenn der
-     Bericht von S1e zeigt, dass sie dort stehen muss
-   - **Do not allow bypassing the above settings**
-   - **Nicht** anhaken: Allow force pushes, Allow deletions
-   - **Create**
+### 5.1 Actions
+
+Repo `AI-Office` → **Settings** → **Actions** → **General**:
+
+- **Workflow permissions:** **Read repository contents and packages permissions**
+  **[Annahme: genaue Beschriftung]**
+- **Fork pull request workflows from outside collaborators:** **Require approval for all
+  external contributors**
+- **Save**
+
+### 5.2 Übergangsstufe: bis zum Merge-Gate (S09)
+
+**Folge:** Nach `main` kommt nur noch ein PR mit grüner CI auf dem aktuellen Stand. Ein Review
+erzwingt GitHub in dieser Stufe nicht. Die Freigabe bleibt Ihre: Sie mergen selbst, oder Sie
+schreiben zu genau diesem PR ausdrücklich „Merge“, dann merged Claude per Squash.
+
+**Settings** → **Branches** → **Add classic branch protection rule**:
+
+- **Branch name pattern:** `main`
+- **Require a pull request before merging**
+  - **Require approvals:** **nicht** anhaken. Damit entfallen auch die Unterpunkte zu Code Owners
+    und zum letzten Push. Laut
+    [GitHub-Doku](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)
+    ist „Require approvals“ ein eigener, optionaler Schritt.
+- **Require status checks to pass before merging**
+  - **Require branches to be up to date before merging**
+  - Im Suchfeld `check` und `secret-scan` eintragen und auswählen
+- **Restrict who can push to matching branches:** sich selbst eintragen
+  **[Annahme: Ein Merge, den Claude über Ihre GitHub-Verbindung ausführt, zählt als Ihrer. Falls
+  nicht, mergen Sie selbst.]**
+- **Do not allow bypassing the above settings**
+- **Nicht** anhaken: Allow force pushes, Allow deletions
+- **Create**
+
+### 5.3 Zielstufe: ab dem Merge-Gate (S09)
+
+Sobald die GitHub App die PRs öffnet, sind Sie nicht mehr der Autor und können approven. Dann die
+Regel aus 5.2 bearbeiten und ergänzen:
+
+- unter **Require a pull request before merging**:
+  - **Require approvals** (1)
+  - **Dismiss stale pull request approvals when new commits are pushed**
+  - **Require review from Code Owners**
+  - **Require approval of the most recent reviewable push**
+- **Restrict who can push to matching branches:** die App zusätzlich nur, wenn der Bericht von S1e
+  zeigt, dass sie dort stehen muss
+- **Save changes**
+
+**Folge:** Danach kann niemand mehr ohne Ihr Approve nach `main` mergen. Das ist so gewollt (E26).
+PRs, die Sie selbst eröffnen (etwa Workflow-Änderungen über `ceo/*`), öffnet ebenfalls die App
+(plan.md Kap. 4.5 Nr. 2).
 
 ---
 

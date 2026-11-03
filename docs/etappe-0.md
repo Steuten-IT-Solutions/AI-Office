@@ -146,6 +146,9 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
 3. `CODEOWNERS` kommt per PR (Paket P01).
 4. Die Schritte 2 und 3 erst nach dem Merge von P01 aktivieren. Sonst kann P01 selbst nicht
    gemergt werden. Bis dahin merged nur der CEO.
+5. **Übergang (E48):** Bis zum Merge-Gate (S09) ohne die drei Punkte zu Approvals, Code Owners und
+   letztem Push, weil der CEO PRs unter seinem eigenen Konto nicht approven kann. Schritte in
+   [`einrichtung.md`](einrichtung.md) Teil 5.
 
 ### 1.5 Claude: `setup-token` und voller Login ⚠
 
