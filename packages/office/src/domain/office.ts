@@ -332,6 +332,13 @@ export class Office {
     if (escalation.toId === CEO_ID) {
       throw new DomainError("Über dem CEO gibt es keine Ebene");
     }
+    // Eine Wiederholung mit demselben Schlüssel liefert die frühere Weitergabe, auch wenn die
+    // Eskalation inzwischen beantwortet ist.
+    const replay =
+      options.idempotencyKey !== undefined && this.hasCommitted(options.idempotencyKey);
+    if (escalation.answeredSeq !== null && !replay) {
+      throw new DomainError(`Eskalation ${escalationId} ist schon beantwortet`);
+    }
     const toId = this.state.agent(escalation.toId)?.supervisorId ?? CEO_ID;
     const head = [
       `Weitergeleitet: Eskalation ${escalation.id} von ${escalation.fromId} an ${escalation.toId}`,

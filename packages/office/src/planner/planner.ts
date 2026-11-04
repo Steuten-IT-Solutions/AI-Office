@@ -347,6 +347,19 @@ function chooseTask(
   return null;
 }
 
+/**
+ * Höchstens `MAX_RUN_TRIGGERS` Auslöser, älteste zuerst. Die Zuweisung der gewählten Aufgabe
+ * bleibt immer dabei, sonst verlöre die Arbeit an ihr die Ursachenkette.
+ */
+function capTriggers(items: readonly WakeItem[], taskId: string | null): string[] {
+  const kept = items.slice(0, MAX_RUN_TRIGGERS);
+  const chosen = items.find((i) => i.kind === "assignment" && i.taskId === taskId);
+  if (chosen !== undefined && !kept.includes(chosen)) {
+    kept[kept.length - 1] = chosen;
+  }
+  return kept.map((i) => i.id);
+}
+
 function earliest(a: Date | null, b: Date): Date {
   return a === null || b < a ? b : a;
 }
@@ -450,11 +463,8 @@ export function plan(input: PlanInput): Plan {
       continue;
     }
 
-    result.wakes.push({
-      agentId: agent.id,
-      taskId: chooseTask(state, agent, items, prLimited),
-      triggerIds: items.slice(0, MAX_RUN_TRIGGERS).map((i) => i.id),
-    });
+    const taskId = chooseTask(state, agent, items, prLimited);
+    result.wakes.push({ agentId: agent.id, taskId, triggerIds: capTriggers(items, taskId) });
   }
 
   // Eskalationen ohne Antwort eine Ebene höher (Kap. 5.4).
@@ -475,15 +485,9 @@ export function plan(input: PlanInput): Plan {
     if (CLOSED_STATUSES.includes(task.status)) {
       continue;
     }
-    const lastRun = state
-      .runStarts()
-      .filter((s) => s.taskId === task.id)
-      .at(-1);
-    const progress = Math.max(
-      at(task.updatedAt),
-      lastRun === undefined ? 0 : at(lastRun.occurredAt),
-    );
-    const due = new Date(progress + config.stallHours * HOUR_MS);
+    // Fortschritt ist eine Änderung an der Aufgabe, auch eine Übergabenotiz. Ein bloßer Laufstart
+    // zählt nicht: Sonst verschöbe jeder verlorene Lauf die Meldung um einen weiteren Tag.
+    const due = new Date(at(task.updatedAt) + config.stallHours * HOUR_MS);
     if (due <= now) {
       result.notices.push({
         key: `planner:stillstand:${task.id}:${String(task.updatedSeq)}`,
@@ -623,28 +627,51 @@ export class Planner {
     }
 
     for (const wake of current.wakes) {
-      await this.wake(wake, result);
+      await this.wake(wake.agentId, result);
     }
     return result;
   }
 
-  private async wake(wake: Wake, result: TickResult): Promise<void> {
+  /** Plan für den aktuellen Zustand, ohne Hinweise auszuführen. */
+  private replan(): Plan {
+    return plan({
+      state: this.office.state,
+      now: this.office.now(),
+      config: this.config,
+      ...(this.openPullRequests === undefined ? {} : { openPullRequests: this.openPullRequests }),
+      retryAt: this.retryAt,
+      chains: this.chains,
+    });
+  }
+
+  private async wake(agentId: string, result: TickResult): Promise<void> {
     const office = this.office;
-    const agent = office.state.agent(wake.agentId) as AgentProfile;
-    const retryLater = () => {
-      this.retryAt.set(
-        wake.agentId,
-        new Date(office.now().getTime() + this.config.retryMinutes * MINUTE_MS),
-      );
+    // Während früherer Anträge dieses Durchlaufs kann sich der Zustand geändert haben: Aufgaben
+    // abgebrochen, neue Nachrichten. Deshalb hier neu planen und den Kontext ohne `await`
+    // dazwischen aus demselben Stand bauen, damit Aufgabe, Postfach und Auslöser zusammenpassen.
+    office.sync();
+    const wake = this.replan().wakes.find((w) => w.agentId === agentId);
+    if (wake === undefined) {
+      return;
+    }
+    const agent = office.state.agent(agentId) as AgentProfile;
+    const retryLater = (minutes: number) => {
+      this.retryAt.set(agentId, new Date(office.now().getTime() + minutes * MINUTE_MS));
     };
     let context: RunContext;
     try {
       context = this.context(office.state, wake.agentId, wake.taskId);
     } catch (error) {
-      retryLater();
+      retryLater(this.config.retryMinutes);
       result.failed.push({ agentId: wake.agentId, error: message(error), outcomeUnknown: false });
       return;
     }
+    // Auslöser sind nur, was der Lauf auch sieht: Nachrichten und Eskalationen bis zum
+    // Postfach-Zeiger, dazu Zuweisungen. Den Rest liest erst ein späterer Lauf.
+    const triggerIds = wake.triggerIds.filter((id) => {
+      const item = office.state.wakeItem(id);
+      return item !== undefined && (item.kind === "assignment" || item.seq <= context.inboxUpToSeq);
+    });
     const task = wake.taskId === null ? undefined : office.state.task(wake.taskId);
     let answer: IpcResult<"run.request">;
     try {
@@ -657,16 +684,16 @@ export class Planner {
         prompt: context.prompt,
       });
     } catch (error) {
-      retryLater();
-      result.failed.push({
-        agentId: wake.agentId,
-        error: message(error),
-        outcomeUnknown: outcomeUnknown(error),
-      });
+      const unknown = outcomeUnknown(error);
+      // Bei unbekanntem Ausgang kann ein Lauf laufen, von dem das Office nichts weiß. Ein neuer
+      // Antrag wartet dann so lange, wie ein Lauf ohne Ende als verloren gilt (wie bei
+      // `run.started` ohne `run.finished`). Den echten Abgleich bringt S05 (E42).
+      retryLater(unknown ? this.config.staleRunMinutes : this.config.retryMinutes);
+      result.failed.push({ agentId: wake.agentId, error: message(error), outcomeUnknown: unknown });
       return;
     }
     if (answer.decision === "rejected") {
-      retryLater();
+      retryLater(this.config.retryMinutes);
       result.rejected.push({ agentId: wake.agentId, reason: answer.reason });
       return;
     }
@@ -680,14 +707,15 @@ export class Planner {
             runType: context.runType,
             model: agent.models.default,
             inboxUpToSeq: context.inboxUpToSeq,
-            triggerIds: wake.triggerIds,
+            triggerIds,
           },
           { runId: answer.runId, idempotencyKey: `${answer.runId}:started` },
         ),
       );
     } catch (error) {
-      // Zugelassen, aber nicht festgehalten, etwa weil die Aufgabe inzwischen woanders liegt.
-      retryLater();
+      // Zugelassen, aber nicht festgehalten, etwa weil die Aufgabe inzwischen woanders liegt. Der
+      // Lauf kann trotzdem laufen; gesperrt wie bei unbekanntem Ausgang.
+      retryLater(this.config.staleRunMinutes);
       result.failed.push({ agentId: wake.agentId, error: message(error), outcomeUnknown: true });
     }
   }

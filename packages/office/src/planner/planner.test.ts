@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventStore } from "../events/event-store.ts";
 import { buildContext } from "../domain/context.ts";
+import { MAX_RUN_TRIGGERS } from "../domain/events.ts";
 import { DomainError, Office } from "../domain/office.ts";
 import { RunEvaluation } from "../domain/run-evaluation.ts";
 import { loadStartBooks, loadStartPersonas } from "../domain/start-content.ts";
@@ -476,7 +477,26 @@ describe("Eskalation ohne Antwort", () => {
     advance(25 * HOUR);
     const result = await p.tick();
     expect(result.forwards).toBe(0);
+    expect(result.plan.forwards).toEqual([]);
+    expect(result.errors).toEqual([]);
     expect(result.started).toEqual([]);
+  });
+
+  it("gibt eine inzwischen beantwortete Eskalation nicht weiter, eine Wiederholung schon", () => {
+    const escalation = office.escalate(CFO, { text: "Budget unklar" });
+    const forwarded = office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k1" });
+    office.sendMessage(COO, {
+      toId: CFO,
+      kind: "info",
+      text: "Erledigt.",
+      replyToId: escalation.id,
+    });
+    expect(office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k1" }).id).toBe(
+      forwarded.id,
+    );
+    expect(() => office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k2" })).toThrow(
+      `Eskalation ${escalation.id} ist schon beantwortet`,
+    );
   });
 
   it("über dem CEO gibt es keine Ebene", () => {
@@ -505,6 +525,25 @@ describe("Stillstand und PR-Obergrenze (E36)", () => {
     expect((await p.tick()).notices).toBe(0);
     advance(HOUR);
     expect((await p.tick()).notices).toBe(1);
+  });
+
+  it("meldet Stillstand auch, wenn Läufe immer wieder verloren gehen", async () => {
+    const p = planner();
+    const task = office.createTask("ceo", {
+      title: "Hängt",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    let notices = 0;
+    for (let hour = 0; hour <= 24; hour += 2) {
+      const result = await p.tick();
+      notices += result.notices;
+      advance(2 * HOUR);
+    }
+    expect(supervisor.requests.length).toBeGreaterThan(5);
+    expect(notices).toBe(1);
+    expect(office.state.messages({ toId: "ceo" }).at(-1)?.text).toContain(task.id);
   });
 
   it("startet ab der Obergrenze keine neuen Code-Aufgaben in diesem Repo", async () => {
@@ -594,6 +633,14 @@ describe("Antrag beim Supervisor (P02)", () => {
     ]);
     expect((await p.tick()).started).toEqual([]);
     expect(supervisor.requests).toHaveLength(1);
+    // Gesperrt, bis ein Lauf ohne Ende als verloren gälte, nicht nur retryMinutes.
+    advance(119 * MINUTE);
+    expect((await p.tick()).plan.holds).toEqual([
+      { agentId: COO, reason: "wiederholung", until: new Date("2026-11-05T10:00:00.000Z") },
+    ]);
+    supervisor.answer = () => Promise.resolve({ decision: "admitted", runId: "run-2" });
+    advance(MINUTE);
+    expect((await p.tick()).started.map((s) => s.runId)).toEqual(["run-2"]);
   });
 
   it("ein Fehler vor dem Senden gilt nicht als unbekannter Ausgang", async () => {
@@ -604,6 +651,9 @@ describe("Antrag beim Supervisor (P02)", () => {
       );
     send("ceo", COO, "auftrag");
     expect((await p.tick()).failed[0]?.outcomeUnknown).toBe(false);
+    expect((await p.tick()).plan.holds).toEqual([
+      { agentId: COO, reason: "wiederholung", until: new Date("2026-11-05T08:05:00.000Z") },
+    ]);
   });
 
   it("lässt zwei Durchläufe nie gleichzeitig laufen", async () => {
@@ -624,6 +674,79 @@ describe("Antrag beim Supervisor (P02)", () => {
     expect((await first).started).toHaveLength(1);
     expect((await second).started).toEqual([]);
     expect(supervisor.requests).toHaveLength(1);
+  });
+
+  it("plant jeden Agenten neu, wenn sich der Zustand während eines Antrags ändert", async () => {
+    const p = planner();
+    const task = office.createTask("ceo", {
+      title: "Kosten prüfen",
+      description: "…",
+      runType: "buero",
+      assigneeId: CFO,
+    });
+    send("ceo", CHRO, "auftrag");
+    send("ceo", COO, "auftrag");
+    let release: () => void = () => undefined;
+    supervisor.answer = (params) =>
+      params.agentId === CHRO
+        ? new Promise((resolve) => {
+            release = () => {
+              resolve({ decision: "admitted", runId: "run-chro" });
+            };
+          })
+        : Promise.resolve({ decision: "admitted", runId: `run-${params.agentId}` });
+    const ticking = p.tick();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Während der Antrag für den CHRO hängt: Aufgabe des CFO abgebrochen, neue Nachricht an den COO.
+    office.changeTaskStatus("ceo", task.id, "abgebrochen");
+    const late = send("ceo", COO, "frage");
+    release();
+    const result = await ticking;
+    expect(result.started.map((s) => s.agentId)).toEqual([CHRO, COO]);
+    const coo = result.started[1];
+    expect(coo?.triggerIds).toContain(late.id);
+    expect(coo?.inboxUpToSeq).toBeGreaterThanOrEqual(late.seq);
+  });
+
+  it("nimmt nur Auslöser auf, die der Lauf im Postfach sieht, die Zuweisung immer", async () => {
+    const p = planner();
+    const messages = Array.from({ length: 250 }, (_, i) =>
+      office.sendMessage("ceo", {
+        toId: COO,
+        kind: "auftrag",
+        text: `Punkt ${String(i)} ${"x".repeat(400)}`,
+      }),
+    );
+    const task = office.createTask("ceo", {
+      title: "Spät zugewiesen",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    const result = await p.tick();
+    const started = result.started[0];
+    expect(started?.taskId).toBe(task.id);
+    expect(started?.triggerIds).toContain(task.assignment?.eventId);
+    // Das Postfach passt nicht ganz ins Budget; was der Lauf nicht sieht, ist kein Auslöser.
+    const seen = messages.filter((m) => m.seq <= (started?.inboxUpToSeq ?? 0));
+    expect(seen.length).toBeLessThan(messages.length);
+    expect(started?.triggerIds).toEqual([...seen.map((m) => m.id), task.assignment?.eventId]);
+  });
+
+  it("begrenzt die Auslöser und behält die Zuweisung der gewählten Aufgabe", () => {
+    for (let i = 0; i < MAX_RUN_TRIGGERS + 5; i += 1) {
+      office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: String(i) });
+    }
+    const task = office.createTask("ceo", {
+      title: "Hinter vielen Nachrichten",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    const [wake] = plan({ state: office.state, now: clock }).wakes;
+    expect(wake?.taskId).toBe(task.id);
+    expect(wake?.triggerIds).toHaveLength(MAX_RUN_TRIGGERS);
+    expect(wake?.triggerIds.at(-1)).toBe(task.assignment?.eventId);
   });
 
   it("supervisorRunRequester ruft run.request", async () => {
