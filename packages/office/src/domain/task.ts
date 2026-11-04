@@ -28,6 +28,17 @@ export interface TaskHandoverNote {
   seq: number;
 }
 
+/** Zuweisung an den Bearbeiter: `task.created` mit Bearbeiter oder `task.delegated`. */
+export interface TaskAssignment {
+  /** ID des Ereignisses, das die Aufgabe zugewiesen hat. Der Planer weckt damit (P06). */
+  eventId: string;
+  seq: number;
+  occurredAt: string;
+  /** Wer zugewiesen hat. */
+  byId: string;
+  runId: string | null;
+}
+
 export interface Task {
   /** ID des Ereignisses `task.created`. */
   id: string;
@@ -47,8 +58,12 @@ export interface Task {
   reopenCount: number;
   /** Letzte Übergabenotiz (Kap. 5.2), sonst `null`. */
   handover: TaskHandoverNote | null;
+  /** Letzte Zuweisung an `assigneeId`, `null` ohne Bearbeiter. */
+  assignment: TaskAssignment | null;
   createdSeq: number;
   updatedSeq: number;
+  /** Zeitpunkt des Ereignisses `updatedSeq`, für die Stillstands-Erkennung (E36). */
+  updatedAt: string;
 }
 
 /**
