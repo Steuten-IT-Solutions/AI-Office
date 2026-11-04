@@ -303,6 +303,7 @@ describe("Aufgaben", () => {
     finish(first);
     advance(20 * MINUTE);
     office.sendMessage("ceo", { toId: CFO, kind: "frage", text: "Stand?", taskId: task.id });
+    expect(plan({ state: office.state, now: clock }).wakes.map((w) => w.taskId)).toEqual([null]);
     const second = await p.tick();
     expect(second.started.map((s) => [s.taskId, s.runType])).toEqual([[null, "buero"]]);
   });
@@ -496,6 +497,20 @@ describe("Eskalation ohne Antwort", () => {
     );
     expect(() => office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k2" })).toThrow(
       `Eskalation ${escalation.id} ist schon beantwortet`,
+    );
+  });
+
+  it("eine Wiederholung behält den Empfänger von damals", () => {
+    const escalation = office.escalate(CFO, { text: "Budget unklar" });
+    const forwarded = office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k1" });
+    expect(forwarded.toId).toBe("ceo");
+    const coo = structuredClone(office.state.agent(COO));
+    if (coo === undefined) {
+      throw new Error("COO fehlt");
+    }
+    office.changeProfile("ceo", { ...coo, version: coo.version + 1, supervisorId: CHRO });
+    expect(office.forwardEscalation(escalation.id, 24, { idempotencyKey: "k1" }).id).toBe(
+      forwarded.id,
     );
   });
 
@@ -747,6 +762,97 @@ describe("Antrag beim Supervisor (P02)", () => {
     expect(wake?.taskId).toBe(task.id);
     expect(wake?.triggerIds).toHaveLength(MAX_RUN_TRIGGERS);
     expect(wake?.triggerIds.at(-1)).toBe(task.assignment?.eventId);
+  });
+
+  it("eine Zuweisung, die während des Antrags neu kommt, weckt danach erneut", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const task = office.createTask("ceo", {
+      title: "Hin und her",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    let release: () => void = () => undefined;
+    supervisor.answer = () =>
+      new Promise((resolve) => {
+        release = () => {
+          resolve({ decision: "admitted", runId: "run-1" });
+        };
+      });
+    const ticking = p.tick();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    office.delegateTask("ceo", task.id, CFO);
+    const back = office.delegateTask("ceo", task.id, COO);
+    release();
+    const first = await ticking;
+    expect(first.started[0]?.triggerIds).toEqual([task.assignment?.eventId]);
+    finish(first);
+    supervisor.answer = () => Promise.resolve({ decision: "admitted", runId: "run-2" });
+    advance(MINUTE);
+    expect((await p.tick()).started.map((s) => s.triggerIds)).toEqual([[back.assignment?.eventId]]);
+  });
+
+  it("startet eine blockierte Aufgabe nicht, wenn ihre Antwort nicht ins Postfach passt", async () => {
+    const p = planner();
+    const task = office.createTask("ceo", {
+      title: "Wartet auf Antwort",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    office.changeTaskStatus("ceo", task.id, "blockiert");
+    for (let i = 0; i < 40; i += 1) {
+      office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: "x".repeat(1_000) });
+    }
+    const answer = office.sendMessage("ceo", {
+      toId: COO,
+      kind: "auftrag",
+      text: "Freigabe: weiter mit B.",
+      taskId: task.id,
+    });
+    expect(plan({ state: office.state, now: clock }).wakes[0]?.taskId).toBe(task.id);
+    const result = await p.tick();
+    const started = result.started[0];
+    expect(started?.taskId).toBeNull();
+    expect(started?.runType).toBe("buero");
+    expect(started?.triggerIds).not.toContain(answer.id);
+    expect(started?.triggerIds).not.toContain(task.assignment?.eventId);
+  });
+
+  it("nimmt nur die Zuweisung der bearbeiteten Aufgabe als Auslöser", () => {
+    const first = office.createTask("ceo", {
+      title: "Eins",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    office.createTask("ceo", {
+      title: "Zwei",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    const question = send("ceo", COO, "frage");
+    const [wake] = plan({ state: office.state, now: clock }).wakes;
+    expect(wake?.taskId).toBe(first.id);
+    expect(wake?.triggerIds).toEqual([first.assignment?.eventId, question.id]);
+  });
+
+  it("die Grenze der Auslöser liegt über dem, was das Postfach fassen kann", () => {
+    for (let i = 0; i < MAX_RUN_TRIGGERS + 100; i += 1) {
+      office.sendMessage("ceo", { toId: COO, kind: "info", text: "." });
+    }
+    const context = buildContext({
+      state: office.state,
+      agentId: COO,
+      taskId: null,
+      constitution: CONSTITUTION,
+      directives: [],
+      books,
+      personas,
+    });
+    expect(context.includedMessages).toBeGreaterThan(0);
+    expect(context.includedMessages).toBeLessThan(MAX_RUN_TRIGGERS);
   });
 
   it("supervisorRunRequester ruft run.request", async () => {

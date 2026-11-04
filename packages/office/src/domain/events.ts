@@ -111,8 +111,12 @@ export interface RunStarted {
   triggerIds: string[];
 }
 
-/** Höchstzahl Auslöser je Lauf. Mehr passt ohnehin nicht ins Postfach. [Annahme: 200] */
-export const MAX_RUN_TRIGGERS = 200;
+/**
+ * Höchstzahl Auslöser je Lauf. Ein Eintrag im Postfach kostet geschätzt mindestens etwa 35 Tokens
+ * (Kopf mit ID und Zeit), ins Standardbudget von 8.000 Tokens passen also gut 200. Die Grenze
+ * liegt mit Abstand darüber, damit jede gelesene Nachricht Auslöser sein kann. [Annahme: 500]
+ */
+export const MAX_RUN_TRIGGERS = 500;
 
 /**
  * Eskalation (Kap. 5.4, E47): an den COO, Eskalationen des COO an den CEO. Den Empfänger legt

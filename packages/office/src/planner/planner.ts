@@ -302,15 +302,19 @@ function pendingItems(
     ) {
       continue;
     }
-    // Maßgeblich ist, wann der Lauf begann: Ein Lauf, der vor einer erneuten Zuweisung begann,
-    // kennt sie nicht, auch wenn er erst danach endet.
-    const done = runs.some(
-      (r) =>
-        r.agentId === agent.id &&
-        r.taskId === task.id &&
-        r.exit === "completed" &&
-        (state.runStart(r.runId)?.seq ?? r.seq) > assignment.seq,
-    );
+    // Erledigt ist die Zuweisung, wenn ein vollständiger Lauf sie als Auslöser hatte. Die Lauf-ID
+    // und damit `run.started` entsteht erst nach der Zulassung; eine Zuweisung, die während des
+    // Antrags neu kam, steht nicht in den Auslösern und weckt danach erneut. Läufe ohne
+    // `run.started` (vor P06) zählen nach der Sequenznummer ihres Endes.
+    const done = runs.some((r) => {
+      if (r.agentId !== agent.id || r.taskId !== task.id || r.exit !== "completed") {
+        return false;
+      }
+      const start = state.runStart(r.runId);
+      return start === undefined
+        ? r.seq > assignment.seq
+        : start.triggerIds.includes(assignment.eventId);
+    });
     if (!done) {
       items.push(state.wakeItem(assignment.eventId) as WakeItem);
     }
@@ -348,16 +352,19 @@ function chooseTask(
 }
 
 /**
- * Höchstens `MAX_RUN_TRIGGERS` Auslöser, älteste zuerst. Die Zuweisung der gewählten Aufgabe
- * bleibt immer dabei, sonst verlöre die Arbeit an ihr die Ursachenkette.
+ * Höchstens `MAX_RUN_TRIGGERS` Auslöser, älteste zuerst: Nachrichten und Eskalationen sowie die
+ * Zuweisung der gewählten Aufgabe. Die bleibt immer dabei, sonst verlöre die Arbeit an ihr die
+ * Ursachenkette.
  */
 function capTriggers(items: readonly WakeItem[], taskId: string | null): string[] {
-  const kept = items.slice(0, MAX_RUN_TRIGGERS);
+  // Zuweisungen anderer Aufgaben bearbeitet dieser Lauf nicht; sie bleiben für spätere Läufe.
   const chosen = items.find((i) => i.kind === "assignment" && i.taskId === taskId);
-  if (chosen !== undefined && !kept.includes(chosen)) {
-    kept[kept.length - 1] = chosen;
+  const inbox = items.filter((i) => i.kind !== "assignment");
+  const kept = inbox.slice(0, chosen === undefined ? MAX_RUN_TRIGGERS : MAX_RUN_TRIGGERS - 1);
+  if (chosen !== undefined) {
+    kept.push(chosen);
   }
-  return kept.map((i) => i.id);
+  return kept.sort((a, b) => a.seq - b.seq).map((i) => i.id);
 }
 
 function earliest(a: Date | null, b: Date): Date {
@@ -658,27 +665,42 @@ export class Planner {
     const retryLater = (minutes: number) => {
       this.retryAt.set(agentId, new Date(office.now().getTime() + minutes * MINUTE_MS));
     };
+    // Auslöser sind nur, was der Lauf auch sieht: Nachrichten und Eskalationen bis zum
+    // Postfach-Zeiger, dazu die Zuweisung seiner Aufgabe. Den Rest liest erst ein späterer Lauf.
+    const delivered = (built: RunContext) =>
+      wake.triggerIds
+        .map((id) => office.state.wakeItem(id))
+        .filter(
+          (item): item is WakeItem =>
+            item !== undefined && (item.kind === "assignment" || item.seq <= built.inboxUpToSeq),
+        );
+    let taskId = wake.taskId;
     let context: RunContext;
+    let items: WakeItem[];
     try {
-      context = this.context(office.state, wake.agentId, wake.taskId);
+      context = this.context(office.state, agentId, taskId);
+      items = delivered(context);
+      // Kam die Aufgabe nur über eine Nachricht (z. B. Antwort zu einer blockierten Aufgabe) und
+      // passt diese Nachricht nicht ins Postfach, fehlte dem Lauf genau die Antwort. Dann ohne
+      // Aufgabe; die Nachricht weckt einen späteren Lauf mit dieser Aufgabe.
+      if (taskId !== null && !items.some((i) => i.taskId === taskId)) {
+        taskId = null;
+        context = this.context(office.state, agentId, null);
+        items = delivered(context).filter((i) => i.kind !== "assignment");
+      }
     } catch (error) {
       retryLater(this.config.retryMinutes);
-      result.failed.push({ agentId: wake.agentId, error: message(error), outcomeUnknown: false });
+      result.failed.push({ agentId, error: message(error), outcomeUnknown: false });
       return;
     }
-    // Auslöser sind nur, was der Lauf auch sieht: Nachrichten und Eskalationen bis zum
-    // Postfach-Zeiger, dazu Zuweisungen. Den Rest liest erst ein späterer Lauf.
-    const triggerIds = wake.triggerIds.filter((id) => {
-      const item = office.state.wakeItem(id);
-      return item !== undefined && (item.kind === "assignment" || item.seq <= context.inboxUpToSeq);
-    });
-    const task = wake.taskId === null ? undefined : office.state.task(wake.taskId);
+    const triggerIds = items.map((i) => i.id);
+    const task = taskId === null ? undefined : office.state.task(taskId);
     let answer: IpcResult<"run.request">;
     try {
       answer = await this.requester.requestRun({
         agentId: wake.agentId,
         runType: context.runType,
-        taskId: wake.taskId,
+        taskId,
         repo: context.runType === "werkbank" ? (task?.repo ?? null) : null,
         model: agent.models.default,
         prompt: context.prompt,
@@ -703,7 +725,7 @@ export class Planner {
         office.recordRunStarted(
           {
             agentId: wake.agentId,
-            taskId: wake.taskId,
+            taskId,
             runType: context.runType,
             model: agent.models.default,
             inboxUpToSeq: context.inboxUpToSeq,

@@ -339,7 +339,13 @@ export class Office {
     if (escalation.answeredSeq !== null && !replay) {
       throw new DomainError(`Eskalation ${escalationId} ist schon beantwortet`);
     }
-    const toId = this.state.agent(escalation.toId)?.supervisorId ?? CEO_ID;
+    // Bei einer Wiederholung gilt der Empfänger von damals, auch wenn sich der Vorgesetzte
+    // inzwischen geändert hat (wie in `escalate`).
+    const existing = replay
+      ? this.store.findByIdempotencyKey(options.idempotencyKey as string)
+      : undefined;
+    const stored = existing === undefined ? undefined : this.state.escalation(existing.id);
+    const toId = stored?.toId ?? this.state.agent(escalation.toId)?.supervisorId ?? CEO_ID;
     const head = [
       `Weitergeleitet: Eskalation ${escalation.id} von ${escalation.fromId} an ${escalation.toId}`,
       `ist nach ${String(timeoutHours)} h ohne Antwort (Kap. 5.4). Text der Eskalation:`,
