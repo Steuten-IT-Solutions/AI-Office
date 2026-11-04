@@ -609,6 +609,26 @@ describe("Stillstand und PR-Obergrenze (E36)", () => {
     expect(result.started.map((s) => s.taskId)).toEqual([task.id]);
   });
 
+  it("zählt auch Läufe vor P06 (nur run.finished) als begonnen", async () => {
+    const task = office.createTask("ceo", {
+      title: "Alt",
+      description: "…",
+      runType: "werkbank",
+      repo: REPO,
+      assigneeId: CTO,
+    });
+    new RunEvaluation(office, {
+      runId: "alt-1",
+      agentId: CTO,
+      taskId: task.id,
+      runType: "werkbank",
+      model: "sonnet",
+      inboxUpToSeq: 0,
+    }).finish(outcome("alt-1", "error"));
+    const p = planner({}, { prs: 5 });
+    expect((await p.tick()).started.map((s) => s.taskId)).toEqual([task.id]);
+  });
+
   it("ohne Quelle für PRs greift die Grenze nicht", () => {
     office.createTask("ceo", {
       title: "Feature",
@@ -817,6 +837,69 @@ describe("Antrag beim Supervisor (P02)", () => {
     expect(started?.runType).toBe("buero");
     expect(started?.triggerIds).not.toContain(answer.id);
     expect(started?.triggerIds).not.toContain(task.assignment?.eventId);
+  });
+
+  it("lässt die Antwort ungelesen, wenn sie erst ohne Aufgabe ins Postfach passte", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const task = office.createTask("ceo", {
+      title: "Großer Auftrag",
+      description: "d".repeat(15_000),
+      runType: "buero",
+      assigneeId: COO,
+    });
+    finish(await p.tick());
+    office.changeTaskStatus(COO, task.id, "blockiert");
+    advance(MINUTE);
+    const backlog = [0, 1, 2].map(() =>
+      office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: "b".repeat(1_000) }),
+    );
+    const answer = office.sendMessage("ceo", {
+      toId: COO,
+      kind: "auftrag",
+      text: "Freigabe: weiter.",
+      taskId: task.id,
+    });
+    const first = await p.tick();
+    const fallback = first.started[0];
+    expect(fallback?.taskId).toBeNull();
+    // Der kleinere Kontext zeigt die Antwort zwar, der Zeiger endet aber davor.
+    expect(supervisor.requests.at(-1)?.prompt).toContain("Freigabe: weiter.");
+    expect(fallback?.inboxUpToSeq).toBe(answer.seq - 1);
+    expect(fallback?.triggerIds).toEqual(backlog.map((m) => m.id));
+    finish(first);
+    advance(MINUTE);
+    const second = await p.tick();
+    expect(second.started.map((s) => [s.taskId, s.triggerIds])).toEqual([[task.id, [answer.id]]]);
+  });
+
+  it("meldet das Postfach nur bis zur Grenze der Auslöser als gelesen", async () => {
+    const p = new Planner({
+      office,
+      requester: supervisor,
+      context: (state, agentId, taskId) =>
+        buildContext({
+          state,
+          agentId,
+          taskId,
+          constitution: CONSTITUTION,
+          directives: [],
+          books,
+          personas,
+          budgetTokens: 1_000_000,
+        }),
+    });
+    const messages = Array.from({ length: MAX_RUN_TRIGGERS + 20 }, (_, i) =>
+      office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: String(i) }),
+    );
+    const result = await p.tick();
+    const started = result.started[0];
+    expect(started?.triggerIds).toHaveLength(MAX_RUN_TRIGGERS);
+    expect(started?.inboxUpToSeq).toBe((messages[MAX_RUN_TRIGGERS]?.seq ?? 0) - 1);
+    finish(result);
+    advance(20 * MINUTE);
+    expect((await p.tick()).started[0]?.triggerIds).toEqual(
+      messages.slice(MAX_RUN_TRIGGERS).map((m) => m.id),
+    );
   });
 
   it("nimmt nur die Zuweisung der bearbeiteten Aufgabe als Auslöser", () => {

@@ -82,6 +82,12 @@ export interface Wake {
   taskId: string | null;
   /** Auslöser, älteste zuerst; höchstens `MAX_RUN_TRIGGERS`. */
   triggerIds: string[];
+  /**
+   * Sequenznummer des ersten wartenden Eintrags im Postfach, der nicht mehr unter die Auslöser
+   * passte, sonst `null`. Der Lauf darf das Postfach nur bis davor als gelesen melden, sonst
+   * verlöre dieser Eintrag seine Ursachenkette.
+   */
+  inboxCutoffSeq: number | null;
 }
 
 /** Ein Agent mit Auslösern, der erst später geweckt werden darf. */
@@ -265,7 +271,12 @@ function workable(
 
 /** Code-Aufgabe, für die noch nie ein Lauf zugelassen wurde (E36: „neue Code-Aufgaben“). */
 function isNewCodeTask(state: OfficeState, task: Task): boolean {
-  return task.runType === "werkbank" && !state.runStarts().some((s) => s.taskId === task.id);
+  // Läufe vor P06 haben kein `run.started`, nur `run.finished`.
+  return (
+    task.runType === "werkbank" &&
+    !state.runStarts().some((s) => s.taskId === task.id) &&
+    !state.runs().some((r) => r.taskId === task.id)
+  );
 }
 
 /**
@@ -356,15 +367,22 @@ function chooseTask(
  * Zuweisung der gewählten Aufgabe. Die bleibt immer dabei, sonst verlöre die Arbeit an ihr die
  * Ursachenkette.
  */
-function capTriggers(items: readonly WakeItem[], taskId: string | null): string[] {
+function capTriggers(
+  items: readonly WakeItem[],
+  taskId: string | null,
+): { triggerIds: string[]; inboxCutoffSeq: number | null } {
   // Zuweisungen anderer Aufgaben bearbeitet dieser Lauf nicht; sie bleiben für spätere Läufe.
   const chosen = items.find((i) => i.kind === "assignment" && i.taskId === taskId);
   const inbox = items.filter((i) => i.kind !== "assignment");
-  const kept = inbox.slice(0, chosen === undefined ? MAX_RUN_TRIGGERS : MAX_RUN_TRIGGERS - 1);
+  const room = chosen === undefined ? MAX_RUN_TRIGGERS : MAX_RUN_TRIGGERS - 1;
+  const kept = inbox.slice(0, room);
   if (chosen !== undefined) {
     kept.push(chosen);
   }
-  return kept.sort((a, b) => a.seq - b.seq).map((i) => i.id);
+  return {
+    triggerIds: kept.sort((a, b) => a.seq - b.seq).map((i) => i.id),
+    inboxCutoffSeq: inbox[room]?.seq ?? null,
+  };
 }
 
 function earliest(a: Date | null, b: Date): Date {
@@ -471,7 +489,7 @@ export function plan(input: PlanInput): Plan {
     }
 
     const taskId = chooseTask(state, agent, items, prLimited);
-    result.wakes.push({ agentId: agent.id, taskId, triggerIds: capTriggers(items, taskId) });
+    result.wakes.push({ agentId: agent.id, taskId, ...capTriggers(items, taskId) });
   }
 
   // Eskalationen ohne Antwort eine Ebene höher (Kap. 5.4).
@@ -667,25 +685,35 @@ export class Planner {
     };
     // Auslöser sind nur, was der Lauf auch sieht: Nachrichten und Eskalationen bis zum
     // Postfach-Zeiger, dazu die Zuweisung seiner Aufgabe. Den Rest liest erst ein späterer Lauf.
+    // `before` begrenzt den Zeiger: Was ab dort steht, gilt als ungelesen und kommt im nächsten
+    // Lauf noch einmal, auch wenn der Prompt es schon zeigt (lieber doppelt als ohne Ursache).
+    const pending = wake.triggerIds
+      .map((id) => office.state.wakeItem(id))
+      .filter((item): item is WakeItem => item !== undefined);
+    const limit = (built: RunContext, before: number | null): RunContext =>
+      before === null || built.inboxUpToSeq < before
+        ? built
+        : { ...built, inboxUpToSeq: before - 1 };
     const delivered = (built: RunContext) =>
-      wake.triggerIds
-        .map((id) => office.state.wakeItem(id))
-        .filter(
-          (item): item is WakeItem =>
-            item !== undefined && (item.kind === "assignment" || item.seq <= built.inboxUpToSeq),
-        );
+      pending.filter((i) => i.kind === "assignment" || i.seq <= built.inboxUpToSeq);
     let taskId = wake.taskId;
     let context: RunContext;
     let items: WakeItem[];
     try {
-      context = this.context(office.state, agentId, taskId);
+      context = limit(this.context(office.state, agentId, taskId), wake.inboxCutoffSeq);
       items = delivered(context);
       // Kam die Aufgabe nur über eine Nachricht (z. B. Antwort zu einer blockierten Aufgabe) und
       // passt diese Nachricht nicht ins Postfach, fehlte dem Lauf genau die Antwort. Dann ohne
-      // Aufgabe; die Nachricht weckt einen späteren Lauf mit dieser Aufgabe.
+      // Aufgabe, und der Zeiger endet vor der Antwort: Sie bleibt ungelesen und weckt einen
+      // späteren Lauf mit der Aufgabe, auch wenn sie in den kleineren Kontext gepasst hätte.
       if (taskId !== null && !items.some((i) => i.taskId === taskId)) {
+        const answer = pending.find((i) => i.kind !== "assignment" && i.taskId === taskId);
+        const before = Math.min(wake.inboxCutoffSeq ?? Infinity, answer?.seq ?? Infinity);
         taskId = null;
-        context = this.context(office.state, agentId, null);
+        context = limit(
+          this.context(office.state, agentId, null),
+          Number.isFinite(before) ? before : null,
+        );
         items = delivered(context).filter((i) => i.kind !== "assignment");
       }
     } catch (error) {
