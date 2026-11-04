@@ -514,6 +514,42 @@ describe("Eskalation ohne Antwort", () => {
     );
   });
 
+  it("die Antwort auf eine Weitergabe geht an den ursprünglichen Absender", () => {
+    const escalation = office.escalate(CFO, { text: "Budget unklar" });
+    const forwarded = office.forwardEscalation(escalation.id, 24);
+    expect(() =>
+      office.sendMessage("ceo", {
+        toId: "system",
+        kind: "info",
+        text: "Ok",
+        replyToId: forwarded.id,
+      }),
+    ).toThrow("Dem System kann man nicht schreiben");
+    office.sendMessage("ceo", { toId: CFO, kind: "info", text: "Ok", replyToId: forwarded.id });
+    expect(office.state.escalation(forwarded.id)?.answeredSeq).not.toBeNull();
+  });
+
+  it("der Kontext sagt, wem eine Weitergabe zu beantworten ist", () => {
+    const coo = structuredClone(office.state.agent(COO));
+    if (coo === undefined) {
+      throw new Error("COO fehlt");
+    }
+    office.changeProfile("ceo", { ...coo, version: coo.version + 1, supervisorId: CHRO });
+    const escalation = office.escalate(CFO, { text: "Budget unklar" });
+    expect(office.forwardEscalation(escalation.id, 24).toId).toBe(CHRO);
+    const context = buildContext({
+      state: office.state,
+      agentId: CHRO,
+      taskId: null,
+      constitution: CONSTITUTION,
+      directives: [],
+      books,
+      personas,
+    });
+    expect(context.prompt).toContain("Weitergeleitet vom System");
+    expect(context.prompt).toContain(`von ${CFO} an ${COO}`);
+  });
+
   it("über dem CEO gibt es keine Ebene", () => {
     const escalation = office.escalate(COO, { text: "Server voll" });
     expect(escalation.toId).toBe("ceo");
@@ -900,6 +936,72 @@ describe("Antrag beim Supervisor (P02)", () => {
     expect((await p.tick()).started[0]?.triggerIds).toEqual(
       messages.slice(MAX_RUN_TRIGGERS).map((m) => m.id),
     );
+  });
+
+  it("lässt die Antwort zu einer anderen Aufgabe für deren eigenen Lauf liegen", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const blocked = office.createTask("ceo", {
+      title: "Blockiert",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    finish(await p.tick());
+    office.changeTaskStatus(COO, blocked.id, "blockiert");
+    advance(MINUTE);
+    const answer = office.sendMessage("ceo", {
+      toId: COO,
+      kind: "auftrag",
+      text: "Weiter mit B.",
+      taskId: blocked.id,
+    });
+    const fresh = office.createTask("ceo", {
+      title: "Neu",
+      description: "…",
+      runType: "buero",
+      assigneeId: COO,
+    });
+    const first = await p.tick();
+    expect(first.started.map((s) => [s.taskId, s.triggerIds, s.inboxUpToSeq])).toEqual([
+      [fresh.id, [fresh.assignment?.eventId], answer.seq - 1],
+    ]);
+    // Schon der Plan führt die Antwort nicht als Auslöser dieses Laufs.
+    expect(first.plan.wakes.map((w) => [w.taskId, w.triggerIds, w.inboxCutoffSeq])).toEqual([
+      [fresh.id, [fresh.assignment?.eventId], answer.seq],
+    ]);
+    finish(first);
+    advance(MINUTE);
+    const second = await p.tick();
+    expect(second.started.map((s) => [s.taskId, s.triggerIds])).toEqual([
+      [blocked.id, [answer.id]],
+    ]);
+  });
+
+  it("nimmt bei mehreren Antworten die Aufgabe der ältesten und kommt so immer voran", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const tasks = ["C", "B"].map((title) =>
+      office.createTask("ceo", { title, description: "…", runType: "buero", assigneeId: COO }),
+    );
+    for (let i = 0; i < tasks.length; i += 1) {
+      finish(await p.tick());
+      advance(MINUTE);
+    }
+    for (const task of tasks) {
+      office.changeTaskStatus(COO, task.id, "blockiert");
+    }
+    const answers = tasks.map((task) =>
+      office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: "Weiter.", taskId: task.id }),
+    );
+    const order: (string | null)[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const result = await p.tick();
+      order.push(result.started[0]?.taskId ?? null);
+      finish(result);
+      advance(MINUTE);
+    }
+    expect(order).toEqual(tasks.map((t) => t.id));
+    expect(office.state.inboxReadSeq(COO)).toBeGreaterThanOrEqual(answers[1]?.seq ?? Infinity);
+    expect((await p.tick()).started).toEqual([]);
   });
 
   it("nimmt nur die Zuweisung der bearbeiteten Aufgabe als Auslöser", () => {

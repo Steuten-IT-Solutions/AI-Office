@@ -334,10 +334,33 @@ function pendingItems(
 }
 
 /**
- * Aufgabe des Laufs: die älteste zugewiesene, sonst die Aufgabe der jüngsten Nachricht, wenn sie
- * beim Agenten liegt (z. B. Antwort zu einer blockierten Aufgabe), sonst keine (`buero`). Eine
- * `recherche`-Aufgabe nur über ihre Zuweisung: Ein solcher Lauf liest das Postfach nicht (P07),
- * die Nachricht weckte sonst immer wieder denselben Lauf.
+ * Aufgabe, mit der eine Nachricht den Agenten weckt: eine Aufgabe, die bei ihm liegt und an der
+ * er arbeiten darf (z. B. Antwort zu einer blockierten Aufgabe). Keine `recherche`-Aufgabe: Ein
+ * solcher Lauf liest das Postfach nicht (P07), die Nachricht weckte sonst immer wieder denselben
+ * Lauf.
+ */
+function messageTask(
+  state: OfficeState,
+  agent: AgentProfile,
+  item: WakeItem,
+  prLimited: ReadonlySet<string>,
+): string | null {
+  if (item.kind === "assignment" || item.taskId === null) {
+    return null;
+  }
+  const task = state.task(item.taskId);
+  return task !== undefined &&
+    task.runType !== "recherche" &&
+    workable(state, agent, task, prLimited)
+    ? task.id
+    : null;
+}
+
+/**
+ * Aufgabe des Laufs: die älteste zugewiesene, sonst die Aufgabe der ältesten Nachricht mit
+ * `messageTask`, sonst keine (`buero`). Die älteste, weil das Postfach in dieser Reihenfolge
+ * gelesen wird: Ihre Nachricht ist dann die erste mit Aufgabe und liegt vor jeder Grenze, die
+ * `inboxCutoffSeq` für Nachrichten zu anderen Aufgaben setzt.
  */
 function chooseTask(
   state: OfficeState,
@@ -349,14 +372,10 @@ function chooseTask(
   if (assignment !== undefined) {
     return assignment.taskId;
   }
-  for (const item of [...items].reverse()) {
-    const task = item.taskId === null ? undefined : state.task(item.taskId);
-    if (
-      task !== undefined &&
-      task.runType !== "recherche" &&
-      workable(state, agent, task, prLimited)
-    ) {
-      return task.id;
+  for (const item of items) {
+    const taskId = messageTask(state, agent, item, prLimited);
+    if (taskId !== null) {
+      return taskId;
     }
   }
   return null;
@@ -489,7 +508,23 @@ export function plan(input: PlanInput): Plan {
     }
 
     const taskId = chooseTask(state, agent, items, prLimited);
-    result.wakes.push({ agentId: agent.id, taskId, ...capTriggers(items, taskId) });
+    const capped = capTriggers(items, taskId);
+    // Eine Nachricht zu einer anderen Aufgabe des Agenten bleibt ungelesen: Läse sie dieser Lauf,
+    // bekäme jene Aufgabe nie einen Lauf mit ihrem Kontext. Der nächste Lauf nimmt sie auf.
+    const other = items.find((i) => {
+      const t = messageTask(state, agent, i, prLimited);
+      return t !== null && t !== taskId;
+    });
+    const cutoff = Math.min(capped.inboxCutoffSeq ?? Infinity, other?.seq ?? Infinity);
+    result.wakes.push({
+      agentId: agent.id,
+      taskId,
+      triggerIds: capped.triggerIds.filter((id) => {
+        const item = state.wakeItem(id) as WakeItem;
+        return item.kind === "assignment" || item.seq < cutoff;
+      }),
+      inboxCutoffSeq: Number.isFinite(cutoff) ? cutoff : null,
+    });
   }
 
   // Eskalationen ohne Antwort eine Ebene höher (Kap. 5.4).

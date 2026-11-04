@@ -748,6 +748,11 @@ export class OfficeState {
     } else if (!this.isParticipant(actor)) {
       return `Absender ${actor} ist unbekannt`;
     }
+    if (p.toId === "system") {
+      // Weitergeleitete Eskalationen und Hinweise kommen vom System. Die Antwort geht an den, den
+      // sie betreffen; bei einer Weitergabe steht der ursprüngliche Absender im Text.
+      return "Dem System kann man nicht schreiben; antworte dem ursprünglichen Absender";
+    }
     if (!this.isParticipant(p.toId)) {
       return `Empfänger ${p.toId} ist unbekannt`;
     }
