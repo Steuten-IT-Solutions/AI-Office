@@ -252,13 +252,13 @@ function runsToday(state: OfficeState, agentId: string, now: Date): RunStart[] {
 /**
  * Darf der Agent an der Aufgabe arbeiten? Abgeschlossene und blockierte Aufgaben nicht, Lauftypen
  * ohne Ausstattung nicht, und eine noch nie begonnene Code-Aufgabe nicht, solange ihr Repo die
- * PR-Obergrenze erreicht hat.
+ * PR-Obergrenze erreicht hat (`prHeld`, Aufgaben-IDs).
  */
 function workable(
   state: OfficeState,
   agent: AgentProfile,
   task: Task,
-  prLimited: ReadonlySet<string>,
+  prHeld: ReadonlySet<string>,
 ): boolean {
   if (task.assigneeId !== agent.id || CLOSED_STATUSES.includes(task.status)) {
     return false;
@@ -266,17 +266,21 @@ function workable(
   if (!allowedRunTypes(agent.equipment).includes(task.runType)) {
     return false;
   }
-  return !(task.repo !== null && prLimited.has(task.repo) && isNewCodeTask(state, task));
+  return !prHeld.has(task.id);
 }
 
-/** Code-Aufgabe, für die noch nie ein Lauf zugelassen wurde (E36: „neue Code-Aufgaben“). */
-function isNewCodeTask(state: OfficeState, task: Task): boolean {
+/**
+ * Code-Aufgaben mit Repo, für die noch nie ein Lauf zugelassen wurde (E36: „neue
+ * Code-Aufgaben“). Einmal je Plan berechnet, damit nicht jede Prüfung alle Läufe durchsucht.
+ */
+function newCodeTasks(state: OfficeState): Task[] {
   // Läufe vor P06 haben kein `run.started`, nur `run.finished`.
-  return (
-    task.runType === "werkbank" &&
-    !state.runStarts().some((s) => s.taskId === task.id) &&
-    !state.runs().some((r) => r.taskId === task.id)
-  );
+  const touched = new Set<string | null>([
+    ...state.runStarts().map((s) => s.taskId),
+    ...state.runs().map((r) => r.taskId),
+  ]);
+  // Ein Repo haben nur Aufgaben vom Lauftyp `werkbank` (Kap. 5.7).
+  return state.tasks().filter((t) => t.repo !== null && !touched.has(t.id));
 }
 
 /**
@@ -289,7 +293,7 @@ function isNewCodeTask(state: OfficeState, task: Task): boolean {
 function pendingItems(
   state: OfficeState,
   agent: AgentProfile,
-  prLimited: ReadonlySet<string>,
+  prHeld: ReadonlySet<string>,
 ): WakeItem[] {
   const readSeq = state.inboxReadSeq(agent.id);
   const items: WakeItem[] = [];
@@ -309,7 +313,7 @@ function pendingItems(
     if (
       assignment === null ||
       task.status === "blockiert" ||
-      !workable(state, agent, task, prLimited)
+      !workable(state, agent, task, prHeld)
     ) {
       continue;
     }
@@ -343,15 +347,13 @@ function messageTask(
   state: OfficeState,
   agent: AgentProfile,
   item: WakeItem,
-  prLimited: ReadonlySet<string>,
+  prHeld: ReadonlySet<string>,
 ): string | null {
   if (item.kind === "assignment" || item.taskId === null) {
     return null;
   }
   const task = state.task(item.taskId);
-  return task !== undefined &&
-    task.runType !== "recherche" &&
-    workable(state, agent, task, prLimited)
+  return task !== undefined && task.runType !== "recherche" && workable(state, agent, task, prHeld)
     ? task.id
     : null;
 }
@@ -366,14 +368,14 @@ function chooseTask(
   state: OfficeState,
   agent: AgentProfile,
   items: readonly WakeItem[],
-  prLimited: ReadonlySet<string>,
+  prHeld: ReadonlySet<string>,
 ): string | null {
   const assignment = items.find((i) => i.kind === "assignment");
   if (assignment !== undefined) {
     return assignment.taskId;
   }
   for (const item of items) {
-    const taskId = messageTask(state, agent, item, prLimited);
+    const taskId = messageTask(state, agent, item, prHeld);
     if (taskId !== null) {
       return taskId;
     }
@@ -425,12 +427,8 @@ export function plan(input: PlanInput): Plan {
 
   // PR-Obergrenze je Repo (E36).
   const prLimited = new Set<string>();
-  const repos = new Set(
-    state
-      .tasks()
-      .filter((t) => isNewCodeTask(state, t) && t.repo !== null)
-      .map((t) => t.repo as string),
-  );
+  const newCode = newCodeTasks(state);
+  const repos = new Set(newCode.map((t) => t.repo as string));
   for (const repo of [...repos].sort()) {
     const open = input.openPullRequests?.(repo) ?? null;
     if (open !== null && open >= config.maxOpenPullRequests) {
@@ -444,10 +442,12 @@ export function plan(input: PlanInput): Plan {
     }
   }
 
+  const prHeld = new Set(newCode.filter((t) => prLimited.has(t.repo as string)).map((t) => t.id));
+
   const agents = state.agents().sort((a, b) => a.id.localeCompare(b.id));
   for (const agent of agents) {
     const items: WakeItem[] = [];
-    for (const item of pendingItems(state, agent, prLimited)) {
+    for (const item of pendingItems(state, agent, prHeld)) {
       const count = chains.edges(state, item.id).get(edgeOf(item)) ?? 0;
       if (count - 1 > config.maxCycleRepeats) {
         result.blocked.push(item.id);
@@ -507,12 +507,12 @@ export function plan(input: PlanInput): Plan {
       continue;
     }
 
-    const taskId = chooseTask(state, agent, items, prLimited);
+    const taskId = chooseTask(state, agent, items, prHeld);
     const capped = capTriggers(items, taskId);
     // Eine Nachricht zu einer anderen Aufgabe des Agenten bleibt ungelesen: Läse sie dieser Lauf,
     // bekäme jene Aufgabe nie einen Lauf mit ihrem Kontext. Der nächste Lauf nimmt sie auf.
     const other = items.find((i) => {
-      const t = messageTask(state, agent, i, prLimited);
+      const t = messageTask(state, agent, i, prHeld);
       return t !== null && t !== taskId;
     });
     const cutoff = Math.min(capped.inboxCutoffSeq ?? Infinity, other?.seq ?? Infinity);

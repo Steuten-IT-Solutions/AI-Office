@@ -645,6 +645,40 @@ describe("Stillstand und PR-Obergrenze (E36)", () => {
     expect(result.started.map((s) => s.taskId)).toEqual([task.id]);
   });
 
+  it("zählt einen laufenden Lauf ohne Ende als begonnen", async () => {
+    let prs: number | null = null;
+    const p = new Planner({
+      office,
+      requester: supervisor,
+      context: (state, agentId, taskId) =>
+        buildContext({
+          state,
+          agentId,
+          taskId,
+          constitution: CONSTITUTION,
+          directives: [],
+          books,
+          personas,
+        }),
+      openPullRequests: () => prs,
+    });
+    const task = office.createTask("ceo", {
+      title: "Feature",
+      description: "…",
+      runType: "werkbank",
+      repo: REPO,
+      assigneeId: CTO,
+    });
+    expect((await p.tick()).started.map((s) => s.taskId)).toEqual([task.id]);
+    prs = 5;
+    advance(20 * MINUTE);
+    const result = await p.tick();
+    expect(result.notices).toBe(0);
+    expect(result.plan.holds).toEqual([
+      expect.objectContaining({ agentId: CTO, reason: "laeuft" }),
+    ]);
+  });
+
   it("zählt auch Läufe vor P06 (nur run.finished) als begonnen", async () => {
     const task = office.createTask("ceo", {
       title: "Alt",
