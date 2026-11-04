@@ -13,6 +13,7 @@
 | 3 | Spikes S1c–S1e ausführen | 30 min | Windows (PowerShell) |
 | 4 | Hyper-V-VM mit Ubuntu und Docker | 60–90 min | Windows + VM |
 | 5 | Branch-Schutz für `AI-Office` | 10 min | Browser |
+| 6 | Firefox für das Office-Webinterface (erst mit P09) | 10 min | Windows |
 
 **Grundregel:** Schlüssel, Tokens und Passwörter nie in ein Repo, eine Nachricht oder einen Chat
 kopieren, auch nicht an mich.
@@ -391,6 +392,59 @@ PRs, die Sie selbst eröffnen (etwa Workflow-Änderungen über `ceo/*`), öffnet
 (plan.md Kap. 4.5 Nr. 2).
 
 ---
+
+## Teil 6 – Firefox für das Office-Webinterface
+
+Erst nötig, wenn es das Webinterface gibt (P09). Hintergrund: WebRTC kommt an der CSP des
+Reverse-Proxys vorbei, und Chrome kann es per Richtlinie nicht ganz abschalten (plan.md E49, R11).
+Deshalb öffnen Sie das Webinterface nur in einem Firefox, in dem eine Richtlinie WebRTC abschaltet.
+
+**Wichtig:** Die Richtlinie gilt für die ganze Firefox-Installation, also für alle Profile. In
+diesem Firefox gehen danach keine Videoanrufe im Browser mehr. Nutzen Sie Firefox auch sonst,
+richten Sie für das Webinterface eine zweite Installation ein, oder sagen Sie mir Bescheid.
+
+### 6.1 Richtlinie anlegen
+
+1. Firefox installieren, falls noch nicht vorhanden (<https://www.mozilla.org/firefox/>).
+2. Firefox schließen.
+3. Im Ordner, in dem `firefox.exe` liegt (meist `C:\Program Files\Mozilla Firefox` **[Annahme]**),
+   einen Ordner `distribution` anlegen. Darin die Datei `policies.json` in UTF-8 anlegen. So steht
+   es in der [Mozilla-Doku](https://github.com/mozilla/policy-templates#readme): „On Windows, create
+   a directory called `distribution` where the EXE is located and place the file there.“
+
+```json
+{
+  "policies": {
+    "Preferences": {
+      "media.peerconnection.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}
+```
+
+Die Richtlinie `Preferences` darf Einstellungen mit dem Präfix `media.` setzen, und `locked` macht
+sie unveränderlich ([Policy-Doku](https://github.com/mozilla/policy-templates/blob/master/docs/index.md#preferences)).
+`media.peerconnection.enabled` schaltet RTCPeerConnection ab
+([StaticPrefList.yaml](https://github.com/mozilla-firefox/firefox/blob/main/modules/libpref/init/StaticPrefList.yaml)).
+
+### 6.2 Prüfen
+
+1. Firefox starten und `about:policies` öffnen. Dort muss `Preferences` als aktiv stehen, ohne Fehler.
+2. `about:config` öffnen und nach `media.peerconnection.enabled` suchen. Erwartet: `false`, mit Schloss.
+3. Auf einer beliebigen Seite die Entwicklerwerkzeuge öffnen (F12, Konsole) und
+   `typeof RTCPeerConnection` eingeben. Erwartet: `"undefined"` **[Annahme]**.
+
+Bitte melden Sie mir die drei Ergebnisse. Damit ist die **[Annahme]** in E49 geprüft, dass Firefox
+dann auch keine Verbindung zu TURN über TCP aufbaut. Das konnte ich nicht messen, weil mir kein
+Firefox zur Verfügung stand.
+
+### 6.3 Nutzung
+
+Das Webinterface (`https://office.aio.internal:8444` **[Annahme]**, S13) nur in diesem Firefox
+öffnen. In einem anderen Browser bleibt WebRTC als Abflusskanal offen (R11).
 
 ## Später (kommt mit den Skripten für S1a und S2)
 
