@@ -419,6 +419,7 @@ export class Office {
         if (
           existing.type !== eventType.type ||
           existing.actor !== actor ||
+          existing.runId !== (options.runId ?? null) ||
           canonicalJson(existing.payload) !== canonicalJson(json)
         ) {
           throw new DomainError(

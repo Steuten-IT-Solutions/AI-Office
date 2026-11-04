@@ -1128,6 +1128,25 @@ describe("run.started im Domänenmodell", () => {
     ).toThrow(`Lauf run-1 gehört ${COO}, nicht ${CFO}`);
   });
 
+  it("liefert bei Wiederholung den gespeicherten Start, mit anderer Lauf-ID einen Fehler", () => {
+    const message = send("ceo", COO, "auftrag");
+    const input = {
+      agentId: COO,
+      taskId: null,
+      runType: "buero" as const,
+      model: "sonnet" as const,
+      inboxUpToSeq: office.state.lastSeq,
+      triggerIds: [message.id],
+    };
+    const options = { runId: "run-1", idempotencyKey: "run-1:started" };
+    const started = office.recordRunStarted(input, options);
+    expect(office.recordRunStarted(input, options)).toEqual(started);
+    expect(() =>
+      office.recordRunStarted(input, { runId: "run-2", idempotencyKey: "run-1:started" }),
+    ).toThrow("Idempotenzschlüssel run-1:started wurde mit anderem Inhalt wiederverwendet");
+    expect(office.state.runStart("run-2")).toBeUndefined();
+  });
+
   it("bleibt nach dem Neuaufbau aus dem Protokoll gleich", async () => {
     const p = planner();
     send("ceo", COO, "auftrag");
