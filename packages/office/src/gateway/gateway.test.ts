@@ -176,6 +176,12 @@ function authed(auth: Login, extra: Record<string, string> = {}): Record<string,
 }
 
 describe("Anmeldung", () => {
+  it("zählt die Mindestlänge nach der NFC-Normalisierung", async () => {
+    // Sechsmal „e“ + kombinierender Akzent: 12 Codepunkte, normalisiert aber 6 Zeichen „é“.
+    await expect(hashPassword("e\u0301".repeat(6), FAST)).rejects.toThrow("mindestens 12");
+    expect(await hashPassword("\u00e9".repeat(12), FAST)).toMatch(/^scrypt\$/);
+  });
+
   it("setzt ein __Host-Cookie mit Secure, HttpOnly und SameSite=Strict", async () => {
     const res = await call("POST", "/api/login", { body: { password: PASSWORT } });
     expect(res.status).toBe(200);

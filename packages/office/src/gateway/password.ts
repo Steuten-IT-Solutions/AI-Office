@@ -60,7 +60,9 @@ export async function hashPassword(
   password: string,
   params: ScryptParams = DEFAULT_SCRYPT,
 ): Promise<string> {
-  if (codePoints(password) < MIN_PASSWORD_LENGTH) {
+  // Gezählt wird, was gehasht wird: `derive()` normalisiert auf NFC. Sonst gälte „e“ plus
+  // Akzent (2 Codepunkte) bei der Prüfung doppelt, bei der Anmeldung aber wie „é“.
+  if (codePoints(password.normalize("NFC")) < MIN_PASSWORD_LENGTH) {
     throw new Error(`Das Passwort braucht mindestens ${String(MIN_PASSWORD_LENGTH)} Zeichen`);
   }
   if (password.length > MAX_PASSWORD_LENGTH) {
