@@ -78,6 +78,11 @@ export interface Results {
     geplant: { bloecke: number; laeufeJeBlock: number };
   };
   d?: { runs: RunRecord[]; abbruch?: string | null };
+  /**
+   * Gemeinsame Basis für das Budget aller Teile: erste lesbare Messung in S2a. So zählt auch, was
+   * S2a und S2b womöglich verbrauchen (genau das untersucht S2b).
+   */
+  budgetStart?: Snapshot;
 }
 
 function load(): Results {
@@ -206,6 +211,12 @@ async function teilA(results: Results): Promise<void> {
     }
   }
   results.a = { snapshots, vergleich, methode: usable?.methode ?? null };
+  // S2a beginnt den Spike: Die Budget-Basis wird hier neu gesetzt (auch bei einer Wiederholung).
+  if (usable === null) {
+    delete results.budgetStart;
+  } else {
+    results.budgetStart = usable;
+  }
   save(results);
 }
 
@@ -324,9 +335,11 @@ async function teilC(results: Results): Promise<void> {
   // auf der Platte bleiben und im Bericht als Ergebnis erscheinen.
   save(results);
   // Ohne lesbares Wochenfenster ist das Budget nicht überwachbar: dann kein einziger Lauf.
-  if (weekly === null || start.isError === true) {
-    c.abbruch =
-      "Wochenfenster in /usage vor dem ersten Lauf nicht lesbar, Budget nicht überwachbar";
+  const baseline = budgetBaseline(results, start);
+  const before =
+    weekly === null ? "Wochenfenster nicht lesbar" : budgetStop(baseline, start, budgetPp);
+  if (weekly === null || before !== null) {
+    c.abbruch = `vor dem ersten Lauf: ${before ?? "Wochenfenster nicht lesbar"}`;
     console.log(`  Abbruch: ${c.abbruch}`);
     save(results);
     return;
@@ -360,23 +373,12 @@ async function teilC(results: Results): Promise<void> {
       });
       current = after;
       save(results);
-      const used = after.rows.some((r) => r.kind === weekly)
-        ? (delta(start.rows, after.rows)[weekly] ?? null)
-        : null;
       console.log(
         `  Block fertig: ${cost.toFixed(4)} USD, Δ ${JSON.stringify(c.blocks.at(-1)?.delta)}`,
       );
-      // Ein schon gesetzter Abbruch (rejected) bleibt stehen.
-      if (
-        c.abbruch === null &&
-        resetKinds(c.blocks.at(-1)?.before.rows ?? [], after.rows).includes(weekly)
-      ) {
-        c.abbruch = "Wochenfenster zwischen zwei Messungen zurückgesetzt, Budget nicht überwachbar";
-      } else if (c.abbruch === null && (after.isError === true || used === null)) {
-        c.abbruch = "Wochenfenster in /usage nach dem Block nicht lesbar, Budget nicht überwachbar";
-      } else if (c.abbruch === null && used !== null && used >= budgetPp) {
-        c.abbruch = `Budget erreicht: Woche +${String(used)} Prozentpunkte`;
-      }
+      // Ein schon gesetzter Abbruch (rejected) bleibt stehen. budgetStop erkennt auch einen
+      // Reset und ein unlesbares Wochenfenster.
+      c.abbruch ??= budgetStop(baseline, after, budgetPp);
       if (c.abbruch !== null) {
         console.log(`  Abbruch: ${c.abbruch}`);
         break outer;
@@ -418,8 +420,25 @@ export function officePrompt(planMd: string): string {
   ].join("\n");
 }
 
+/** Budget-Basis aus S2a; ohne sie (Teil einzeln gestartet) zählt die übergebene Messung. */
+function budgetBaseline(results: Results, fallback: Snapshot): Snapshot {
+  results.budgetStart ??= fallback;
+  return results.budgetStart;
+}
+
+/** Grund, keinen weiteren bezahlten Lauf zu starten, oder `null`. */
+export function budgetStop(baseline: Snapshot, now: Snapshot, budgetPp: number): string | null {
+  const check = budgetUsed(baseline, now);
+  if ("unreadable" in check) {
+    return `${check.unreadable}, Budget nicht überwachbar`;
+  }
+  return check.used >= budgetPp
+    ? `Budget erreicht: Woche +${String(check.used)} Prozentpunkte`
+    : null;
+}
+
 /**
- * Prozentpunkte, die die Woche seit Beginn von S2c gestiegen ist, oder ein Grund, warum das nicht
+ * Prozentpunkte, die die Woche seit der Budget-Basis gestiegen ist, oder ein Grund, warum das nicht
  * lesbar ist. Die 5 Prozentpunkte gelten für den ganzen Spike S2, nicht nur für S2c.
  */
 export function budgetUsed(
@@ -431,7 +450,7 @@ export function budgetUsed(
     return { unreadable: "Wochenfenster nicht lesbar" };
   }
   if (resetKinds(start.rows, now.rows).includes(weekly)) {
-    return { unreadable: "Wochenfenster seit Beginn von S2c zurückgesetzt" };
+    return { unreadable: "Wochenfenster seit der Budget-Basis zurückgesetzt" };
   }
   const used = delta(start.rows, now.rows)[weekly];
   return used === undefined ? { unreadable: "Wochenfenster fehlt in /usage" } : { used };
@@ -442,27 +461,25 @@ async function teilD(results: Results): Promise<void> {
   // Auch S2d zählt zum freigegebenen Budget: ohne lesbaren Zähler oder bei erreichtem Budget
   // keine weiteren bezahlten Läufe.
   const m = method(results);
-  const c = results.c;
-  const budgetPp = c?.budgetPp ?? envNumber("AIO_S2_BUDGET_PP", 5);
-  const start = c?.start ?? (await query(m, "voll"));
-  const check = budgetUsed(start, await query(m, "voll"));
-  if ("unreadable" in check || check.used >= budgetPp) {
-    const reason =
-      "unreadable" in check
-        ? `${check.unreadable}, Budget nicht überwachbar`
-        : `Budget erreicht: Woche +${String(check.used)} Prozentpunkte`;
-    console.log(`  S2d entfällt: ${reason}`);
-    results.d = { runs: [], abbruch: reason };
-    save(results);
-    return;
-  }
+  const budgetPp = results.c?.budgetPp ?? envNumber("AIO_S2_BUDGET_PP", 5);
+  const now = await query(m, "voll");
+  const baseline = budgetBaseline(results, now);
   const planMd = readFileSync("/opt/spike/docs/plan.md", "utf8");
   const tools = officeTools();
   const runs: RunRecord[] = [];
   const cwd = join(WORK, "s2d");
   mkdirSync(cwd, { recursive: true });
+  let current = now;
   for (const model of ["haiku", "sonnet"]) {
     for (let i = 1; i <= 3; i++) {
+      // Vor jedem bezahlten Lauf neu messen.
+      const stop = budgetStop(baseline, current, budgetPp);
+      if (stop !== null) {
+        console.log(`  Abbruch: ${stop}`);
+        results.d = { runs, abbruch: stop };
+        save(results);
+        return;
+      }
       const result = await runClaude({
         prompt: "Antworte mit OK.",
         model,
@@ -493,6 +510,7 @@ async function teilD(results: Results): Promise<void> {
         save(results);
         return;
       }
+      current = await query(m, "voll");
     }
   }
   results.d = { runs, abbruch: null };

@@ -19,6 +19,7 @@ import {
 } from "./s1f.ts";
 import { verdict } from "./s1g.ts";
 import {
+  budgetStop,
   budgetUsed,
   buildReport as s2Report,
   officeGaps,
@@ -647,6 +648,12 @@ describe("S2: Budget über alle Teile", () => {
     expect(budgetUsed(snap(10), snap(12, true))).toHaveProperty("unreadable");
     expect(budgetUsed(snap(80), snap(1))).toHaveProperty("unreadable");
     expect(budgetUsed(snap(null), snap(5))).toHaveProperty("unreadable");
+  });
+
+  it("stoppt bezahlte Läufe ab dem Budget und bei unlesbarem Zähler", () => {
+    expect(budgetStop(snap(10), snap(14.9), 5)).toBeNull();
+    expect(budgetStop(snap(10), snap(15), 5)).toMatch(/^Budget erreicht/);
+    expect(budgetStop(snap(10), snap(null), 5)).toMatch(/nicht überwachbar$/);
   });
 });
 
