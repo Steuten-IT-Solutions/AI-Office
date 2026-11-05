@@ -92,8 +92,11 @@ export interface GatewayOptions {
   /** Liefert den gespeicherten Passwort-Hash oder `null`, wenn keiner eingerichtet ist. */
   passwordHash: () => string | null;
   sessions?: Sessions;
-  /** Nach jeder gespeicherten Nachricht des CEO, z. B. um den Planer anzustoßen. */
-  onCeoMessage?: (message: Message) => void;
+  /**
+   * Nach jeder gespeicherten Nachricht des CEO, z. B. um den Planer anzustoßen. Darf ein Promise
+   * liefern; ein verworfenes landet im Log.
+   */
+  onCeoMessage?: (message: Message) => unknown;
   /** Weisung aus E46 aktiv: Der CEO schreibt nur dem COO. Standard: nein. */
   ceoViaCooOnly?: () => boolean;
   loginThrottle?: Partial<LoginThrottle>;
@@ -631,8 +634,15 @@ export class OfficeGateway {
       }
       throw error;
     }
+    // Die Antwort wartet nicht auf den Haken. Ein Fehler, auch ein verworfenes Promise, landet
+    // im Log; die Nachricht ist dann schon gespeichert.
     try {
-      this.options.onCeoMessage?.(message);
+      const result = this.options.onCeoMessage?.(message);
+      if (result instanceof Promise) {
+        result.catch((error: unknown) => {
+          this.log("Gateway: onCeoMessage fehlgeschlagen", error);
+        });
+      }
     } catch (error) {
       this.log("Gateway: onCeoMessage fehlgeschlagen", error);
     }

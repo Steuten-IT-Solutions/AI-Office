@@ -51,7 +51,9 @@ function setup(options: Partial<GatewayOptions> = {}): void {
     passwordHash: () => stored,
     sessions: new Sessions({}, () => clock),
     now: () => clock,
-    onCeoMessage: (message) => ceoMessages.push(message.id),
+    onCeoMessage: (message) => {
+      ceoMessages.push(message.id);
+    },
     ceoViaCooOnly: () => viaCoo,
     log: () => undefined,
     ...options,
@@ -412,6 +414,33 @@ describe("Anfragen", () => {
 });
 
 describe("CEO-Chat", () => {
+  it("fängt Fehler des Hakens ab, auch ein verworfenes Promise", async () => {
+    const logged: string[] = [];
+    let calls = 0;
+    setup({
+      onCeoMessage: () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("synchron");
+        }
+        return Promise.reject(new Error("asynchron"));
+      },
+      log: (message) => {
+        logged.push(message);
+      },
+    });
+    const auth = await login();
+    for (let i = 0; i < 2; i++) {
+      const res = await call("POST", "/api/chat", { body: { text: "x" }, headers: authed(auth) });
+      expect(res.status).toBe(201);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(logged).toEqual([
+      "Gateway: onCeoMessage fehlgeschlagen",
+      "Gateway: onCeoMessage fehlgeschlagen",
+    ]);
+  });
+
   it("speichert nichts, wenn die Sitzung endet, während der Körper noch ankommt", async () => {
     const auth = await login();
     const body = JSON.stringify({ text: "zu spät" });
@@ -574,7 +603,11 @@ describe("CEO-Chat", () => {
         }),
     });
     const ticks: Promise<unknown>[] = [];
-    setup({ onCeoMessage: () => ticks.push(planner.tick()) });
+    setup({
+      onCeoMessage: () => {
+        ticks.push(planner.tick());
+      },
+    });
     const auth = await login();
     expect(
       (
