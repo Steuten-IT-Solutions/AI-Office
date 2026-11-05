@@ -11,6 +11,7 @@ import {
   ESCALATION_RAISED,
   MESSAGE_SENT,
   RUN_FINISHED,
+  RUN_STARTED,
   RUN_THOUGHT,
   TASK_CREATED,
   TASK_DELEGATED,
@@ -20,6 +21,7 @@ import {
   type EscalationRaised,
   type MessageSent,
   type RunFinished,
+  type RunStarted,
   type RunThought,
   type TaskCreated,
   type TaskDelegated,
@@ -27,7 +29,13 @@ import {
   type TaskStatusChanged,
 } from "./events.ts";
 import type { Escalation, Message } from "./message.ts";
-import { CLOSED_STATUSES, canTransition, isReopen, type Task } from "./task.ts";
+import {
+  CLOSED_STATUSES,
+  canTransition,
+  isReopen,
+  type Task,
+  type TaskAssignment,
+} from "./task.ts";
 import type { RunType } from "../llm/runner.ts";
 
 /**
@@ -63,6 +71,29 @@ export interface RunRecord extends RunFinished {
   agentId: string;
   seq: number;
   occurredAt: string;
+}
+
+/** Ein zugelassener Lauf (`run.started`). Ob er beendet ist, zeigt `run(runId)`. */
+export interface RunStart extends RunStarted {
+  runId: string;
+  seq: number;
+  occurredAt: string;
+}
+
+/**
+ * Etwas, das einen Agenten wecken kann (P06): eine Nachricht, eine Eskalation oder die Zuweisung
+ * einer Aufgabe. Die ID ist die des Ereignisses. `runId` ist der Lauf, in dem es entstand; über
+ * dessen Auslöser verfolgt der Planer die Ursachenkette (Zyklenerkennung).
+ */
+export interface WakeItem {
+  id: string;
+  kind: "message" | "escalation" | "assignment";
+  seq: number;
+  occurredAt: string;
+  fromId: string;
+  toId: string;
+  runId: string | null;
+  taskId: string | null;
 }
 
 /** Gedankenblase eines Laufs für die Zeitleiste (Kap. 3.3 Nr. 5). */
@@ -103,6 +134,9 @@ export class OfficeState {
   private readonly escalationByAnswer = new Map<string, Escalation>();
   private readonly thoughtList: Thought[] = [];
   private readonly runById = new Map<string, RunRecord>();
+  private readonly runStartById = new Map<string, RunStart>();
+  /** Zuweisungen je Ereignis-ID, auch frühere, damit alte Auslöser auflösbar bleiben. */
+  private readonly assignmentById = new Map<string, WakeItem>();
   /** Je Agent: bis zu dieser Sequenznummer hat ein abgeschlossener Lauf das Postfach gelesen. */
   private readonly inboxRead = new Map<string, number>();
 
@@ -174,6 +208,46 @@ export class OfficeState {
   /** Abgeschlossene Läufe in Reihenfolge des Protokolls. */
   runs(): RunRecord[] {
     return [...this.runById.values()];
+  }
+
+  runStart(runId: string): RunStart | undefined {
+    return this.runStartById.get(runId);
+  }
+
+  /** Zugelassene Läufe in Reihenfolge des Protokolls, beendete eingeschlossen. */
+  runStarts(): RunStart[] {
+    return [...this.runStartById.values()];
+  }
+
+  /** Nachricht, Eskalation oder Zuweisung mit dieser Ereignis-ID. */
+  wakeItem(id: string): WakeItem | undefined {
+    const message = this.messageById.get(id);
+    if (message !== undefined) {
+      return {
+        id,
+        kind: "message",
+        seq: message.seq,
+        occurredAt: message.occurredAt,
+        fromId: message.fromId,
+        toId: message.toId,
+        runId: message.runId,
+        taskId: message.taskId,
+      };
+    }
+    const escalation = this.escalationById.get(id);
+    if (escalation !== undefined) {
+      return {
+        id,
+        kind: "escalation",
+        seq: escalation.seq,
+        occurredAt: escalation.occurredAt,
+        fromId: escalation.fromId,
+        toId: escalation.toId,
+        runId: escalation.runId,
+        taskId: escalation.taskId,
+      };
+    }
+    return this.assignmentById.get(id);
   }
 
   /**
@@ -259,6 +333,8 @@ export class OfficeState {
         return this.checkRunEvent(actor, runId);
       case RUN_FINISHED.type:
         return this.checkRunFinished(actor, payload as RunFinished, runId);
+      case RUN_STARTED.type:
+        return this.checkRunStarted(actor, payload as RunStarted, runId);
       case ESCALATION_RAISED.type:
         return this.checkEscalation(actor, payload as EscalationRaised);
       case ESCALATION_ANSWERED.type:
@@ -280,6 +356,8 @@ export class OfficeState {
       }
       case TASK_CREATED.type: {
         const p = payload as TaskCreated;
+        const assignment =
+          p.assigneeId === null ? null : this.recordAssignment(event, event.id, p.assigneeId);
         this.taskById.set(event.id, {
           id: event.id,
           title: p.title,
@@ -292,15 +370,23 @@ export class OfficeState {
           status: "offen",
           reopenCount: 0,
           handover: null,
+          assignment,
           createdSeq: event.seq,
           updatedSeq: event.seq,
+          updatedAt: event.occurredAt,
         });
         return;
       }
       case TASK_DELEGATED.type: {
         const p = payload as TaskDelegated;
         const task = this.taskById.get(p.taskId) as Task;
-        this.taskById.set(p.taskId, { ...task, assigneeId: p.assigneeId, updatedSeq: event.seq });
+        this.taskById.set(p.taskId, {
+          ...task,
+          assigneeId: p.assigneeId,
+          assignment: this.recordAssignment(event, p.taskId, p.assigneeId),
+          updatedSeq: event.seq,
+          updatedAt: event.occurredAt,
+        });
         return;
       }
       case TASK_STATUS_CHANGED.type: {
@@ -311,6 +397,7 @@ export class OfficeState {
           status: p.status,
           reopenCount: task.reopenCount + (isReopen(task.status, p.status) ? 1 : 0),
           updatedSeq: event.seq,
+          updatedAt: event.occurredAt,
         });
         return;
       }
@@ -372,6 +459,7 @@ export class OfficeState {
             seq: event.seq,
           },
           updatedSeq: event.seq,
+          updatedAt: event.occurredAt,
         });
         return;
       }
@@ -401,7 +489,37 @@ export class OfficeState {
         }
         return;
       }
+      case RUN_STARTED.type: {
+        const runId = event.runId as string;
+        this.runStartById.set(runId, {
+          ...(payload as RunStarted),
+          runId,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+        });
+        return;
+      }
     }
+  }
+
+  private recordAssignment(event: StoredEvent, taskId: string, toId: string): TaskAssignment {
+    this.assignmentById.set(event.id, {
+      id: event.id,
+      kind: "assignment",
+      seq: event.seq,
+      occurredAt: event.occurredAt,
+      fromId: event.actor,
+      toId,
+      runId: event.runId,
+      taskId,
+    });
+    return {
+      eventId: event.id,
+      seq: event.seq,
+      occurredAt: event.occurredAt,
+      byId: event.actor,
+      runId: event.runId,
+    };
   }
 
   /** Arbeitsplatz und Ausstattung passen zum Gebäude (nur vor dem Schreiben). */
@@ -554,6 +672,10 @@ export class OfficeState {
     if (reason !== null) {
       return reason;
     }
+    const start = this.runStartById.get(runId as string);
+    if (start !== undefined && start.agentId !== actor) {
+      return `Lauf ${runId as string} gehört ${start.agentId}, nicht ${actor}`;
+    }
     if (p.taskId !== null && !this.taskById.has(p.taskId)) {
       return `Aufgabe ${p.taskId} existiert nicht`;
     }
@@ -563,9 +685,73 @@ export class OfficeState {
     return null;
   }
 
+  /**
+   * Den Start eines Laufs schreibt nur der Planer (`system`), einmal je Lauf und vor dessen Ende.
+   * Jeder Auslöser muss an den Agenten gerichtet sein, sonst stimmte die Ursachenkette nicht.
+   */
+  private checkRunStarted(actor: string, p: RunStarted, runId: string | null): string | null {
+    if (actor !== "system") {
+      return "Den Start eines Laufs schreibt nur das System";
+    }
+    const agent = this.agent(p.agentId);
+    if (agent === undefined) {
+      return `Agent ${p.agentId} existiert nicht`;
+    }
+    const reason = this.checkRun(runId);
+    if (reason !== null) {
+      return reason;
+    }
+    if (this.runStartById.has(runId as string)) {
+      return `Lauf ${runId as string} ist bereits gestartet`;
+    }
+    if (!allowedRunTypes(agent.equipment).includes(p.runType)) {
+      return `Agent ${p.agentId} hat keine Ausstattung für den Lauftyp ${p.runType}`;
+    }
+    if (p.taskId !== null) {
+      const task = this.taskById.get(p.taskId);
+      if (task === undefined) {
+        return `Aufgabe ${p.taskId} existiert nicht`;
+      }
+      if (task.assigneeId !== p.agentId) {
+        return `Aufgabe ${p.taskId} liegt nicht bei ${p.agentId}`;
+      }
+      if (task.runType !== p.runType) {
+        return `Aufgabe ${p.taskId} hat den Lauftyp ${task.runType}`;
+      }
+    } else if (p.runType !== "buero") {
+      return "Ein Lauf ohne Aufgabe ist vom Typ buero";
+    }
+    if (p.inboxUpToSeq > this.lastSeq) {
+      return `Postfach bis ${String(p.inboxUpToSeq)} liegt hinter dem Protokoll`;
+    }
+    for (const id of p.triggerIds) {
+      const item = this.wakeItem(id);
+      if (item === undefined) {
+        return `Auslöser ${id} ist keine Nachricht, Eskalation oder Zuweisung`;
+      }
+      if (item.toId !== p.agentId) {
+        return `Auslöser ${id} ist nicht an ${p.agentId} gerichtet`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Agenten und CEO schreiben Nachrichten jeder Art. Das System (Planer) schreibt nur `info`:
+   * Hinweise wie „Weckbudget erschöpft“ sollen niemanden wecken (P06).
+   */
   private checkMessage(actor: string, p: MessageSent): string | null {
-    if (!this.isParticipant(actor)) {
+    if (actor === "system") {
+      if (p.kind !== "info") {
+        return "Das System sendet nur Nachrichten der Art info";
+      }
+    } else if (!this.isParticipant(actor)) {
       return `Absender ${actor} ist unbekannt`;
+    }
+    if (p.toId === "system") {
+      // Weitergeleitete Eskalationen und Hinweise kommen vom System. Die Antwort geht an den, den
+      // sie betreffen; bei einer Weitergabe steht der ursprüngliche Absender im Text.
+      return "Dem System kann man nicht schreiben; antworte dem ursprünglichen Absender";
     }
     if (!this.isParticipant(p.toId)) {
       return `Empfänger ${p.toId} ist unbekannt`;

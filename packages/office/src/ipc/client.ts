@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { z } from "zod";
 import type { EscalationGate } from "../api/tools.ts";
+import type { RunRequester } from "../planner/planner.ts";
 import {
   ERROR_CODES,
   MAX_FRAME_BYTES,
@@ -378,6 +379,15 @@ export function supervisorEscalationGate(client: SupervisorClient): EscalationGa
     async checkEscalationToCeo(request) {
       const verdict = await client.call("escalation.checkToCeo", request);
       return verdict.allowed ? null : verdict.reason;
+    },
+  };
+}
+
+/** `RunRequester` des Planers (P06) über den Supervisor. Ein Fehler wird nie wiederholt. */
+export function supervisorRunRequester(client: SupervisorClient): RunRequester {
+  return {
+    requestRun(params) {
+      return client.call("run.request", params);
     },
   };
 }

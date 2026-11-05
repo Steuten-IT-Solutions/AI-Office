@@ -354,6 +354,11 @@ function renderEscalation(state: OfficeState, e: Escalation, text: string): stri
     `- Eskalation: \`${e.id}\`, ${e.occurredAt}`,
     ...(e.taskId === null ? [] : [`- Aufgabe: ${taskLabel(state, e.taskId)}`]),
     "- Antworte mit `send_message` und `replyToId` auf diese Eskalation, sonst geht sie nach dem Timeout eine Ebene höher.",
+    ...(e.fromId === "system"
+      ? [
+          "- Weitergeleitet vom System: Schreib die Antwort an den ursprünglichen Absender, der im Text steht.",
+        ]
+      : []),
   ];
   return `## Eskalation von ${agentLabel(state, e.fromId)}\n\n${facts.join("\n")}\n\n${quote(text)}`;
 }

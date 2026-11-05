@@ -11,6 +11,7 @@ import {
   ESCALATION_RAISED,
   MESSAGE_SENT,
   RUN_FINISHED,
+  RUN_STARTED,
   RUN_THOUGHT,
   TASK_CREATED,
   TASK_DELEGATED,
@@ -19,17 +20,20 @@ import {
   parseEscalationRaised,
   parseMessageSent,
   parseRunFinished,
+  parseRunStarted,
   parseRunThought,
   parseTaskCreated,
   parseTaskDelegated,
   parseTaskHandover,
   parseTaskStatusChanged,
+  MAX_TEXT_CHARS,
   type RunFinished,
+  type RunStarted,
 } from "./events.ts";
 import type { Escalation, Message, MessageKind } from "./message.ts";
-import { OfficeState, type RunRecord, type Thought } from "./office-state.ts";
+import { OfficeState, type RunRecord, type RunStart, type Thought } from "./office-state.ts";
 import type { Task, TaskStatus } from "./task.ts";
-import { ValidationError, type Parsed } from "./validation.ts";
+import { ValidationError, truncateText, type Parsed } from "./validation.ts";
 
 /**
  * Befehle auf dem Domänenmodell. Jeder Befehl prüft gegen den aktuellen Zustand, schreibt genau
@@ -310,6 +314,62 @@ export class Office {
   }
 
   /**
+   * Weitergabe einer unbeantworteten Eskalation eine Ebene höher (Kap. 5.4, E47): an den
+   * Vorgesetzten des Empfängers, beim COO also an den CEO. Handelnder ist `system` (Planer, P06).
+   * Die neue Eskalation nennt die alte im Text; ein eigenes Feld dafür bräuchte eine neue Version
+   * von `escalation.raised` (E24).
+   */
+  forwardEscalation(
+    escalationId: string,
+    timeoutHours: number,
+    options: CommandOptions = {},
+  ): Escalation {
+    this.sync();
+    const escalation = this.state.escalation(escalationId);
+    if (escalation === undefined) {
+      throw new DomainError(`Eskalation ${escalationId} existiert nicht`);
+    }
+    if (escalation.toId === CEO_ID) {
+      throw new DomainError("Über dem CEO gibt es keine Ebene");
+    }
+    // Eine Wiederholung mit demselben Schlüssel liefert die frühere Weitergabe, auch wenn die
+    // Eskalation inzwischen beantwortet ist.
+    const replay =
+      options.idempotencyKey !== undefined && this.hasCommitted(options.idempotencyKey);
+    if (escalation.answeredSeq !== null && !replay) {
+      throw new DomainError(`Eskalation ${escalationId} ist schon beantwortet`);
+    }
+    // Bei einer Wiederholung gilt der Empfänger von damals, auch wenn sich der Vorgesetzte
+    // inzwischen geändert hat (wie in `escalate`).
+    const existing = replay
+      ? this.store.findByIdempotencyKey(options.idempotencyKey as string)
+      : undefined;
+    const stored = existing === undefined ? undefined : this.state.escalation(existing.id);
+    const toId = stored?.toId ?? this.state.agent(escalation.toId)?.supervisorId ?? CEO_ID;
+    const head = [
+      `Weitergeleitet: Eskalation ${escalation.id} von ${escalation.fromId} an ${escalation.toId}`,
+      `ist nach ${String(timeoutHours)} h ohne Antwort (Kap. 5.4). Text der Eskalation:`,
+    ].join(" ");
+    const payload = valid(
+      "Eskalation",
+      parseEscalationRaised({
+        toId,
+        text: truncateText(`${head}\n\n${escalation.text}`, MAX_TEXT_CHARS),
+        taskId: escalation.taskId,
+      }),
+    );
+    const event = this.commit(ESCALATION_RAISED, "system", payload, options);
+    return this.state.escalation(event.id) as Escalation;
+  }
+
+  /** Hält fest, dass der Supervisor einen Lauf zugelassen hat (P06). Handelnder ist `system`. */
+  recordRunStarted(input: RunStarted, options: CommandOptions & { runId: string }): RunStart {
+    const payload = valid("Laufstart", parseRunStarted(input));
+    this.commit(RUN_STARTED, "system", payload, options);
+    return this.state.runStart(options.runId) as RunStart;
+  }
+
+  /**
    * Übergabenotiz zur Aufgabe (`handover`, Kap. 5.2). `auto` setzt nur die Auswertung, die dann
    * als `system` handelt.
    */
@@ -359,6 +419,7 @@ export class Office {
         if (
           existing.type !== eventType.type ||
           existing.actor !== actor ||
+          existing.runId !== (options.runId ?? null) ||
           canonicalJson(existing.payload) !== canonicalJson(json)
         ) {
           throw new DomainError(

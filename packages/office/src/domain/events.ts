@@ -1,6 +1,6 @@
 import type { EventType } from "../events/event-types.ts";
 import type { RunType } from "../llm/runner.ts";
-import { parseAgentProfile, type AgentProfile } from "./agent.ts";
+import { MODEL_ALIASES, parseAgentProfile, type AgentProfile, type ModelAlias } from "./agent.ts";
 import { MESSAGE_KINDS, type MessageKind } from "./message.ts";
 import { TASK_STATUSES, type TaskStatus } from "./task.ts";
 import { Reader, parsed, type Parsed } from "./validation.ts";
@@ -93,6 +93,30 @@ export interface RunFinished {
    */
   inboxUpToSeq: number;
 }
+
+/**
+ * Der Supervisor hat einen Lauf zugelassen, den der Planer beantragt hat (P06, Kap. 3.3 Nr. 3).
+ * Handelnder ist `system`, die Lauf-ID steht im Feld `runId` des Ereignisses. Damit kennt der
+ * Planer laufende Läufe, den Zeitpunkt des letzten Weckens (Bündelung), die Läufe des Tages
+ * (Weckbudget) und die Ursache jedes Laufs (Zyklenerkennung).
+ */
+export interface RunStarted {
+  agentId: string;
+  taskId: string | null;
+  runType: RunType;
+  model: ModelAlias;
+  /** Aus dem Kontextaufbau; derselbe Wert geht später in `run.finished`. */
+  inboxUpToSeq: number;
+  /** Ereignisse, die den Lauf ausgelöst haben: Nachrichten, Eskalationen, Zuweisungen. */
+  triggerIds: string[];
+}
+
+/**
+ * Höchstzahl Auslöser je Lauf. Ein Eintrag im Postfach kostet geschätzt mindestens etwa 35 Tokens
+ * (Kopf mit ID und Zeit), ins Standardbudget von 8.000 Tokens passen also gut 200. Die Grenze
+ * liegt mit Abstand darüber, damit jede gelesene Nachricht Auslöser sein kann. [Annahme: 500]
+ */
+export const MAX_RUN_TRIGGERS = 500;
 
 /**
  * Eskalation (Kap. 5.4, E47): an den COO, Eskalationen des COO an den CEO. Den Empfänger legt
@@ -289,6 +313,40 @@ export function parseRunFinished(payload: unknown): Parsed<RunFinished> {
   });
 }
 
+export function parseRunStarted(payload: unknown): Parsed<RunStarted> {
+  const r = new Reader(payload).only(
+    "agentId",
+    "taskId",
+    "runType",
+    "model",
+    "inboxUpToSeq",
+    "triggerIds",
+  );
+  const triggers = r.raw("triggerIds");
+  const triggerIds: string[] = [];
+  if (!Array.isArray(triggers) || triggers.length > MAX_RUN_TRIGGERS) {
+    r.issues.push(`triggerIds: Liste mit höchstens ${String(MAX_RUN_TRIGGERS)} Einträgen erwartet`);
+  } else {
+    for (const [index, item] of (triggers as unknown[]).entries()) {
+      if (typeof item !== "string" || !UUID_PATTERN.test(item)) {
+        r.issues.push(`triggerIds[${String(index)}]: Ereignis-ID erwartet`);
+      } else if (triggerIds.includes(item)) {
+        r.issues.push(`triggerIds[${String(index)}]: doppelt`);
+      } else {
+        triggerIds.push(item);
+      }
+    }
+  }
+  return parsed(r, {
+    agentId: r.id("agentId"),
+    taskId: eventRef(r, "taskId", true),
+    runType: r.oneOf("runType", RUN_TYPES),
+    model: r.oneOf("model", MODEL_ALIASES),
+    inboxUpToSeq: r.integer("inboxUpToSeq", 0, COUNT_MAX),
+    triggerIds,
+  });
+}
+
 function eventType<T>(type: string, parse: (payload: unknown) => Parsed<T>): EventType<T> {
   return {
     type,
@@ -312,6 +370,7 @@ export const MESSAGE_SENT = eventType("message.sent", parseMessageSent);
 export const TASK_HANDOVER = eventType("task.handover", parseTaskHandover);
 export const RUN_THOUGHT = eventType("run.thought", parseRunThought);
 export const RUN_FINISHED = eventType("run.finished", parseRunFinished);
+export const RUN_STARTED = eventType("run.started", parseRunStarted);
 export const ESCALATION_RAISED = eventType("escalation.raised", parseEscalationRaised);
 export const ESCALATION_ANSWERED = eventType("escalation.answered", parseEscalationAnswered);
 
@@ -327,4 +386,5 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   RUN_FINISHED,
   ESCALATION_RAISED,
   ESCALATION_ANSWERED,
+  RUN_STARTED,
 ];
