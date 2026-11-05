@@ -136,8 +136,25 @@ export function observe(dir: string, summary: RunSummary): Observation {
   };
 }
 
+/** Die drei Wege, über die der Arbeitsbereich das CLI beeinflussen kann. */
+export function channels(o: Observation): Record<"Hooks" | "Bash-Freigabe" | "MCP", boolean> {
+  return { Hooks: o.hooks.length > 0, "Bash-Freigabe": o.bash, MCP: o.mcpStarted || o.mcpInInit };
+}
+
 export function anythingLoaded(o: Observation): boolean {
-  return o.hooks.length > 0 || o.bash || o.mcpStarted || o.mcpInInit;
+  return Object.values(channels(o)).some(Boolean);
+}
+
+/** Kanäle, die die Kontrolle nicht gezeigt hat; für sie sagt die Plan-Variante nichts aus. */
+export function missingChannels(o: Observation): string[] {
+  return Object.entries(channels(o))
+    .filter(([, loaded]) => !loaded)
+    .map(([name]) => name);
+}
+
+/** Das CLI ist gestartet (system/init) und hat ein Ergebnis geliefert. */
+export function ran(summary: RunSummary): boolean {
+  return (summary.eventCounts["init"] ?? 0) > 0 && summary.resultSubtype !== null;
 }
 
 export function buildReport(dir: string, context: string[]): Report {
@@ -159,12 +176,26 @@ export function buildReport(dir: string, context: string[]): Report {
     const loaded = anythingLoaded(o);
     const observed = `${loaded ? "geladen" : "nichts geladen"} (Hooks: ${o.hooks.length > 0 ? o.hooks.join(", ") : "keine"}; Bash-Freigabe genutzt: ${o.bash ? "ja" : "nein"}; fremder MCP gestartet: ${o.mcpStarted ? "ja" : "nein"}, in system/init: ${o.mcpInInit ? "ja" : "nein"})`;
     if (variant.expectBlocked === false) {
-      // Kontrolle: Lädt das CLI ohne die Flags nichts, prüft der Spike nichts.
-      if (loaded) {
-        report.add(`Kontrolle: ${variant.description}`, "Hooks und MCP laufen", observed, true);
+      // Kontrolle: Jeder Kanal, den das CLI ohne die Flags nicht lädt, bliebe in der Plan-Variante
+      // ungeprüft. Deshalb muss die Kontrolle alle drei zeigen.
+      const missing = missingChannels(o);
+      const expected = "Hooks, Bash-Freigabe und MCP wirken";
+      if (missing.length === 0) {
+        report.add(`Kontrolle: ${variant.description}`, expected, observed, true);
       } else {
-        report.invalid(`Kontrolle: ${variant.description}`, "Hooks und MCP laufen", observed);
+        report.invalid(
+          `Kontrolle: ${variant.description}`,
+          expected,
+          `${observed}; nicht gezeigt: ${missing.join(", ")}`,
+        );
       }
+    } else if (variant.expectBlocked === true && !ran(summary)) {
+      // Ohne Start und Ergebnis heißt „keine Marker“ nichts.
+      report.invalid(
+        variant.description,
+        "Lauf mit system/init und Ergebnis",
+        `${summary.resultSubtype ?? "kein Ergebnis"}; system/init ${(summary.eventCounts["init"] ?? 0) > 0 ? "gesehen" : "fehlt"}`,
+      );
     } else {
       report.add(
         variant.description,

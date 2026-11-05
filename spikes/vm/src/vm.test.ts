@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,9 +9,25 @@ import { buildAllowlist, normalizePath, parseLog, type LogEntry } from "./endpun
 import { handle, officeTools } from "./mcp-attrappe.ts";
 import { checkControls, evaluateRun, parseProbe, probeCommand } from "./s1a.ts";
 import { interpretCurl } from "./s1b.ts";
-import { anythingLoaded, fixture, observe } from "./s1f.ts";
+import {
+  anythingLoaded,
+  buildReport as s1fReport,
+  fixture,
+  missingChannels,
+  observe,
+  ran,
+} from "./s1f.ts";
 import { verdict } from "./s1g.ts";
-import { officePrompt, parseOutput, resultOf } from "./s2.ts";
+import {
+  buildReport as s2Report,
+  officePrompt,
+  parseOutput,
+  resultOf,
+  sampleGaps,
+  type Block,
+  type Results,
+  type Snapshot,
+} from "./s2.ts";
 import { factor, median, quantile, stability } from "./statistik.ts";
 import { summarize, succeeded } from "./stream.ts";
 import { delta, findStructuredRows, findTextRows, usageRows, weeklyKind } from "./usage.ts";
@@ -69,6 +85,15 @@ describe("Bericht", () => {
     expect(report.outcome).toMatch(/^No-Go/);
     report.invalid("k", "x", "y");
     expect(report.outcome).toMatch(/^Ungültig/);
+  });
+
+  it("meldet kein Go, wenn keine Prüfung bewertet wurde", () => {
+    const report = new Report("T");
+    expect(report.outcome).toMatch(/^Nicht bewertbar/);
+    report.add("nur Information", "x", "y", null);
+    expect(report.outcome).toMatch(/^Nicht bewertbar/);
+    report.add("Prüfung", "x", "x", true);
+    expect(report.outcome).toMatch(/^Go/);
   });
 });
 
@@ -293,6 +318,36 @@ describe("S1f", () => {
     const withMcp = summarize(STREAM);
     expect(observe(mkdtempSync(join(tmpdir(), "s1f-")), withMcp).mcpInInit).toBe(true);
   });
+
+  it("verlangt in der Kontrolle jeden Kanal und in der Plan-Variante einen echten Lauf", () => {
+    const o = {
+      hooks: ["Stop"],
+      bash: false,
+      mcpStarted: false,
+      mcpInInit: false,
+      claudeMd: false,
+    };
+    expect(missingChannels(o)).toEqual(["Bash-Freigabe", "MCP"]);
+    expect(missingChannels({ ...o, bash: true, mcpInInit: true })).toEqual([]);
+    expect(ran(summarize(""))).toBe(false);
+    expect(ran(summarize(STREAM))).toBe(true);
+
+    // Kontrolle zeigt alle Kanäle, Plan-Lauf fehlt: ungültig statt Go.
+    const dir = mkdtempSync(join(tmpdir(), "s1f-"));
+    mkdirSync(join(dir, "kontrolle"));
+    for (const marker of ["MARKER-hook-Stop", "MARKER-bash", "MARKER-mcp"]) {
+      writeFileSync(join(dir, "kontrolle", marker), "");
+    }
+    writeFileSync(join(dir, "lauf-kontrolle.jsonl"), STREAM);
+    const report = s1fReport(dir, []);
+    expect(report.findings.find((f) => f.test.startsWith("Flags aus plan.md"))?.verdict).toBe(
+      "ungültig",
+    );
+    writeFileSync(join(dir, "lauf-plan.jsonl"), STREAM.replace('"fremd"', '"office"'));
+    expect(
+      s1fReport(dir, []).findings.find((f) => f.test.startsWith("Flags aus plan.md"))?.verdict,
+    ).toBe("erwartet");
+  });
 });
 
 describe("S1g", () => {
@@ -410,6 +465,57 @@ describe("MCP-Attrappe", () => {
     expect(
       handle('{"jsonrpc":"2.0","method":"notifications/initialized"}', tools, "office"),
     ).toBeNull();
+  });
+});
+
+describe("S2c: Stichprobe", () => {
+  const snapshot = (percent: number): Snapshot => ({
+    zeit: "",
+    methode: "json",
+    zugang: "voll",
+    rows: [{ kind: "weekly_all", percent, resetsAt: null, source: "json" }],
+    costUsd: 0,
+    isError: false,
+    exitCode: 0,
+    text: "",
+    stderr: "",
+  });
+  const block = (model: string, index: number, runs: number): Block => ({
+    model,
+    index,
+    before: snapshot(index),
+    after: snapshot(index + 1),
+    runs: Array.from({ length: runs }, () => ({
+      model,
+      subtype: "success",
+      costUsd: 0.1,
+      usage: null,
+      eventCounts: {},
+      rateLimits: [],
+    })),
+    costUsd: runs * 0.1,
+    delta: { weekly_all: 1 },
+  });
+
+  it("gibt bei unvollständiger Stichprobe kein Go", () => {
+    const c: NonNullable<Results["c"]> = {
+      blocks: [block("haiku", 1, 2)],
+      abbruch: "Budget erreicht",
+      budgetPp: 5,
+      start: snapshot(0),
+      geplant: { bloecke: 2, laeufeJeBlock: 2 },
+    };
+    expect(sampleGaps(c, "haiku")).toContain("1 von 2 Blöcken");
+    expect(sampleGaps(c, "sonnet")).toContain("0 von 2 Blöcken");
+    expect(s2Report({ c }, []).outcome).toMatch(/^Ungültig/);
+
+    const full = {
+      ...c,
+      abbruch: null,
+      blocks: [1, 2].flatMap((i) => ["haiku", "sonnet"].map((m) => block(m, i, 2))),
+    };
+    expect(sampleGaps(full, "haiku")).toBeNull();
+    expect(s2Report({ c: full }, []).outcome).toMatch(/^Go/);
   });
 });
 

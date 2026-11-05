@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spike S1a: Findet ein Bash-Prozess im Lauf-Container das setup-token? (docs/etappe-0.md 3.1)
 #
-# Aufruf: bash /opt/spike/probe/probe.sh <bezeichnung>
+# Aufruf: bash /opt/spike/spikes/vm/probe/probe.sh <bezeichnung>
 # Schreibt /work/probe-<bezeichnung>.txt (Verzeichnis per AIO_PROBE_DIR änderbar, nur für Tests). Die Datei enthält nie das Token und nie einen Fund,
 # nur je Fundort „lesbar“, „Treffer ja/nein“ und die Zahl token-ähnlicher Zeichenfolgen.
 #

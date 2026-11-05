@@ -67,6 +67,9 @@ export class Report {
     if (this.findings.some((f) => f.verdict === "ABWEICHUNG")) {
       return "No-Go (Abweichungen)";
     }
+    if (!this.findings.some((f) => f.verdict === "erwartet")) {
+      return "Nicht bewertbar (keine Prüfung mit Go-Kriterium ausgewertet)";
+    }
     return "Go (alle Prüfungen wie erwartet)";
   }
 

@@ -13,7 +13,7 @@ import { describe, runClaude } from "./claude.ts";
 import { isMain } from "./cli.ts";
 import { summarize, succeeded, type RunSummary } from "./stream.ts";
 
-export const PROBE = "/opt/spike/probe/probe.sh";
+export const PROBE = "/opt/spike/spikes/vm/probe/probe.sh";
 
 export function probeCommand(label: string): string {
   return `bash ${PROBE} ${label}`;

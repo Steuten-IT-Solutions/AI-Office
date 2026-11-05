@@ -67,7 +67,14 @@ export interface Block {
 export interface Results {
   a?: { snapshots: Snapshot[]; vergleich: Record<string, number | null>; methode: Method | null };
   b?: { before: Snapshot; after: Snapshot; costs: (number | null)[]; errors: number };
-  c?: { blocks: Block[]; abbruch: string | null; budgetPp: number; start: Snapshot };
+  c?: {
+    blocks: Block[];
+    abbruch: string | null;
+    budgetPp: number;
+    start: Snapshot;
+    /** Geplanter Umfang; nur vollständige Stichproben ergeben ein Go. */
+    geplant: { bloecke: number; laeufeJeBlock: number };
+  };
   d?: { runs: RunRecord[] };
 }
 
@@ -277,8 +284,22 @@ async function teilC(results: Results): Promise<void> {
   }
   const start = await query(m, "voll");
   const weekly = weeklyKind(start.rows);
-  const c: NonNullable<Results["c"]> = { blocks: [], abbruch: null, budgetPp, start };
+  const c: NonNullable<Results["c"]> = {
+    blocks: [],
+    abbruch: null,
+    budgetPp,
+    start,
+    geplant: { bloecke: blocks, laeufeJeBlock: perBlock },
+  };
   results.c = c;
+  // Ohne lesbares Wochenfenster ist das Budget nicht überwachbar: dann kein einziger Lauf.
+  if (weekly === null || start.isError === true) {
+    c.abbruch =
+      "Wochenfenster in /usage vor dem ersten Lauf nicht lesbar, Budget nicht überwachbar";
+    console.log(`  Abbruch: ${c.abbruch}`);
+    save(results);
+    return;
+  }
   let current = start;
   outer: for (const model of ["haiku", "sonnet"]) {
     for (let index = 1; index <= blocks; index++) {
@@ -292,6 +313,7 @@ async function teilC(results: Results): Promise<void> {
         runs.push(record(model, result.summary));
         if (result.summary.rateLimits.some((r) => r.status === "rejected")) {
           c.abbruch = "rate_limit_event mit Status rejected";
+          break;
         }
       }
       const after = await query(m, "voll");
@@ -307,13 +329,16 @@ async function teilC(results: Results): Promise<void> {
       });
       current = after;
       save(results);
-      const used = weekly === null ? null : (delta(start.rows, after.rows)[weekly] ?? null);
+      const used = after.rows.some((r) => r.kind === weekly)
+        ? (delta(start.rows, after.rows)[weekly] ?? null)
+        : null;
       console.log(
         `  Block fertig: ${cost.toFixed(4)} USD, Δ ${JSON.stringify(c.blocks.at(-1)?.delta)}`,
       );
-      if (weekly === null) {
-        c.abbruch = "Wochenfenster in /usage nicht erkannt, Budget nicht überwachbar";
-      } else if (used !== null && used >= budgetPp) {
+      // Ein schon gesetzter Abbruch (rejected) bleibt stehen.
+      if (c.abbruch === null && (after.isError === true || used === null)) {
+        c.abbruch = "Wochenfenster in /usage nach dem Block nicht lesbar, Budget nicht überwachbar";
+      } else if (c.abbruch === null && used !== null && used >= budgetPp) {
         c.abbruch = `Budget erreicht: Woche +${String(used)} Prozentpunkte`;
       }
       if (c.abbruch !== null) {
@@ -373,6 +398,29 @@ async function teilD(results: Results): Promise<void> {
   }
   results.d = { runs };
   save(results);
+}
+
+/** Was an der geplanten Stichprobe eines Modells fehlt, oder `null`, wenn sie vollständig ist. */
+export function sampleGaps(c: NonNullable<Results["c"]>, model: string): string | null {
+  const own = c.blocks.filter((bl) => bl.model === model);
+  const gaps: string[] = [];
+  if (own.length < c.geplant.bloecke) {
+    gaps.push(`${String(own.length)} von ${String(c.geplant.bloecke)} Blöcken`);
+  }
+  const short = own.filter(
+    (bl) =>
+      bl.runs.length < c.geplant.laeufeJeBlock || bl.runs.some((r) => r.subtype !== "success"),
+  );
+  if (short.length > 0) {
+    gaps.push(
+      `Blöcke mit fehlenden oder gescheiterten Läufen: ${short.map((bl) => String(bl.index)).join(", ")}`,
+    );
+  }
+  const unread = own.filter((bl) => bl.after.isError === true || bl.after.rows.length === 0);
+  if (unread.length > 0) {
+    gaps.push(`/usage nach Block ${unread.map((bl) => String(bl.index)).join(", ")} nicht lesbar`);
+  }
+  return gaps.length === 0 ? null : gaps.join("; ");
 }
 
 function fmt(n: number | null | undefined, digits = 4): string {
@@ -465,6 +513,15 @@ export function buildReport(results: Results, context: string[]): Report {
     const rows: string[][] = [];
     for (const model of ["haiku", "sonnet"]) {
       const own = c.blocks.filter((bl) => bl.model === model);
+      const missing = sampleGaps(c, model);
+      if (missing !== null) {
+        // Unvollständige Stichprobe: Der Faktor wäre zufällig stabil (z. B. ein einziger Block).
+        report.invalid(
+          `S2c: Faktor ${model}, Stichprobe`,
+          `${String(c.geplant.bloecke)} Blöcke × ${String(c.geplant.laeufeJeBlock)} erfolgreiche Läufe`,
+          missing,
+        );
+      }
       if (own.length === 0) {
         continue;
       }
@@ -482,14 +539,21 @@ export function buildReport(results: Results, context: string[]): Report {
           st.ratio === null ? "–" : fmt(st.ratio, 2),
         ]);
         if (kind === weekly) {
-          report.add(
-            `S2c: Faktor ${model}, ${kind} (90-%-Quantil / Median)`,
-            "≤ 1,5",
-            st.ratio === null
-              ? `nicht messbar (Median ${fmt(st.median, 2)}, ${String(st.blocks)} Blöcke)`
-              : `${fmt(st.ratio, 2)} (Median ${fmt(st.median, 2)} pp/USD, ${String(st.blocks)} Blöcke)`,
-            st.go,
-          );
+          const test = `S2c: Faktor ${model}, ${kind} (90-%-Quantil / Median)`;
+          if (st.go === null) {
+            report.invalid(
+              test,
+              "≤ 1,5",
+              `nicht messbar (Median ${fmt(st.median, 2)}, ${String(st.blocks)} Blöcke)`,
+            );
+          } else {
+            report.add(
+              test,
+              "≤ 1,5",
+              `${fmt(st.ratio, 2)} (Median ${fmt(st.median, 2)} pp/USD, ${String(st.blocks)} Blöcke)`,
+              missing === null ? st.go : null,
+            );
+          }
         }
       }
     }
@@ -598,11 +662,21 @@ async function main(): Promise<void> {
   if (command === "teil" && part !== undefined && part in parts) {
     await parts[part]?.(results);
   } else if (command === "alles") {
-    for (const fn of Object.values(parts)) {
+    for (const [name, fn] of Object.entries(parts)) {
       try {
         await fn(results);
       } catch (error) {
         console.log(`  übersprungen: ${error instanceof Error ? error.message : String(error)}`);
+        if (name === "c") {
+          // C kann mitten in den bezahlten Läufen gescheitert sein: D nicht mehr starten.
+          console.log("  S2d entfällt, weil S2c nicht vollständig gelaufen ist.");
+          break;
+        }
+      }
+      const abbruch = name === "c" ? (results.c?.abbruch ?? null) : null;
+      if (abbruch !== null) {
+        console.log(`  S2d entfällt wegen Abbruch in S2c: ${abbruch}`);
+        break;
       }
     }
   } else if (command === "bericht") {

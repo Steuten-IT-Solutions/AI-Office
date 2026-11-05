@@ -30,6 +30,9 @@ image_kontext "$variante" > "$dir/kontext.txt"
 netz_anlegen "$NETZ_AUSSEN" aussen
 netz_anlegen "$netz" intern
 proxy_addon "$dir"
+# Schon in Durchgang 1, sonst gilt auch unser Token als „fremd“ und die Allowlist bekäme keine
+# Endpunkte mit Anmeldung.
+install -m 0644 "$TOKEN_HASH_DATEI" "$dir/proxy/token.sha256"
 
 lauf() {
   mit_token docker run --rm "${LAUF_HAERTUNG[@]}" --network "$netz" \
@@ -45,7 +48,6 @@ proxy_protokoll "$dir/work/protokoll-1.jsonl"
 
 info "Allowlist erzeugen"
 auswerten "$variante" "$dir" s1b.ts allowlist /daten/work/protokoll-1.jsonl /daten/proxy/allowlist.json
-install -m 0644 "$TOKEN_HASH_DATEI" "$dir/proxy/token.sha256"
 cat "$dir/proxy/allowlist.json"
 
 info "Durchgang 2: mit Allowlist und Prüfung der Anmeldung"

@@ -28,6 +28,10 @@ docker pull "$PROXY_IMAGE"
 
 info "Prüfe das CLI im Image"
 docker run --rm --network none "$IMAGE:ohne" claude --version
+# Pfade, die die Skripte im Image erwarten (s1a.ts PROBE, s1b.ts ATTRAPPE, s2.ts plan.md)
+docker run --rm --network none "$IMAGE:ohne" test -r /opt/spike/spikes/vm/probe/probe.sh \
+  -a -r /opt/spike/spikes/vm/src/mcp-attrappe.ts -a -r /opt/spike/docs/plan.md \
+  || fehler "Dateien im Image fehlen unter /opt/spike"
 hilfe="$(docker run --rm --network none "$IMAGE:ohne" claude --help)"
 for flag in --permission-prompts --permission-mode --setting-sources --settings --max-budget-usd \
   --max-turns --allowedTools --strict-mcp-config --mcp-config --append-system-prompt \

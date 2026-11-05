@@ -76,7 +76,7 @@ class AioProxy:
             "zeit": round(time.time(), 3),
             "modus": ctx.options.aio_modus,
             "methode": flow.request.method,
-            "host": flow.request.pretty_host,
+            "host": flow.request.host,
             "pfad": normalize_path(flow.request.path),
             "auth": auth,
             "entscheidung": decision,
@@ -98,7 +98,10 @@ class AioProxy:
         if ctx.options.aio_modus != "allowlist":
             self.log(flow, auth, "weitergeleitet")
             return
-        host = flow.request.pretty_host
+        # Ziel der Weiterleitung, nicht der Host-Header: `pretty_host` bevorzugt den Header, den
+        # der Client frei setzen kann (Docstring von Request.pretty_host in mitmproxy 12.3.1,
+        # https://github.com/mitmproxy/mitmproxy/blob/v12.3.1/mitmproxy/http.py).
+        host = flow.request.host
         path = normalize_path(flow.request.path)
         method = flow.request.method
         for entry in self.allow:

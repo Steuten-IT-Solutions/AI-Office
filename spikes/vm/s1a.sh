@@ -34,10 +34,10 @@ starten() {
 
 kontrollen() {
   local name="$1" label="$2"
-  docker exec "$name" bash /opt/spike/probe/probe.sh "$label" > /dev/null
+  docker exec "$name" bash /opt/spike/spikes/vm/probe/probe.sh "$label" > /dev/null
   # Testdatei mit dem Token, nur für die Kontrolle; danach sofort gelöscht.
   docker exec "$name" sh -c 'printf %s "$CLAUDE_CODE_OAUTH_TOKEN" > /tmp/kontrolle-token'
-  docker exec "$name" bash /opt/spike/probe/probe.sh "$label-datei" > /dev/null
+  docker exec "$name" bash /opt/spike/spikes/vm/probe/probe.sh "$label-datei" > /dev/null
   docker exec "$name" rm -f /tmp/kontrolle-token
 }
 

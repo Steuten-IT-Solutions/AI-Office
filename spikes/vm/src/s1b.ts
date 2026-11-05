@@ -106,6 +106,19 @@ export const NEGATIVE: NegativeTest[] = [
     headers: ["authorization: Bearer $TOKEN"],
   },
   {
+    // Absolute Form mit gefälschtem Host-Header: Der Proxy muss nach dem Ziel der Anfrage
+    // entscheiden, nicht nach dem Header. `.invalid` löst nie auf (RFC 6761), deshalb erreicht das
+    // Token auch dann keinen fremden Server, wenn der Proxy die Anfrage durchlässt.
+    name: "unser Token an fremden Host mit Host-Header api.anthropic.com",
+    url: "http://api.anthropic.com.invalid/v1/messages",
+    method: "POST",
+    headers: [
+      "host: api.anthropic.com",
+      "authorization: Bearer $TOKEN",
+      "content-type: application/json",
+    ],
+  },
+  {
     name: "fremder Host (example.com)",
     url: "https://example.com/",
     method: "GET",
@@ -165,6 +178,11 @@ async function negativ(): Promise<void> {
       "-H",
       `@${headerFile}`,
     ];
+    // Ausdrücklich über den Proxy: curl liest für http-URLs nur `http_proxy` in Kleinbuchstaben.
+    const proxy = process.env["HTTPS_PROXY"];
+    if (proxy !== undefined) {
+      args.push("--proxy", proxy);
+    }
     if (test.method === "POST") {
       args.push("--data", "{}");
     }
