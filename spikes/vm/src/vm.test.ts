@@ -25,6 +25,7 @@ import {
   officeGaps,
   officePrompt,
   parseOutput,
+  readable,
   resultOf,
   sampleGaps,
   standardGaps,
@@ -649,6 +650,13 @@ describe("S2: Budget über alle Teile", () => {
     expect(budgetUsed(snap(10), snap(12, true))).toHaveProperty("unreadable");
     expect(budgetUsed(snap(80), snap(1))).toHaveProperty("unreadable");
     expect(budgetUsed(snap(null), snap(5))).toHaveProperty("unreadable");
+  });
+
+  it("zählt nur Messungen mit Exit 0, is_error false und Werten", () => {
+    expect(readable(snap(10))).toBe(true);
+    expect(readable({ ...snap(10), exitCode: null })).toBe(false);
+    expect(readable({ ...snap(10), isError: null })).toBe(false);
+    expect(budgetUsed(snap(10), { ...snap(12), exitCode: 1 })).toHaveProperty("unreadable");
   });
 
   it("stoppt bezahlte Läufe ab dem Budget und bei unlesbarem Zähler", () => {

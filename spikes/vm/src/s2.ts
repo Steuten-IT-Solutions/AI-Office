@@ -163,6 +163,14 @@ export async function query(method: Method, access: "voll" | "token"): Promise<S
   };
 }
 
+/**
+ * Eine Messung zählt nur, wenn das CLI sauber endete (Exit 0, Ergebnis mit `is_error: false`) und
+ * Werte lieferte. Zeitüberschreitung, fehlendes Ergebnis oder Fehler: nicht lesbar.
+ */
+export function readable(s: Snapshot): boolean {
+  return s.exitCode === 0 && s.isError === false && s.rows.length > 0;
+}
+
 function show(s: Snapshot): string {
   const rows = s.rows.map((r) => `${r.kind}=${String(r.percent)} %`).join(", ");
   return `${s.methode}/${s.zugang}: ${rows || "keine Werte"} (Kosten ${String(s.costUsd ?? "?")} USD${s.isError === true ? ", Fehler" : ""})`;
@@ -202,7 +210,7 @@ async function teilA(results: Results): Promise<void> {
     console.log(`  ${show(s)}`);
     snapshots.push(s);
   }
-  const usable = snapshots.find((s) => s.zugang === "voll" && s.rows.length > 0) ?? null;
+  const usable = snapshots.find((s) => s.zugang === "voll" && readable(s)) ?? null;
   const vergleich: Record<string, number | null> = {};
   if (usable !== null) {
     console.log(
@@ -256,7 +264,7 @@ async function teilB(results: Results): Promise<void> {
     }
     after = await query(m, "voll");
     costs.push(after.costUsd);
-    if (after.isError === true || after.rows.length === 0) {
+    if (!readable(after)) {
       errors++;
     }
   }
@@ -461,7 +469,7 @@ export function budgetUsed(
   now: Snapshot,
 ): { used: number } | { unreadable: string } {
   const weekly = weeklyKind(start.rows);
-  if (weekly === null || start.isError === true || now.isError === true) {
+  if (weekly === null || !readable(start) || !readable(now)) {
     return { unreadable: "Wochenfenster nicht lesbar" };
   }
   if (resetKinds(start.rows, now.rows).includes(weekly)) {
@@ -552,7 +560,7 @@ export function sampleGaps(c: NonNullable<Results["c"]>, model: string): string 
   const weekly = weeklyKind(c.start.rows);
   const unread = own.filter(
     (bl) =>
-      bl.after.isError === true ||
+      !readable(bl.after) ||
       weekly === null ||
       bl.delta[weekly] === undefined ||
       resetKinds(bl.before.rows, bl.after.rows).includes(weekly),
@@ -584,7 +592,7 @@ export function buildReport(results: Results, context: string[]): Report {
     for (const s of a.snapshots) {
       const structured = s.rows.some((r) => r.source !== "text");
       const complete = s.rows.length > 0 && s.rows.every((r) => r.resetsAt !== null);
-      const expectation = s.zugang === "token" ? null : structured && complete;
+      const expectation = s.zugang === "token" ? null : readable(s) && structured && complete;
       report.add(
         `S2a: /usage per ${s.methode === "json" ? "claude -p --output-format json" : "stream-json (Protokoll des Agent SDK)"} mit ${s.zugang === "voll" ? "vollem Login" : "setup-token"}`,
         s.zugang === "voll"
@@ -658,11 +666,7 @@ export function buildReport(results: Results, context: string[]): Report {
       .join(",");
     const resets = resetKinds(b.before.rows, b.after.rows);
     const comparable =
-      b.before.isError !== true &&
-      b.after.isError !== true &&
-      b.before.rows.length > 0 &&
-      kindsBefore === kindsAfter &&
-      resets.length === 0;
+      readable(b.before) && readable(b.after) && kindsBefore === kindsAfter && resets.length === 0;
     const anstieg = "S2b: 30 Abfragen, Anstieg der Prozentwerte";
     if (comparable) {
       report.add(
