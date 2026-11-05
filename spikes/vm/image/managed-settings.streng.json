@@ -1,0 +1,11 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "enableWeakerNestedSandbox": false,
+    "allowUnsandboxedCommands": false,
+    "credentials": {
+      "envVars": [{ "name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny" }]
+    }
+  }
+}

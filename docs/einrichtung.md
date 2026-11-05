@@ -14,6 +14,7 @@
 | 4 | Hyper-V-VM mit Ubuntu und Docker | 60–90 min | Windows + VM |
 | 5 | Branch-Schutz für `AI-Office` | 10 min | Browser |
 | 6 | Firefox für das Office-Webinterface (erst mit P09) | 10 min | Windows |
+| 7 | Spikes S1a, S1b, S1f, S1g und S2 | 1–2 h | VM per SSH |
 
 **Grundregel:** Schlüssel, Tokens und Passwörter nie in ein Repo, eine Nachricht oder einen Chat
 kopieren, auch nicht an mich.
@@ -446,8 +447,17 @@ Firefox zur Verfügung stand.
 Das Webinterface (`https://office.aio.internal:8444` **[Annahme]**, S13) nur in diesem Firefox
 öffnen. In einem anderen Browser bleibt WebRTC als Abflusskanal offen (R11).
 
-## Später (kommt mit den Skripten für S1a und S2)
+## Teil 7 – Spikes S1a, S1b, S1f, S1g und S2 in der VM
 
-`claude setup-token` und der volle Login für den Supervisor werden erst in der VM gebraucht, wenn
-die Skripte für S1a, S1b und S2 vorliegen. Dann ergänze ich hier die Schritte. Vorher bitte kein
-Token erzeugen, damit keines ungenutzt herumliegt.
+Die Skripte liegen in [`spikes/vm/`](../spikes/vm/README.md); die README dort beschreibt jeden
+Schritt. Kurz:
+
+1. `ssh aio-dev`, das Repo nach `/opt/aio-spikes/repo` klonen und `sudo bash bauen.sh`.
+2. `sudo bash s1g.sh` (braucht noch keinen Zugang).
+3. `sudo bash zugang.sh token`: `claude setup-token` läuft im Lauf-Image, Sie bestätigen im
+   Browser unter Windows und fügen das Token danach unsichtbar ein. Erst jetzt ein Token erzeugen,
+   damit keines ungenutzt herumliegt.
+4. `sudo bash s1a.sh`, `sudo bash s1f.sh`, `sudo bash s1b.sh`.
+5. `sudo bash zugang.sh voll` (voller Login für `/usage`), dann in einem ruhigen Zeitfenster
+   `sudo bash s2.sh`. Währenddessen Claude nirgends nutzen.
+6. Berichte aus `/opt/aio-spikes/berichte/` an mich (`scp "aio-dev:/opt/aio-spikes/berichte/*" .`).
