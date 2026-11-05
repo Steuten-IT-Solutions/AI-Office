@@ -594,6 +594,7 @@ describe("S2: Reset und Grundkosten", () => {
     const b = s2Report({ b: { before: snap, after: snap, costs: [null, 0], errors: 0 } }, []);
     expect(b.findings.find((f) => f.test.includes("total_cost_usd"))?.verdict).toBe("ungültig");
     expect(b.findings.find((f) => f.test.includes("Anstieg"))?.verdict).toBe("erwartet");
+    expect(b.findings.find((f) => f.test === "S2b: Stichprobe")?.verdict).toBe("ungültig");
   });
 });
 

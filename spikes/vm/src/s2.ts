@@ -68,7 +68,13 @@ export interface Block {
 
 export interface Results {
   a?: { snapshots: Snapshot[]; vergleich: Record<string, number | null>; methode: Method | null };
-  b?: { before: Snapshot; after: Snapshot; costs: (number | null)[]; errors: number };
+  b?: {
+    before: Snapshot;
+    after: Snapshot;
+    costs: (number | null)[];
+    errors: number;
+    abbruch?: string | null;
+  };
   c?: {
     blocks: Block[];
     abbruch: string | null;
@@ -234,11 +240,20 @@ async function teilB(results: Results): Promise<void> {
   console.log("\nS2b: Kostet die Abfrage Kontingent? (30 Abfragen)");
   const m = method(results);
   await confirmQuiet();
+  const budgetPp = envNumber("AIO_S2_BUDGET_PP", 5);
   const before = await query(m, "voll");
+  const baseline = budgetBaseline(results, before);
   const costs: (number | null)[] = [];
   let errors = 0;
   let after = before;
+  let abbruch: string | null = null;
   for (let i = 0; i < 30; i++) {
+    // Kostet /usage Kontingent, gilt auch hier das Budget; ohne lesbaren Zähler keine Abfrage mehr.
+    abbruch = budgetStop(baseline, after, budgetPp);
+    if (abbruch !== null) {
+      console.log(`  Abbruch nach ${String(i)} Abfragen: ${abbruch}`);
+      break;
+    }
     after = await query(m, "voll");
     costs.push(after.costUsd);
     if (after.isError === true || after.rows.length === 0) {
@@ -246,7 +261,7 @@ async function teilB(results: Results): Promise<void> {
     }
   }
   console.log(`  vorher ${show(before)}\n  nachher ${show(after)}`);
-  results.b = { before, after, costs, errors };
+  results.b = { before, after, costs, errors, abbruch };
   save(results);
 }
 
@@ -623,6 +638,13 @@ export function buildReport(results: Results, context: string[]): Report {
 
   // S2b
   const b = results.b;
+  if (b !== undefined && (b.costs.length < 30 || (b.abbruch ?? null) !== null)) {
+    report.invalid(
+      "S2b: Stichprobe",
+      "30 Abfragen",
+      `${String(b.costs.length)} Abfragen${(b.abbruch ?? null) === null ? "" : `; Abbruch: ${b.abbruch ?? ""}`}`,
+    );
+  }
   if (b !== undefined) {
     const d = delta(b.before.rows, b.after.rows);
     const rising = Object.entries(d).filter(([, v]) => v > 0);
@@ -838,6 +860,12 @@ async function main(): Promise<void> {
   if (command === "teil" && part !== undefined && part in parts) {
     await parts[part]?.(results);
   } else if (command === "alles") {
+    // Frisch beginnen: Ergebnisse früherer Durchläufe dürfen sich nicht in den Bericht mischen.
+    for (const key of Object.keys(results) as (keyof Results)[]) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Ergebnis gezielt verwerfen
+      delete results[key];
+    }
+    save(results);
     for (const [name, fn] of Object.entries(parts)) {
       try {
         await fn(results);
