@@ -142,9 +142,11 @@ proxy_starten() {
   local optionen=(--set "aio_modus=$modus" --set "aio_protokoll=/tmp/anfragen.jsonl")
   [ -f "$dir/proxy/allowlist.json" ] && optionen+=(--set aio_allowlist=/aio/allowlist.json)
   [ -f "$dir/proxy/token.sha256" ] && optionen+=(--set aio_token_sha256=/aio/token.sha256)
-  # Das Image passt die UID von mitmproxy an den Besitzer des Konfigurationsordners an
-  # [Annahme, docker-entrypoint.sh des offiziellen Images]; deshalb gehört er 10002.
-  install -d -m 0700 -o 10002 -g 10002 "$MITM_DIR"
+  # Der Entrypoint des Images setzt UID und GID des Users mitmproxy per `usermod -o -u -g` auf
+  # den Besitzer von mitmproxy-ca.pem bzw. des Ordners (release/docker/docker-entrypoint.sh in
+  # mitmproxy v12.3.1). Die Gruppe muss im Image existieren: 65534 (nogroup) gibt es in Debian.
+  install -d -m 0700 "$MITM_DIR"
+  chown -R 10002:65534 "$MITM_DIR"
   docker rm -f "$PROXY" > /dev/null 2>&1 || true
   docker run -d --name "$PROXY" --network "$NETZ_AUSSEN" \
     --log-opt max-size=10m --log-opt max-file=3 \

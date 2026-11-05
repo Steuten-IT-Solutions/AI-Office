@@ -24,7 +24,7 @@ import { officeTools } from "./mcp-attrappe.ts";
 import { ATTRAPPE } from "./s1b.ts";
 import { stability, factor, median } from "./statistik.ts";
 import { isObject, type RunSummary } from "./stream.ts";
-import { delta, usageRows, weeklyKind, type UsageRow } from "./usage.ts";
+import { delta, resetKinds, usageRows, weeklyKind, type UsageRow } from "./usage.ts";
 
 const WORK = "/work";
 const RESULT_FILE = join(WORK, "s2-ergebnis.json");
@@ -52,6 +52,8 @@ export interface RunRecord {
   usage: RunSummary["usage"];
   eventCounts: Record<string, number>;
   rateLimits: RunSummary["rateLimits"];
+  /** S2d: Was an der Probe fehlt (leer = gültig); fehlt das Feld, wurde es nicht geprüft. */
+  mangel?: string[];
 }
 
 export interface Block {
@@ -336,7 +338,12 @@ async function teilC(results: Results): Promise<void> {
         `  Block fertig: ${cost.toFixed(4)} USD, Δ ${JSON.stringify(c.blocks.at(-1)?.delta)}`,
       );
       // Ein schon gesetzter Abbruch (rejected) bleibt stehen.
-      if (c.abbruch === null && (after.isError === true || used === null)) {
+      if (
+        c.abbruch === null &&
+        resetKinds(c.blocks.at(-1)?.before.rows ?? [], after.rows).includes(weekly)
+      ) {
+        c.abbruch = "Wochenfenster zwischen zwei Messungen zurückgesetzt, Budget nicht überwachbar";
+      } else if (c.abbruch === null && (after.isError === true || used === null)) {
         c.abbruch = "Wochenfenster in /usage nach dem Block nicht lesbar, Budget nicht überwachbar";
       } else if (c.abbruch === null && used !== null && used >= budgetPp) {
         c.abbruch = `Budget erreicht: Woche +${String(used)} Prozentpunkte`;
@@ -348,6 +355,27 @@ async function teilC(results: Results): Promise<void> {
     }
   }
   save(results);
+}
+
+/** Was einem S2d-Lauf fehlt, damit er als Office-ähnlich zählt (leer = gültig). */
+export function officeGaps(summary: RunSummary, tools: { name: string }[]): string[] {
+  const gaps: string[] = [];
+  if (summary.resultSubtype !== "success") {
+    gaps.push(`Ergebnis ${summary.resultSubtype ?? "fehlt"}`);
+  }
+  if (!summary.mcpServers.some((s) => s.name === "office" && s.status === "connected")) {
+    gaps.push("MCP-Server office nicht verbunden");
+  }
+  const missing = tools
+    .map((t) => `mcp__office__${t.name}`)
+    .filter((name) => !summary.tools.includes(name));
+  if (missing.length > 0) {
+    gaps.push(`Werkzeuge fehlen in system/init: ${missing.join(", ")}`);
+  }
+  if (summary.usage === null || summary.totalCostUsd === null) {
+    gaps.push("keine Nutzung oder Kosten im Ergebnis");
+  }
+  return gaps;
 }
 
 export function officePrompt(planMd: string): string {
@@ -393,7 +421,7 @@ async function teilD(results: Results): Promise<void> {
         ],
       });
       console.log(`  ${model} ${String(i)}: ${describe(result)}`);
-      runs.push(record(model, result.summary));
+      runs.push({ ...record(model, result.summary), mangel: officeGaps(result.summary, tools) });
     }
   }
   results.d = { runs };
@@ -416,9 +444,22 @@ export function sampleGaps(c: NonNullable<Results["c"]>, model: string): string 
       `Blöcke mit fehlenden oder gescheiterten Läufen: ${short.map((bl) => String(bl.index)).join(", ")}`,
     );
   }
-  const unread = own.filter((bl) => bl.after.isError === true || bl.after.rows.length === 0);
+  const weekly = weeklyKind(c.start.rows);
+  const unread = own.filter(
+    (bl) =>
+      bl.after.isError === true ||
+      weekly === null ||
+      bl.delta[weekly] === undefined ||
+      resetKinds(bl.before.rows, bl.after.rows).includes(weekly),
+  );
   if (unread.length > 0) {
-    gaps.push(`/usage nach Block ${unread.map((bl) => String(bl.index)).join(", ")} nicht lesbar`);
+    gaps.push(
+      `Wochenfenster vor/nach Block ${unread.map((bl) => String(bl.index)).join(", ")} nicht vergleichbar (unlesbar oder zurückgesetzt)`,
+    );
+  }
+  const noCost = own.filter((bl) => bl.costUsd <= 0 || bl.runs.some((r) => r.costUsd === null));
+  if (noCost.length > 0) {
+    gaps.push(`Blöcke ohne gemessene Kosten: ${noCost.map((bl) => String(bl.index)).join(", ")}`);
   }
   return gaps.length === 0 ? null : gaps.join("; ");
 }
@@ -449,16 +490,21 @@ export function buildReport(results: Results, context: string[]): Report {
       );
     }
     const used = a.snapshots.find((s) => s.methode === a.methode && s.zugang === "voll");
-    for (const [kind, value] of Object.entries(a.vergleich)) {
-      const script = used?.rows.find((r) => r.kind === kind)?.percent ?? null;
-      report.add(
-        `S2a: Vergleich mit claude.ai (${kind})`,
-        "± 1 Prozentpunkt",
-        value === null
-          ? "nicht eingegeben"
-          : `Skript ${String(script)} %, claude.ai ${String(value)} %`,
-        value === null || script === null ? null : Math.abs(script - value) <= 1,
-      );
+    // Das Go-Kriterium verlangt den Abgleich: Jedes gelesene Fenster braucht einen Wert aus
+    // claude.ai, sonst ist S2a nicht geprüft.
+    for (const row of used?.rows ?? []) {
+      const value = a.vergleich[row.kind] ?? null;
+      const test = `S2a: Vergleich mit claude.ai (${row.kind})`;
+      if (value === null) {
+        report.invalid(test, "± 1 Prozentpunkt", "kein Wert aus claude.ai eingegeben");
+      } else {
+        report.add(
+          test,
+          "± 1 Prozentpunkt",
+          `Skript ${String(row.percent)} %, claude.ai ${String(value)} %`,
+          Math.abs(row.percent - value) <= 1,
+        );
+      }
     }
     report.table(
       "S2a: gelesene Fenster",
@@ -490,19 +536,48 @@ export function buildReport(results: Results, context: string[]): Report {
   if (b !== undefined) {
     const d = delta(b.before.rows, b.after.rows);
     const rising = Object.entries(d).filter(([, v]) => v > 0);
-    const cost = b.costs.reduce<number>((sum, c) => sum + (c ?? 0), 0);
-    report.add(
-      "S2b: 30 Abfragen, Anstieg der Prozentwerte",
-      "kein messbarer Anstieg",
-      `Δ ${JSON.stringify(d)}; Fehler ${String(b.errors)}`,
-      rising.length === 0 && b.errors === 0,
-    );
-    report.add(
-      "S2b: Σ total_cost_usd der Abfragen",
-      "0 oder vernachlässigbar (< 0,01 USD)",
-      `${fmt(cost)} USD`,
-      cost < 0.01,
-    );
+    const kindsBefore = b.before.rows
+      .map((r) => r.kind)
+      .sort()
+      .join(",");
+    const kindsAfter = b.after.rows
+      .map((r) => r.kind)
+      .sort()
+      .join(",");
+    const resets = resetKinds(b.before.rows, b.after.rows);
+    const comparable =
+      b.before.isError !== true &&
+      b.after.isError !== true &&
+      b.before.rows.length > 0 &&
+      kindsBefore === kindsAfter &&
+      resets.length === 0;
+    const anstieg = "S2b: 30 Abfragen, Anstieg der Prozentwerte";
+    if (comparable) {
+      report.add(
+        anstieg,
+        "kein messbarer Anstieg",
+        `Δ ${JSON.stringify(d)}; Fehler ${String(b.errors)}`,
+        rising.length === 0 && b.errors === 0,
+      );
+    } else {
+      report.invalid(
+        anstieg,
+        "Messung vorher und nachher mit denselben Fenstern, ohne Reset",
+        `vorher ${kindsBefore || "keine Werte"}, nachher ${kindsAfter || "keine Werte"}${resets.length === 0 ? "" : `; zurückgesetzt: ${resets.join(", ")}`}`,
+      );
+    }
+    const measured = b.costs.filter((c): c is number => c !== null);
+    const cost = measured.reduce((sum, c) => sum + c, 0);
+    const kosten = "S2b: Σ total_cost_usd der Abfragen";
+    if (measured.length === b.costs.length && measured.length > 0) {
+      report.add(kosten, "0 oder vernachlässigbar (< 0,01 USD)", `${fmt(cost)} USD`, cost < 0.01);
+    } else {
+      report.invalid(
+        kosten,
+        "Kosten für jede Abfrage gemeldet",
+        `${String(measured.length)} von ${String(b.costs.length)} Abfragen mit total_cost_usd`,
+      );
+    }
   }
 
   // S2c
@@ -593,7 +668,7 @@ export function buildReport(results: Results, context: string[]): Report {
   if (d !== undefined) {
     report.table(
       "S2d: Grundkosten je Lauf („Antworte mit OK“, Verfassung, 8 Werkzeuge)",
-      ["Modell", "Input", "Cache-Erstellung", "Cache-Lesen", "Output", "USD", "Ergebnis"],
+      ["Modell", "Input", "Cache-Erstellung", "Cache-Lesen", "Output", "USD", "Ergebnis", "Mängel"],
       d.runs.map((r) => [
         r.model,
         String(r.usage?.inputTokens ?? "–"),
@@ -602,16 +677,24 @@ export function buildReport(results: Results, context: string[]): Report {
         String(r.usage?.outputTokens ?? "–"),
         fmt(r.costUsd),
         r.subtype ?? "–",
+        r.mangel === undefined ? "nicht geprüft" : r.mangel.join("; ") || "keine",
       ]),
     );
     for (const model of ["haiku", "sonnet"]) {
-      const costs = d.runs.filter((r) => r.model === model).map((r) => r.costUsd ?? Number.NaN);
-      report.add(
-        `S2d: Grundkosten ${model} (Median)`,
-        "Messwert",
-        `${fmt(median(costs))} USD`,
-        null,
-      );
+      const own = d.runs.filter((r) => r.model === model);
+      const valid = own.filter((r) => r.mangel !== undefined && r.mangel.length === 0);
+      const test = `S2d: Grundkosten ${model} (Median)`;
+      if (valid.length < own.length || valid.length === 0) {
+        // Ohne verbundenen Server und alle 8 Werkzeuge fehlen die Schemas in den Grundkosten.
+        report.invalid(
+          test,
+          "alle Läufe gültig (success, office verbunden, 8 Werkzeuge)",
+          `${String(valid.length)} von ${String(own.length)} Läufen gültig`,
+        );
+      } else {
+        const costs = valid.map((r) => r.costUsd ?? Number.NaN);
+        report.add(test, "Messwert", `${fmt(median(costs))} USD`, null);
+      }
     }
   }
 

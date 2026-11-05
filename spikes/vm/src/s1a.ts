@@ -98,6 +98,10 @@ export function checkControls(
   return valid;
 }
 
+export function isNamespaceId(value: string | undefined): value is string {
+  return value !== undefined && /^user:\[\d+\]$/.test(value);
+}
+
 export function evaluateRun(
   report: Report,
   label: string,
@@ -129,10 +133,11 @@ export function evaluateRun(
     `${String(bash.length)} Bash-Aufruf(e): ${bash.map((b) => b.command ?? "?").join("; ")}; Lauf ${succeeded(run) ? "erfolgreich" : (run.resultSubtype ?? "?")}`,
     ok(bash.length === 1 && bash[0]?.command === probeCommand(label)),
   );
-  const sandboxed =
-    kontrolle !== null &&
-    probe.info["ns_user"] !== undefined &&
-    probe.info["ns_user"] !== kontrolle.info["ns_user"];
+  // Nur zwei gültige Namespace-Kennungen (z. B. `user:[4026531837]`) sind vergleichbar; `?` heißt,
+  // die Probe konnte /proc/self/ns/user nicht lesen.
+  const probeNs = probe.info["ns_user"];
+  const kontrolleNs = kontrolle?.info["ns_user"];
+  const sandboxed = isNamespaceId(probeNs) && isNamespaceId(kontrolleNs) && probeNs !== kontrolleNs;
   report.add(
     `${prefix}Sandbox aktiv (eigener User-Namespace)`,
     "ja",

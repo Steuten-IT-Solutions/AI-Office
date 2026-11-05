@@ -15,7 +15,7 @@ import { Report } from "./bericht.ts";
 import { describe, runClaude, type ClaudeRun } from "./claude.ts";
 import { isMain } from "./cli.ts";
 import { buildAllowlist, countByEndpoint, parseLog } from "./endpunkte.ts";
-import { summarize, succeeded } from "./stream.ts";
+import { summarize, succeeded, type RunSummary } from "./stream.ts";
 
 const run = promisify(execFile);
 
@@ -54,6 +54,31 @@ export const RUNS: Record<string, RunSpec> = {
     ],
   },
 };
+
+/**
+ * Hat der Lauf genau das getan, wofür er da ist? `success` allein reicht nicht: Das Modell kann
+ * auch erklären, dass ein Werkzeug fehlt. Dann fehlen die Anfragen in der Allowlist.
+ * Gibt die fehlenden Teile zurück, leer = vollständig.
+ */
+export function missingSteps(name: string, summary: RunSummary): string[] {
+  const missing: string[] = [];
+  const used = (tool: string, command?: string): boolean =>
+    summary.toolUses.some(
+      (t) => t.name === tool && (command === undefined || t.command === command),
+    );
+  if (name === "werkzeuge") {
+    if (!used("Read")) missing.push("Read-Aufruf");
+    if (!used("Bash", "wc -c notiz.txt")) missing.push("Bash-Aufruf `wc -c notiz.txt`");
+  }
+  if (name === "mcp") {
+    if (!summary.mcpServers.some((s) => s.name === "attrappe" && s.status === "connected")) {
+      missing.push("MCP-Server attrappe verbunden");
+    }
+    if (!used("mcp__attrappe__ping")) missing.push("Aufruf mcp__attrappe__ping");
+  }
+  if (summary.toolResults.some((r) => r.isError)) missing.push("Werkzeuge ohne Fehler");
+  return missing;
+}
 
 async function durchgang(n: string): Promise<void> {
   for (const [name, spec] of Object.entries(RUNS)) {
@@ -229,12 +254,17 @@ export function buildReport(dir: string, context: string[]): Report {
         name === "mcp"
           ? `, MCP: ${summary.mcpServers.map((s) => `${s.name}=${s.status}`).join(" ") || "keiner"}`
           : "";
-      report.add(
-        `${label}: Lauf ${name}`,
-        "erfolgreich",
-        `${summary.resultSubtype ?? `kein Ergebnis${stderr === "" ? "" : ` (${stderr})`}`}${mcp}`,
-        n === "1" ? (succeeded(summary) ? true : null) : succeeded(summary),
-      );
+      const missing = missingSteps(name, summary);
+      const test = `${label}: Lauf ${name}`;
+      const expected = "erfolgreich, mit den vorgegebenen Werkzeugaufrufen";
+      const observed = `${summary.resultSubtype ?? `kein Ergebnis${stderr === "" ? "" : ` (${stderr})`}`}${mcp}${missing.length === 0 ? "" : `; fehlt: ${missing.join(", ")}`}`;
+      const ok = succeeded(summary) && missing.length === 0;
+      if (n === "1" && !ok) {
+        // Ohne vollständigen ersten Durchgang fehlt der Allowlist ein Teil der Endpunkte.
+        report.invalid(test, expected, observed);
+      } else {
+        report.add(test, expected, observed, ok);
+      }
     }
   }
   if (log1.length === 0) {

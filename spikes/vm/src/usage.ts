@@ -132,6 +132,27 @@ export function delta(before: UsageRow[], after: UsageRow[]): Record<string, num
 }
 
 /**
+ * Fenster, die zwischen zwei Messungen zurückgesetzt wurden: Der Wert ist gefallen, oder die
+ * strukturierte Reset-Zeit hat sich geändert. Über einen Reset hinweg ist `delta` sinnlos
+ * (z. B. 80 % → 1 % ergäbe −79 Punkte). Reset-Zeiten aus dem Text zählen nicht, weil sie relativ
+ * sein können („Resets in 3 h“) [Annahme].
+ */
+export function resetKinds(before: UsageRow[], after: UsageRow[]): string[] {
+  return after
+    .filter((a) => {
+      const b = before.find((r) => r.kind === a.kind);
+      if (b === undefined) {
+        return false;
+      }
+      const structured = a.source !== "text" && b.source !== "text";
+      const resetMoved =
+        structured && a.resetsAt !== null && b.resetsAt !== null && a.resetsAt !== b.resetsAt;
+      return a.percent < b.percent || resetMoved;
+    })
+    .map((a) => a.kind);
+}
+
+/**
  * Fenster für das Wochenlimit über alle Modelle: `weekly_all` laut Plan Fakt 7, sonst die erste
  * Bezeichnung mit „week“/„woche“ ohne Modellnamen [Annahme].
  */

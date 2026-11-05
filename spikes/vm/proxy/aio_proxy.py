@@ -6,6 +6,7 @@ Modus `allowlist`: wie oben, lässt aber nur Anfragen durch, die
   1. nach Methode, Host und Pfadmuster in der Allowlist stehen und
   2. die dort vermerkte Anmeldung tragen; `unser` heißt: `Authorization: Bearer <setup-token>`
      (verglichen über SHA-256) und kein `x-api-key`.
+  3. über HTTPS auf Port 443 laufen (nie Klartext-HTTP, nie ein anderer Port).
 Alles andere beantwortet der Proxy selbst mit 403 und dem Header `x-aio-proxy: blockiert`.
 
 Die Allowlist erzeugt `s1b.ts allowlist` aus dem Protokoll des ersten Durchgangs.
@@ -77,6 +78,8 @@ class AioProxy:
             "modus": ctx.options.aio_modus,
             "methode": flow.request.method,
             "host": flow.request.host,
+            "schema": flow.request.scheme,
+            "port": flow.request.port,
             "pfad": normalize_path(flow.request.path),
             "auth": auth,
             "entscheidung": decision,
@@ -87,7 +90,9 @@ class AioProxy:
     def http_connect(self, flow: http.HTTPFlow) -> None:
         # Fremde Hosts schon beim CONNECT abweisen; erlaubte Hosts werden entschlüsselt und je
         # Anfrage geprüft.
-        if ctx.options.aio_modus == "allowlist" and not self.host_allowed(flow.request.host):
+        if ctx.options.aio_modus == "allowlist" and (
+            flow.request.port != 443 or not self.host_allowed(flow.request.host)
+        ):
             self.log(flow, "keins", "blockiert-connect")
             flow.response = http.Response.make(403, b"blockiert\n", BLOCK_HEADER)
 
@@ -102,6 +107,11 @@ class AioProxy:
         # der Client frei setzen kann (Docstring von Request.pretty_host in mitmproxy 12.3.1,
         # https://github.com/mitmproxy/mitmproxy/blob/v12.3.1/mitmproxy/http.py).
         host = flow.request.host
+        if flow.request.scheme != "https" or flow.request.port != 443:
+            # Sonst ginge unser Token über Klartext-HTTP oder an einen anderen Port.
+            self.log(flow, auth, "blockiert")
+            flow.response = http.Response.make(403, b"blockiert\n", BLOCK_HEADER)
+            return
         path = normalize_path(flow.request.path)
         method = flow.request.method
         for entry in self.allow:

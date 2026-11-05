@@ -25,6 +25,9 @@ done
 
 info "Lade $PROXY_IMAGE"
 docker pull "$PROXY_IMAGE"
+# proxy_starten gibt dem Konfigurationsordner die Gruppe 65534; die muss im Image existieren.
+docker run --rm --network none --entrypoint getent "$PROXY_IMAGE" group 65534 \
+  || fehler "Gruppe 65534 fehlt im Proxy-Image (siehe proxy_starten in lib.sh)"
 
 info "Prüfe das CLI im Image"
 docker run --rm --network none "$IMAGE:ohne" claude --version

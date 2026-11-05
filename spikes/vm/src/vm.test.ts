@@ -7,8 +7,8 @@ import { mask, Report } from "./bericht.ts";
 import { buildArgs, childEnv } from "./claude.ts";
 import { buildAllowlist, normalizePath, parseLog, type LogEntry } from "./endpunkte.ts";
 import { handle, officeTools } from "./mcp-attrappe.ts";
-import { checkControls, evaluateRun, parseProbe, probeCommand } from "./s1a.ts";
-import { interpretCurl } from "./s1b.ts";
+import { checkControls, evaluateRun, isNamespaceId, parseProbe, probeCommand } from "./s1a.ts";
+import { interpretCurl, missingSteps } from "./s1b.ts";
 import {
   anythingLoaded,
   buildReport as s1fReport,
@@ -20,6 +20,7 @@ import {
 import { verdict } from "./s1g.ts";
 import {
   buildReport as s2Report,
+  officeGaps,
   officePrompt,
   parseOutput,
   resultOf,
@@ -30,7 +31,14 @@ import {
 } from "./s2.ts";
 import { factor, median, quantile, stability } from "./statistik.ts";
 import { summarize, succeeded } from "./stream.ts";
-import { delta, findStructuredRows, findTextRows, usageRows, weeklyKind } from "./usage.ts";
+import {
+  delta,
+  findStructuredRows,
+  findTextRows,
+  resetKinds,
+  usageRows,
+  weeklyKind,
+} from "./usage.ts";
 
 // Kein Test ruft das CLI oder ein LLM auf (E23). Die stream-json-Zeilen sind von Hand gebaut.
 const STREAM = [
@@ -233,7 +241,27 @@ describe("S1a", () => {
   });
 });
 
+describe("S1a: Namespace", () => {
+  it("vergleicht nur gültige Namespace-Kennungen", () => {
+    expect(isNamespaceId("user:[4026531837]")).toBe(true);
+    expect(isNamespaceId("?")).toBe(false);
+    expect(isNamespaceId(undefined)).toBe(false);
+  });
+});
+
 describe("S1b", () => {
+  it("verlangt die vorgegebenen Werkzeugaufrufe, nicht nur success", () => {
+    const empty = summarize(
+      JSON.stringify({ type: "result", subtype: "success", is_error: false }),
+    );
+    expect(missingSteps("text", empty)).toEqual([]);
+    expect(missingSteps("werkzeuge", empty)).toHaveLength(2);
+    expect(missingSteps("mcp", empty)).toEqual([
+      "MCP-Server attrappe verbunden",
+      "Aufruf mcp__attrappe__ping",
+    ]);
+  });
+
   it("normalisiert Pfade wie das Addon des Proxys", () => {
     expect(normalizePath("/v1/messages?beta=true")).toBe("/v1/messages");
     expect(normalizePath("/api/oauth/profile")).toBe("/api/oauth/profile");
@@ -516,6 +544,52 @@ describe("S2c: Stichprobe", () => {
     };
     expect(sampleGaps(full, "haiku")).toBeNull();
     expect(s2Report({ c: full }, []).outcome).toMatch(/^Go/);
+  });
+});
+
+describe("S2: Reset und Grundkosten", () => {
+  const row = (kind: string, percent: number, resetsAt: string | null, source = "$") => ({
+    kind,
+    percent,
+    resetsAt,
+    source,
+  });
+
+  it("erkennt zurückgesetzte Fenster", () => {
+    expect(resetKinds([row("weekly_all", 80, "a")], [row("weekly_all", 1, "a")])).toEqual([
+      "weekly_all",
+    ]);
+    expect(resetKinds([row("weekly_all", 10, "a")], [row("weekly_all", 12, "b")])).toEqual([
+      "weekly_all",
+    ]);
+    expect(resetKinds([row("w", 10, "in 3 h", "text")], [row("w", 11, "in 2 h", "text")])).toEqual(
+      [],
+    );
+  });
+
+  it("verlangt für S2d einen verbundenen Office-Server mit allen Werkzeugen", () => {
+    const gaps = officeGaps(summarize(STREAM), officeTools());
+    expect(gaps).toContain("MCP-Server office nicht verbunden");
+    expect(gaps.some((g) => g.startsWith("Werkzeuge fehlen"))).toBe(true);
+  });
+
+  it("wertet S2a ohne Wert aus claude.ai und S2b ohne Kosten als ungültig", () => {
+    const snap: Snapshot = {
+      zeit: "",
+      methode: "json",
+      zugang: "voll",
+      rows: [row("weekly_all", 10, null)],
+      costUsd: 0,
+      isError: false,
+      exitCode: 0,
+      text: "",
+      stderr: "",
+    };
+    const a = s2Report({ a: { snapshots: [snap], vergleich: {}, methode: "json" } }, []);
+    expect(a.findings.find((f) => f.test.includes("Vergleich"))?.verdict).toBe("ungültig");
+    const b = s2Report({ b: { before: snap, after: snap, costs: [null, 0], errors: 0 } }, []);
+    expect(b.findings.find((f) => f.test.includes("total_cost_usd"))?.verdict).toBe("ungültig");
+    expect(b.findings.find((f) => f.test.includes("Anstieg"))?.verdict).toBe("erwartet");
   });
 });
 
