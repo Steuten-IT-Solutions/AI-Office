@@ -124,29 +124,67 @@ export function spawnClaude(
 ): Promise<RawResult> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
+    // Eigene Prozessgruppe, damit die Zeitgrenze auch Bash- und MCP-Kindprozesse trifft.
     const child = spawn(binary, args, {
       cwd: options.cwd,
       env: childEnv(process.env, options.env),
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let timedOut = false;
-    // Zeitgrenze wie plan.md 5.7: erst SIGINT, dann SIGTERM, dann Kill.
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGINT");
-      setTimeout(() => child.kill("SIGTERM"), 10_000).unref();
-      setTimeout(() => child.kill("SIGKILL"), 20_000).unref();
-    }, options.timeoutMs ?? 300_000);
+    const timers: NodeJS.Timeout[] = [];
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      try {
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, signal);
+        }
+      } catch {
+        // Gruppe schon beendet
+      }
+    };
+    // Zeitgrenze wie plan.md 5.7: erst SIGINT, dann SIGTERM, dann Kill, jeweils an die Gruppe.
+    timers.push(
+      setTimeout(() => {
+        timedOut = true;
+        signalGroup("SIGINT");
+        timers.push(
+          setTimeout(() => {
+            signalGroup("SIGTERM");
+          }, 10_000),
+        );
+        timers.push(
+          setTimeout(() => {
+            signalGroup("SIGKILL");
+          }, 20_000),
+        );
+      }, options.timeoutMs ?? 300_000),
+    );
+    const clearTimers = (): void => {
+      for (const t of timers) {
+        clearTimeout(t);
+      }
+    };
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
     child.on("error", (error) => {
-      clearTimeout(timer);
+      clearTimers();
       reject(error);
     });
+    // Hält ein Enkelprozess außerhalb der Gruppe stdout/stderr offen, käme `close` nie.
+    // Deshalb nach dem Ende des CLI höchstens 5 s auf die Pipes warten.
+    child.on("exit", () => {
+      timers.push(
+        setTimeout(() => {
+          signalGroup("SIGKILL");
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, 5_000),
+      );
+    });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      clearTimers();
       resolve({
         exitCode: code,
         timedOut,
@@ -155,6 +193,8 @@ export function spawnClaude(
         stderr: mask(Buffer.concat(err).toString("utf8")).split("\n").slice(0, 20).join("\n"),
       });
     });
+    // Endet das CLI, bevor es stdin liest, käme sonst ein unbehandeltes EPIPE.
+    child.stdin.on("error", () => undefined);
     child.stdin.end(options.stdin ?? "");
   });
 }

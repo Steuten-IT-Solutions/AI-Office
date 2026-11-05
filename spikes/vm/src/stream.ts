@@ -20,7 +20,7 @@ export interface RunSummary {
   claudeCodeVersion: string | null;
   mcpServers: { name: string; status: string }[];
   tools: string[];
-  toolUses: { name: string; command: string | null }[];
+  toolUses: { name: string; command: string | null; filePath: string | null }[];
   toolResults: { isError: boolean; content: string }[];
   resultSubtype: string | null;
   isError: boolean | null;
@@ -35,6 +35,27 @@ export interface RunSummary {
   rateLimits: { status: string; resetsAt: number | null; utilization: number | null }[];
   apiRetries: { error: string; errorStatus: number | null }[];
   invalidLines: number;
+}
+
+/**
+ * Welche Messfelder die Ergebniszeile wirklich enthält. Der Office-Parser setzt fehlendes
+ * `total_cost_usd` auf 0 und fehlende `usage` auf Nullwerte; für Messungen muss „fehlt“ aber
+ * `null` bleiben.
+ */
+function resultFieldsPresent(line: string): { cost: boolean; usage: boolean } | null {
+  try {
+    const raw = JSON.parse(line) as unknown;
+    if (!isObject(raw) || raw["type"] !== "result") {
+      return null;
+    }
+    const cost = raw["total_cost_usd"];
+    return {
+      cost: typeof cost === "number" && Number.isFinite(cost),
+      usage: isObject(raw["usage"]),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function eventKey(event: RunEvent): string {
@@ -66,6 +87,7 @@ export function summarize(stdout: string): RunSummary {
     invalidLines: 0,
   };
   for (const line of stdout.split("\n")) {
+    const present = resultFieldsPresent(line);
     for (const event of parseLine(line)) {
       const key = eventKey(event);
       summary.eventCounts[key] = (summary.eventCounts[key] ?? 0) + 1;
@@ -82,6 +104,10 @@ export function summarize(stdout: string): RunSummary {
             command:
               isObject(event.input) && typeof event.input["command"] === "string"
                 ? event.input["command"]
+                : null,
+            filePath:
+              isObject(event.input) && typeof event.input["file_path"] === "string"
+                ? event.input["file_path"]
                 : null,
           });
           break;
@@ -106,8 +132,8 @@ export function summarize(stdout: string): RunSummary {
           summary.isError = event.isError;
           summary.resultText = event.text;
           summary.errors = event.errors;
-          summary.totalCostUsd = event.totalCostUsd;
-          summary.usage = event.usage;
+          summary.totalCostUsd = present?.cost === true ? event.totalCostUsd : null;
+          summary.usage = present?.usage === true ? event.usage : null;
           summary.numTurns = event.numTurns;
           summary.permissionDenials = event.permissionDenials;
           break;

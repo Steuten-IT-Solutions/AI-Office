@@ -25,6 +25,7 @@ import {
   parseOutput,
   resultOf,
   sampleGaps,
+  standardGaps,
   type Block,
   type Results,
   type Snapshot,
@@ -173,7 +174,7 @@ describe("stream-json", () => {
     expect(s.model).toBe("claude-haiku");
     expect(s.claudeCodeVersion).toBe("2.1.312");
     expect(s.mcpServers).toEqual([{ name: "fremd", status: "connected" }]);
-    expect(s.toolUses).toEqual([{ name: "Bash", command: "bash /x.sh" }]);
+    expect(s.toolUses).toEqual([{ name: "Bash", command: "bash /x.sh", filePath: null }]);
     expect(s.rateLimits.map((r) => r.status)).toEqual(["allowed_warning"]);
     expect(s.eventCounts["unbekannt:system/neu"]).toBe(1);
     expect(s.invalidLines).toBe(1);
@@ -520,6 +521,7 @@ describe("S2c: Stichprobe", () => {
       usage: null,
       eventCounts: {},
       rateLimits: [],
+      mangel: [],
     })),
     costUsd: runs * 0.1,
     delta: { weekly_all: 1 },
@@ -590,6 +592,38 @@ describe("S2: Reset und Grundkosten", () => {
     const b = s2Report({ b: { before: snap, after: snap, costs: [null, 0], errors: 0 } }, []);
     expect(b.findings.find((f) => f.test.includes("total_cost_usd"))?.verdict).toBe("ungültig");
     expect(b.findings.find((f) => f.test.includes("Anstieg"))?.verdict).toBe("erwartet");
+  });
+});
+
+describe("S2c: Standardlauf", () => {
+  it("verlangt drei Reads, die Summe 100 und gemeldete Kosten", () => {
+    const read = (file: string) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: file, name: "Read", input: { file_path: `/work/s2c/${file}` } },
+          ],
+        },
+      });
+    const result = (extra: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "100",
+        ...extra,
+      });
+    const complete = [read("a.txt"), read("b.txt"), read("c.txt")];
+    const withCost = { total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 } };
+    expect(standardGaps(summarize([...complete, result(withCost)].join("\n")))).toEqual([]);
+    expect(standardGaps(summarize([...complete, result({})].join("\n")))).toEqual([
+      "keine Kosten oder Nutzung im Ergebnis",
+    ]);
+    expect(standardGaps(summarize([read("a.txt"), result(withCost)].join("\n")))).toEqual([
+      "kein Read von b.txt",
+      "kein Read von c.txt",
+    ]);
   });
 });
 

@@ -52,7 +52,7 @@ export interface RunRecord {
   usage: RunSummary["usage"];
   eventCounts: Record<string, number>;
   rateLimits: RunSummary["rateLimits"];
-  /** S2d: Was an der Probe fehlt (leer = gültig); fehlt das Feld, wurde es nicht geprüft. */
+  /** S2c/S2d: Was am Lauf fehlt (leer = gültig); fehlt das Feld, wurde es nicht geprüft. */
   mangel?: string[];
 }
 
@@ -259,6 +259,32 @@ export function standardRun(model: string, cwd: string): ClaudeRun {
   };
 }
 
+/** Was einem Standardlauf (S2c) fehlt: drei erfolgreiche Reads, richtige Summe, Messwerte. */
+export function standardGaps(summary: RunSummary): string[] {
+  const gaps: string[] = [];
+  if (summary.resultSubtype !== "success") {
+    gaps.push(`Ergebnis ${summary.resultSubtype ?? "fehlt"}`);
+  }
+  for (const file of Object.keys(STANDARD_FILES)) {
+    const read = summary.toolUses.some(
+      (t) => t.name === "Read" && (t.filePath === file || (t.filePath ?? "").endsWith(`/${file}`)),
+    );
+    if (!read) {
+      gaps.push(`kein Read von ${file}`);
+    }
+  }
+  if (summary.toolResults.some((r) => r.isError)) {
+    gaps.push("Werkzeugfehler");
+  }
+  if (!/\b100\b/.test(summary.resultText ?? "")) {
+    gaps.push("Antwort ohne die Summe 100");
+  }
+  if (summary.totalCostUsd === null || summary.usage === null) {
+    gaps.push("keine Kosten oder Nutzung im Ergebnis");
+  }
+  return gaps;
+}
+
 function record(model: string, summary: RunSummary): RunRecord {
   return {
     model,
@@ -294,6 +320,9 @@ async function teilC(results: Results): Promise<void> {
     geplant: { bloecke: blocks, laeufeJeBlock: perBlock },
   };
   results.c = c;
+  // Sofort speichern: Scheitert der Versuch vor dem ersten Block, darf keine alte Stichprobe
+  // auf der Platte bleiben und im Bericht als Ergebnis erscheinen.
+  save(results);
   // Ohne lesbares Wochenfenster ist das Budget nicht überwachbar: dann kein einziger Lauf.
   if (weekly === null || start.isError === true) {
     c.abbruch =
@@ -312,7 +341,7 @@ async function teilC(results: Results): Promise<void> {
           rawFile: join(WORK, `s2c-${model}-${String(index)}-${String(i + 1)}.jsonl`),
         });
         console.log(`  ${model} Block ${String(index)} Lauf ${String(i + 1)}: ${describe(result)}`);
-        runs.push(record(model, result.summary));
+        runs.push({ ...record(model, result.summary), mangel: standardGaps(result.summary) });
         if (result.summary.rateLimits.some((r) => r.status === "rejected")) {
           c.abbruch = "rate_limit_event mit Status rejected";
           break;
@@ -437,11 +466,12 @@ export function sampleGaps(c: NonNullable<Results["c"]>, model: string): string 
   }
   const short = own.filter(
     (bl) =>
-      bl.runs.length < c.geplant.laeufeJeBlock || bl.runs.some((r) => r.subtype !== "success"),
+      bl.runs.length < c.geplant.laeufeJeBlock ||
+      bl.runs.some((r) => r.subtype !== "success" || (r.mangel?.length ?? 1) > 0),
   );
   if (short.length > 0) {
     gaps.push(
-      `Blöcke mit fehlenden oder gescheiterten Läufen: ${short.map((bl) => String(bl.index)).join(", ")}`,
+      `Blöcke mit fehlenden, gescheiterten oder ungültigen Läufen: ${short.map((bl) => String(bl.index)).join(", ")}`,
     );
   }
   const weekly = weeklyKind(c.start.rows);
