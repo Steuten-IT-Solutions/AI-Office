@@ -145,13 +145,16 @@ proxy_starten() {
   # Der Entrypoint des Images setzt UID und GID des Users mitmproxy per `usermod -o -u -g` auf
   # den Besitzer von mitmproxy-ca.pem bzw. des Ordners (release/docker/docker-entrypoint.sh in
   # mitmproxy v12.3.1). Die Gruppe muss im Image existieren: 65534 (nogroup) gibt es in Debian.
+  # flow_detail=0: mitmdump schreibt keine Zeile je Flow (Standard 1 zeigt die URL samt Query,
+  # mitmproxy/addons/dumper.py v12.3.1). Protokolliert wird nur über aio_proxy.py.
   install -d -m 0700 "$MITM_DIR"
   chown -R 10002:65534 "$MITM_DIR"
   docker rm -f "$PROXY" > /dev/null 2>&1 || true
   docker run -d --name "$PROXY" --network "$NETZ_AUSSEN" \
     --log-opt max-size=10m --log-opt max-file=3 \
     -v "$dir/proxy:/aio:ro" -v "$MITM_DIR:/home/mitmproxy/.mitmproxy" \
-    "$PROXY_IMAGE" mitmdump --listen-port 8080 -s /aio/aio_proxy.py "${optionen[@]}" > /dev/null
+    "$PROXY_IMAGE" mitmdump --listen-port 8080 --set flow_detail=0 -s /aio/aio_proxy.py \
+    "${optionen[@]}" > /dev/null
   docker network connect "$netz" "$PROXY"
   local i
   for i in $(seq 1 30); do

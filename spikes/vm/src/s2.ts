@@ -254,14 +254,16 @@ async function teilB(results: Results): Promise<void> {
   const costs: (number | null)[] = [];
   let errors = 0;
   let after = before;
+  let previous: Snapshot | undefined;
   let abbruch: string | null = null;
   for (let i = 0; i < 30; i++) {
     // Kostet /usage Kontingent, gilt auch hier das Budget; ohne lesbaren Zähler keine Abfrage mehr.
-    abbruch = budgetStop(baseline, after, budgetPp);
+    abbruch = budgetStop(baseline, after, budgetPp, previous);
     if (abbruch !== null) {
       console.log(`  Abbruch nach ${String(i)} Abfragen: ${abbruch}`);
       break;
     }
+    previous = after;
     after = await query(m, "voll");
     costs.push(after.costUsd);
     if (!readable(after)) {
@@ -384,6 +386,7 @@ async function teilC(results: Results): Promise<void> {
         }
       }
       const after = await query(m, "voll");
+      const blockBefore = current;
       const cost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
       c.blocks.push({
         model,
@@ -401,7 +404,7 @@ async function teilC(results: Results): Promise<void> {
       );
       // Ein schon gesetzter Abbruch (rejected) bleibt stehen. budgetStop erkennt auch einen
       // Reset und ein unlesbares Wochenfenster.
-      c.abbruch ??= budgetStop(baseline, after, budgetPp);
+      c.abbruch ??= budgetStop(baseline, after, budgetPp, blockBefore);
       if (c.abbruch !== null) {
         console.log(`  Abbruch: ${c.abbruch}`);
         break outer;
@@ -449,11 +452,28 @@ function budgetBaseline(results: Results, fallback: Snapshot): Snapshot {
   return results.budgetStart;
 }
 
-/** Grund, keinen weiteren bezahlten Lauf zu starten, oder `null`. */
-export function budgetStop(baseline: Snapshot, now: Snapshot, budgetPp: number): string | null {
+/**
+ * Grund, keinen weiteren bezahlten Lauf zu starten, oder `null`. `previous` ist die letzte Messung
+ * davor: Ein Reset zwischen zwei Messungen fällt sonst nicht auf, wenn der Wert danach wieder über
+ * die Budget-Basis steigt.
+ */
+export function budgetStop(
+  baseline: Snapshot,
+  now: Snapshot,
+  budgetPp: number,
+  previous?: Snapshot,
+): string | null {
   const check = budgetUsed(baseline, now);
   if ("unreadable" in check) {
     return `${check.unreadable}, Budget nicht überwachbar`;
+  }
+  const weekly = weeklyKind(baseline.rows);
+  if (
+    previous !== undefined &&
+    weekly !== null &&
+    resetKinds(previous.rows, now.rows).includes(weekly)
+  ) {
+    return "Wochenfenster seit der letzten Messung zurückgesetzt, Budget nicht überwachbar";
   }
   return check.used >= budgetPp
     ? `Budget erreicht: Woche +${String(check.used)} Prozentpunkte`
@@ -493,10 +513,11 @@ async function teilD(results: Results): Promise<void> {
   const cwd = join(WORK, "s2d");
   mkdirSync(cwd, { recursive: true });
   let current = now;
+  let previous: Snapshot | undefined;
   for (const model of ["haiku", "sonnet"]) {
     for (let i = 1; i <= 3; i++) {
       // Vor jedem bezahlten Lauf neu messen.
-      const stop = budgetStop(baseline, current, budgetPp);
+      const stop = budgetStop(baseline, current, budgetPp, previous);
       if (stop !== null) {
         console.log(`  Abbruch: ${stop}`);
         results.d = { runs, abbruch: stop };
@@ -533,6 +554,7 @@ async function teilD(results: Results): Promise<void> {
         save(results);
         return;
       }
+      previous = current;
       current = await query(m, "voll");
     }
   }

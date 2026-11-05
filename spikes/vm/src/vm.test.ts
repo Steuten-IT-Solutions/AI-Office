@@ -664,6 +664,13 @@ describe("S2: Budget über alle Teile", () => {
     expect(budgetStop(snap(10), snap(15), 5)).toMatch(/^Budget erreicht/);
     expect(budgetStop(snap(10), snap(null), 5)).toMatch(/nicht überwachbar$/);
   });
+
+  it("stoppt bei einem Reset zwischen zwei Messungen, auch wenn der Wert über der Basis liegt", () => {
+    // 10 -> 13 -> Reset -> 12: Basis zu jetzt sieht nur +2, die Folgemessung zeigt den Reset.
+    expect(budgetStop(snap(10), snap(12), 5)).toBeNull();
+    expect(budgetStop(snap(10), snap(12), 5, snap(13))).toMatch(/letzten Messung zurückgesetzt/);
+    expect(budgetStop(snap(10), snap(13), 5, snap(12))).toBeNull();
+  });
 });
 
 describe("S2d", () => {
