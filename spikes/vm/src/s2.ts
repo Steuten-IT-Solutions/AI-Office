@@ -77,7 +77,7 @@ export interface Results {
     /** Geplanter Umfang; nur vollständige Stichproben ergeben ein Go. */
     geplant: { bloecke: number; laeufeJeBlock: number };
   };
-  d?: { runs: RunRecord[] };
+  d?: { runs: RunRecord[]; abbruch?: string | null };
 }
 
 function load(): Results {
@@ -418,8 +418,44 @@ export function officePrompt(planMd: string): string {
   ].join("\n");
 }
 
+/**
+ * Prozentpunkte, die die Woche seit Beginn von S2c gestiegen ist, oder ein Grund, warum das nicht
+ * lesbar ist. Die 5 Prozentpunkte gelten für den ganzen Spike S2, nicht nur für S2c.
+ */
+export function budgetUsed(
+  start: Snapshot,
+  now: Snapshot,
+): { used: number } | { unreadable: string } {
+  const weekly = weeklyKind(start.rows);
+  if (weekly === null || start.isError === true || now.isError === true) {
+    return { unreadable: "Wochenfenster nicht lesbar" };
+  }
+  if (resetKinds(start.rows, now.rows).includes(weekly)) {
+    return { unreadable: "Wochenfenster seit Beginn von S2c zurückgesetzt" };
+  }
+  const used = delta(start.rows, now.rows)[weekly];
+  return used === undefined ? { unreadable: "Wochenfenster fehlt in /usage" } : { used };
+}
+
 async function teilD(results: Results): Promise<void> {
   console.log("\nS2d: Grundkosten eines Office-ähnlichen Laufs (je Modell 3 Läufe)");
+  // Auch S2d zählt zum freigegebenen Budget: ohne lesbaren Zähler oder bei erreichtem Budget
+  // keine weiteren bezahlten Läufe.
+  const m = method(results);
+  const c = results.c;
+  const budgetPp = c?.budgetPp ?? envNumber("AIO_S2_BUDGET_PP", 5);
+  const start = c?.start ?? (await query(m, "voll"));
+  const check = budgetUsed(start, await query(m, "voll"));
+  if ("unreadable" in check || check.used >= budgetPp) {
+    const reason =
+      "unreadable" in check
+        ? `${check.unreadable}, Budget nicht überwachbar`
+        : `Budget erreicht: Woche +${String(check.used)} Prozentpunkte`;
+    console.log(`  S2d entfällt: ${reason}`);
+    results.d = { runs: [], abbruch: reason };
+    save(results);
+    return;
+  }
   const planMd = readFileSync("/opt/spike/docs/plan.md", "utf8");
   const tools = officeTools();
   const runs: RunRecord[] = [];
@@ -451,9 +487,15 @@ async function teilD(results: Results): Promise<void> {
       });
       console.log(`  ${model} ${String(i)}: ${describe(result)}`);
       runs.push({ ...record(model, result.summary), mangel: officeGaps(result.summary, tools) });
+      if (result.summary.rateLimits.some((r) => r.status === "rejected")) {
+        results.d = { runs, abbruch: "rate_limit_event mit Status rejected" };
+        console.log(`  Abbruch: ${results.d.abbruch ?? ""}`);
+        save(results);
+        return;
+      }
     }
   }
-  results.d = { runs };
+  results.d = { runs, abbruch: null };
   save(results);
 }
 
@@ -695,7 +737,10 @@ export function buildReport(results: Results, context: string[]): Report {
 
   // S2d
   const d = results.d;
-  if (d !== undefined) {
+  if (d !== undefined && (d.abbruch ?? null) !== null) {
+    report.invalid("S2d: Grundkosten", "Läufe ausgeführt", `abgebrochen: ${d.abbruch ?? ""}`);
+  }
+  if (d !== undefined && d.runs.length > 0) {
     report.table(
       "S2d: Grundkosten je Lauf („Antworte mit OK“, Verfassung, 8 Werkzeuge)",
       ["Modell", "Input", "Cache-Erstellung", "Cache-Lesen", "Output", "USD", "Ergebnis", "Mängel"],

@@ -19,6 +19,7 @@ import {
 } from "./s1f.ts";
 import { verdict } from "./s1g.ts";
 import {
+  budgetUsed,
   buildReport as s2Report,
   officeGaps,
   officePrompt,
@@ -624,6 +625,28 @@ describe("S2c: Standardlauf", () => {
       "kein Read von b.txt",
       "kein Read von c.txt",
     ]);
+  });
+});
+
+describe("S2: Budget über alle Teile", () => {
+  const snap = (percent: number | null, isError = false): Snapshot => ({
+    zeit: "",
+    methode: "json",
+    zugang: "voll",
+    rows: percent === null ? [] : [{ kind: "weekly_all", percent, resetsAt: null, source: "$" }],
+    costUsd: 0,
+    isError,
+    exitCode: 0,
+    text: "",
+    stderr: "",
+  });
+
+  it("liest den Verbrauch seit Beginn von S2c und schlägt sonst geschlossen fehl", () => {
+    expect(budgetUsed(snap(10), snap(14.5))).toEqual({ used: 4.5 });
+    expect(budgetUsed(snap(10), snap(null))).toHaveProperty("unreadable");
+    expect(budgetUsed(snap(10), snap(12, true))).toHaveProperty("unreadable");
+    expect(budgetUsed(snap(80), snap(1))).toHaveProperty("unreadable");
+    expect(budgetUsed(snap(null), snap(5))).toHaveProperty("unreadable");
   });
 });
 
