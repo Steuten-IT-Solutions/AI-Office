@@ -71,7 +71,8 @@ Warum nicht WSL 2 oder Docker Desktop:
      Docker-Schichten deutlich langsamer, und S3 würde nicht zum späteren Server mit SSD passen.
      Eine zusätzliche SSD lohnt sich erst, wenn D: zu wenig Platz hat oder S3 Platzmangel zeigt.
    - Netzwerk: „Default Switch“
-   - Ubuntu Server 24.04 LTS (oder die neueste LTS) als ISO von ubuntu.com
+   - Ubuntu Server als ISO von ubuntu.com. **Eingerichtet ist 26.04.1 LTS** (vom CEO am 05.11.2026
+     bestätigt); die ursprüngliche Empfehlung war 24.04 LTS oder die neueste LTS
    - Sicherer Start: Vorlage „Microsoft UEFI-Zertifizierungsstelle“, sonst startet Ubuntu nicht
      **[Annahme: im Assistenten prüfen]**
    - Automatische Startaktion: „Immer automatisch starten“
@@ -79,8 +80,9 @@ Warum nicht WSL 2 oder Docker Desktop:
    `sudo apt update && sudo apt full-upgrade` und `unattended-upgrades`.
 4. Docker Engine nach der offiziellen Anleitung für Ubuntu installieren (nicht Docker Desktop).
 5. Einen Prüfpunkt „frisch installiert“ anlegen.
-6. Mir die IP-Adresse der VM nennen. Das Provisionierungsskript (Paket S16) legt danach die Nutzer
-   `aio-sup` und `aio-office` an.
+6. Mir die Adresse der VM nennen. Die IP wechselt beim Neustart der VM; stabil ist der Name
+   `aio-dev.mshome.net`, per SSH kurz `ssh aio-dev` ([`einrichtung.md`](einrichtung.md) 4.6).
+   Das Provisionierungsskript (Paket S16) legt danach die Nutzer `aio-sup` und `aio-office` an.
 
 **Interne Namen und TLS (neu, im Plan bisher nicht ausgeführt):**
 - Die Cookies mit Präfix `__Host-` (Kap. 4.7) verlangen `Secure`, also HTTPS. Weil der Browser
