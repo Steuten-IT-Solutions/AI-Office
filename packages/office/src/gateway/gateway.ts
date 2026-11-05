@@ -7,6 +7,7 @@ import { CLOSED_STATUSES } from "../domain/task.ts";
 import { ValidationError, isRecord } from "../domain/validation.ts";
 import type { JsonValue } from "../events/canonical-json.ts";
 import type { EventStore } from "../events/event-store.ts";
+import { DEFAULT_PLANNER_CONFIG, activeRun, type PlannerConfig } from "../planner/planner.ts";
 import { verifyPassword } from "./password.ts";
 import {
   Sessions,
@@ -98,8 +99,13 @@ export interface GatewayOptions {
   loginThrottle?: Partial<LoginThrottle>;
   pollMs?: number;
   websocket?: WebSocketOptions;
-  /** Uhr für die Sperre nach Fehlversuchen. Standard: `Date.now`. */
+  /** Uhr für die Sperre nach Fehlversuchen und für laufende Läufe. Standard: `Date.now`. */
   now?: () => number;
+  /**
+   * Derselbe Wert wie beim Planer: Ein Lauf ohne Ende gilt danach als verloren, der Agent als
+   * frei. Standard aus `DEFAULT_PLANNER_CONFIG`.
+   */
+  staleRunMinutes?: number;
   /** Für Fehler, die nicht an den Browser gehen. Standard: `console.error`. */
   log?: (message: string, error: unknown) => void;
 }
@@ -396,6 +402,10 @@ export class OfficeGateway {
       throw new HttpError(403, "CSRF-Token fehlt oder passt nicht");
     }
     const body = await readJson(req);
+    // Während der Körper ankam, kann die Sitzung abgemeldet, ersetzt oder abgelaufen sein.
+    if (session !== null && !this.sessions.isActive(session)) {
+      throw new HttpError(401, "Nicht angemeldet");
+    }
     return fn(body, session as Session);
   }
 
@@ -474,12 +484,12 @@ export class OfficeGateway {
       costs.set(run.agentId, (costs.get(run.agentId) ?? 0) + run.totalCostUsd);
       total += run.totalCostUsd;
     }
-    const running = new Set(
-      state
-        .runStarts()
-        .filter((start) => state.run(start.runId) === undefined)
-        .map((start) => start.agentId),
-    );
+    // Dieselbe Regel wie im Planer, damit ein verlorener Lauf den Agenten nicht für immer belegt.
+    const config: PlannerConfig = {
+      ...DEFAULT_PLANNER_CONFIG,
+      staleRunMinutes: this.options.staleRunMinutes ?? DEFAULT_PLANNER_CONFIG.staleRunMinutes,
+    };
+    const now = new Date(this.now());
     return {
       status: 200,
       body: {
@@ -493,7 +503,7 @@ export class OfficeGateway {
           supervisorId: agent.supervisorId,
           roomId: agent.roomId,
           avatarSeed: agent.avatarSeed,
-          running: running.has(agent.id),
+          running: activeRun(state, agent.id, now, config) !== undefined,
           costUsd: costs.get(agent.id) ?? 0,
         })),
         openTasks: state
@@ -513,6 +523,8 @@ export class OfficeGateway {
   }
 
   private timeline(params: URLSearchParams): Reply {
+    // Erst angleichen: `lastSeq` darf nie hinter den gelieferten Ereignissen liegen.
+    this.options.office.sync();
     const afterSeq = integer(params.get("after"), 0, 0, Number.MAX_SAFE_INTEGER);
     const limit = integer(params.get("limit"), DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT);
     const events = this.options.store.read({ afterSeq, limit });
@@ -529,7 +541,8 @@ export class OfficeGateway {
           occurredAt: event.occurredAt,
           payload: event.payload,
         })),
-        lastSeq: this.options.office.state.lastSeq,
+        // Schreibt ein anderer Prozess zwischen `sync()` und `read()`, zählt das gelesene Ereignis.
+        lastSeq: Math.max(this.options.office.state.lastSeq, events.at(-1)?.seq ?? 0),
       },
     };
   }

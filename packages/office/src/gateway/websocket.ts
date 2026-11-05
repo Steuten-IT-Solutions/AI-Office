@@ -35,9 +35,25 @@ export const CLOSE_CODES = {
   goingAway: 1001,
   protocolError: 1002,
   unsupportedData: 1003,
+  invalidPayload: 1007,
   policyViolation: 1008,
   tooBig: 1009,
 } as const;
+
+/**
+ * Statuscodes, die ein Close-Rahmen tragen darf: 1000–1003 und 1007–1011 aus RFC 6455
+ * Abschnitt 7.4.1, 1012–1014 aus dem IANA-Register, 3000–4999 für Bibliotheken und Anwendungen
+ * (Abschnitt 7.4.2). 1005, 1006 und 1015 dürfen nie im Rahmen stehen.
+ */
+function isValidCloseCode(code: number): boolean {
+  return (
+    (code >= 1000 && code <= 1003) ||
+    (code >= 1007 && code <= 1014) ||
+    (code >= 3000 && code <= 4999)
+  );
+}
+
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 /** Längste Nutzlast eines Steuerrahmens (RFC 6455 Abschnitt 5.5). */
 const MAX_CONTROL_PAYLOAD = 125;
@@ -110,7 +126,11 @@ export function refuseUpgrade(socket: Duplex, refusal: HandshakeRefusal): void {
     "Cache-Control: no-store",
     ...Object.entries(refusal.headers ?? {}).map(([name, value]) => `${name}: ${value}`),
   ];
-  socket.end(`${lines.join("\r\n")}\r\n\r\n${body}`);
+  // `end()` schließt nur die Schreibseite. Ohne `destroy()` hielte ein Client, der kein FIN
+  // schickt, die Verbindung offen, ohne Heartbeat und ohne Obergrenze.
+  socket.end(`${lines.join("\r\n")}\r\n\r\n${body}`, () => {
+    socket.destroy();
+  });
 }
 
 /** Baut einen Rahmen des Servers (unmaskiert, RFC 6455 Abschnitt 5.1). */
@@ -139,6 +159,22 @@ function closePayload(code: number, reason: string): Buffer {
   payload.writeUInt16BE(code, 0);
   text.copy(payload, 2);
   return payload;
+}
+
+/** Fehlercode für einen ungültigen Close-Rahmen (Abschnitte 5.5.1, 7.4.1, 8.1), sonst `undefined`. */
+function invalidClose(payload: Buffer): number | undefined {
+  if (payload.length === 0) {
+    return undefined;
+  }
+  if (payload.length === 1 || !isValidCloseCode(payload.readUInt16BE(0))) {
+    return CLOSE_CODES.protocolError;
+  }
+  try {
+    UTF8.decode(payload.subarray(2));
+  } catch {
+    return CLOSE_CODES.invalidPayload;
+  }
+  return undefined;
 }
 
 export interface WebSocketOptions {
@@ -259,10 +295,11 @@ export class WebSocketPeer {
   }
 
   private heartbeat(): void {
-    if (!this.isOpen) {
+    if (this.closed) {
       return;
     }
-    if (!this.alive) {
+    // Close ist gesendet oder empfangen, die Gegenseite hat die Verbindung aber nicht beendet.
+    if (this.closing || !this.alive) {
       this.terminate();
       return;
     }
@@ -330,11 +367,21 @@ export class WebSocketPeer {
     }
     if (opcode === OPCODE.ping) {
       if (this.isOpen) {
+        // Wie bei `send()`: Wer Pings schickt, aber nichts liest, staut keine Antworten an.
+        if (this.socket.writableLength > this.maxBuffered) {
+          this.terminate();
+          return 0;
+        }
         this.socket.write(encodeFrame(OPCODE.pong, payload));
       }
     } else if (opcode === OPCODE.pong) {
       this.alive = true;
     } else {
+      const invalid = invalidClose(payload);
+      if (invalid !== undefined) {
+        this.fail(invalid, "Ungültiger Close-Rahmen");
+        return 0;
+      }
       // Close: bestätigen (Abschnitt 5.5.1) und Verbindung beenden. Ein eigenes Close war schon
       // unterwegs, dann ist dies die Bestätigung.
       if (this.isOpen) {

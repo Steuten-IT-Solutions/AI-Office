@@ -4,6 +4,7 @@ import { connect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CEO_ID } from "../domain/agent.ts";
 import { buildContext } from "../domain/context.ts";
 import { Office } from "../domain/office.ts";
 import { loadStartBooks, loadStartPersonas } from "../domain/start-content.ts";
@@ -126,6 +127,34 @@ function call(method: string, path: string, options: CallOptions = {}): Promise<
     req.on("error", reject);
     req.end(body);
   });
+}
+
+function connections(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    server.getConnections((error, n) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(n);
+      }
+    });
+  });
+}
+
+/**
+ * Wartet höchstens 2 s, bis der Server nicht mehr TCP-Verbindungen hat als `limit`. Gibt die
+ * Zahl zurück. Verbindungen aus `call()` bleiben per Keep-Alive offen und zählen mit.
+ */
+async function connectionsDrop(limit: number): Promise<number> {
+  let count = Infinity;
+  for (let i = 0; i < 100; i++) {
+    count = await connections();
+    if (count <= limit) {
+      return count;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return count;
 }
 
 interface Login {
@@ -328,6 +357,44 @@ describe("Anfragen", () => {
     expect(res.json["lastSeq"]).toBe(office.state.lastSeq);
   });
 
+  it("ein Lauf ohne Ende gilt wie im Planer nach 120 Minuten als verloren", async () => {
+    const auth = await login();
+    const trigger = office.sendMessage(CEO_ID, { toId: COO, kind: "auftrag", text: "los" });
+    office.recordRunStarted(
+      {
+        agentId: COO,
+        taskId: null,
+        runType: "buero",
+        model: "sonnet",
+        inboxUpToSeq: 0,
+        triggerIds: [trigger.id],
+      },
+      { runId: "run-1" },
+    );
+    const running = async (): Promise<boolean | undefined> => {
+      const res = await call("GET", "/api/state", { headers: { cookie: auth.cookie } });
+      return (res.json["agents"] as { id: string; running: boolean }[]).find((a) => a.id === COO)
+        ?.running;
+    };
+    expect(await running()).toBe(true);
+    clock += 119 * 60_000;
+    expect(await running()).toBe(true);
+    clock += 2 * 60_000;
+    expect(await running()).toBe(false);
+  });
+
+  it("lastSeq der Zeitleiste liegt nie hinter ihren Ereignissen", async () => {
+    const auth = await login();
+    // Ein zweiter Schreiber auf derselben Datei; `office` hat das noch nicht gelesen.
+    const other = Office.open(store, loadStartData().building, {
+      now: () => new Date("2026-11-05T09:00:00Z"),
+    });
+    other.sendMessage(CEO_ID, { toId: COO, kind: "info", text: "von außen" });
+    const res = await call("GET", "/api/timeline?limit=500", { headers: { cookie: auth.cookie } });
+    const events = res.json["events"] as { seq: number }[];
+    expect(res.json["lastSeq"]).toBe(events.at(-1)?.seq);
+  });
+
   it("Zeitleiste mit after und limit", async () => {
     const auth = await login();
     const all = await call("GET", "/api/timeline?limit=500", { headers: { cookie: auth.cookie } });
@@ -345,6 +412,43 @@ describe("Anfragen", () => {
 });
 
 describe("CEO-Chat", () => {
+  it("speichert nichts, wenn die Sitzung endet, während der Körper noch ankommt", async () => {
+    const auth = await login();
+    const body = JSON.stringify({ text: "zu spät" });
+    const half = Math.floor(body.length / 2);
+    const done = new Promise<number>((resolve, reject) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port,
+          method: "POST",
+          path: "/api/chat",
+          headers: {
+            host: HOST,
+            origin: ORIGIN,
+            "content-type": "application/json",
+            "content-length": String(Buffer.byteLength(body)),
+            ...authed(auth),
+          },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.write(body.slice(0, half));
+      setTimeout(() => {
+        void call("POST", "/api/logout", { body: {}, headers: authed(auth) }).then(() => {
+          req.end(body.slice(half));
+        });
+      }, 20);
+    });
+    expect(await done).toBe(401);
+    expect(ceoMessages).toEqual([]);
+    expect(office.state.messages().some((m) => m.text === "zu spät")).toBe(false);
+  });
+
   it("braucht das CSRF-Token der Sitzung und den eigenen Origin", async () => {
     const auth = await login();
     const body = { text: "Hallo" };
@@ -532,8 +636,13 @@ class RawClient {
     }
   }
 
-  static async open(headers: Record<string, string>, path = "/api/live"): Promise<RawClient> {
-    const socket = connect(port, "127.0.0.1");
+  /** `halfOpen`: Der Client schickt kein FIN, wenn der Server seine Seite schließt. */
+  static async open(
+    headers: Record<string, string>,
+    path = "/api/live",
+    halfOpen = false,
+  ): Promise<RawClient> {
+    const socket = connect({ port, host: "127.0.0.1", allowHalfOpen: halfOpen });
     await new Promise((resolve) => socket.once("connect", resolve));
     const lines = [
       `GET ${path} HTTP/1.1`,
@@ -737,6 +846,48 @@ describe("WebSocket", () => {
         },
         1002,
       ],
+      [
+        "Close mit einem Byte",
+        (c) => {
+          c.send(0x8, Buffer.from([0x03]));
+        },
+        1002,
+      ],
+      [
+        "Close mit 1005",
+        (c) => {
+          c.send(0x8, Buffer.from([0x03, 0xed]));
+        },
+        1002,
+      ],
+      [
+        "Close mit 999",
+        (c) => {
+          c.send(0x8, Buffer.from([0x03, 0xe7]));
+        },
+        1002,
+      ],
+      [
+        "Close mit 2000",
+        (c) => {
+          c.send(0x8, Buffer.from([0x07, 0xd0]));
+        },
+        1002,
+      ],
+      [
+        "Close mit ungültigem UTF-8",
+        (c) => {
+          c.send(0x8, Buffer.from([0x03, 0xe8, 0xff]));
+        },
+        1007,
+      ],
+      [
+        "Close mit 4000 und Text",
+        (c) => {
+          c.send(0x8, Buffer.concat([Buffer.from([0x0f, 0xa0]), Buffer.from("tschüss")]));
+        },
+        1000,
+      ],
     ];
     for (const [name, act, code] of cases) {
       const client = await open();
@@ -780,6 +931,49 @@ describe("WebSocket", () => {
     const close = await client.frame();
     expect(close?.payload.readUInt16BE(0)).toBe(1008);
     await client.closed();
+  });
+
+  it("schließt abgelehnte Upgrades auch ohne FIN des Clients", async () => {
+    const before = await connections();
+    const client = await RawClient.open(wsHeaders(), "/api/live", true);
+    expect((await client.response()).status).toBe(401);
+    expect(await connectionsDrop(before)).toBeLessThanOrEqual(before);
+  });
+
+  it("trennt nach einem Close, wenn der Client kein FIN schickt", async () => {
+    setup({ websocket: { heartbeatMs: 30 } });
+    const auth = await login();
+    const before = await connections();
+    const client = await RawClient.open(wsHeaders({ cookie: auth.cookie }), "/api/live", true);
+    expect((await client.response()).status).toBe(101);
+    await client.frame();
+    client.send(0x8, Buffer.from([0x03, 0xe8]));
+    expect((await client.frame())?.opcode).toBe(0x8);
+    expect(await connectionsDrop(before)).toBeLessThanOrEqual(before);
+    expect(gateway.liveConnections).toBe(0);
+  });
+
+  it("trennt, wenn sich Pongs anstauen, weil der Client nicht liest", async () => {
+    setup({ websocket: { maxBufferedBytes: 64 * 1024 } });
+    const auth = await login();
+    const before = await connections();
+    const client = await RawClient.open(wsHeaders({ cookie: auth.cookie }));
+    expect((await client.response()).status).toBe(101);
+    await client.frame();
+    client.socket.pause();
+    // 125 Byte je Ping, zusammen weit mehr, als die Puffer des Kernels fassen.
+    const ping = Buffer.alloc(125, 0x61);
+    for (let i = 0; i < 400; i++) {
+      for (let j = 0; j < 200; j++) {
+        client.send(0x9, ping);
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      if (gateway.liveConnections === 0) {
+        break;
+      }
+    }
+    expect(await connectionsDrop(before)).toBeLessThanOrEqual(before);
+    expect(gateway.liveConnections).toBe(0);
   });
 
   it("trennt einen Browser, der auf Pings nicht antwortet", async () => {
