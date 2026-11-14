@@ -264,18 +264,38 @@ Rechtsklick auf `aio-dev` → **Einstellungen…**
    - **Install OpenSSH server** anhaken
    - Keine zusätzlichen Snaps auswählen
 3. Nach **Reboot Now** ggf. Enter drücken, wenn der Installer zum Entfernen der ISO auffordert.
-4. Anmelden und die IP-Adresse anzeigen:
+4. Anmelden und die IP-Adresse anzeigen (nur zur Kontrolle, siehe 4.6):
    ```bash
    ip -4 addr show eth0
    ```
 
 ### 4.6 Per SSH verbinden und aktualisieren
 
+**Name statt IP:** Die IP-Adresse der VM am `Default Switch` wechselt schon beim Neustart der VM,
+nicht erst beim Neustart von Windows (beobachtet bei der Einrichtung am 05.11.2026: nach dem
+ersten Neustart eine andere Adresse, z. B. `172.28.55.90`). Stabil ist der Name
+`aio-dev.mshome.net`, unter dem Windows die VM am `Default Switch` auflöst (ebenfalls am
+05.11.2026 geprüft). Dass der Name auch nach Neustarts von Windows auflöst, ist **[Annahme]**;
+eine Quelle von Microsoft dazu habe ich nicht geprüft.
+Alle Befehle und Skripte verwenden deshalb den Namen, nie die IP.
+
+**Kurzname `aio-dev`:** Ein Eintrag in `%USERPROFILE%\.ssh\config` unter Windows spart Namen,
+Benutzer und Schlüssel bei jedem Aufruf. Auf dem Rechner des CEO ist er seit dem 05.11.2026
+eingerichtet, mit dem Schlüssel `%USERPROFILE%\.ssh\aio-dev`. Die Felder sind in
+[ssh_config(5)](https://man.openbsd.org/ssh_config) beschrieben:
+
+```
+Host aio-dev
+    HostName aio-dev.mshome.net
+    User christian
+    IdentityFile ~/.ssh/aio-dev
+```
+
 In einer Windows-PowerShell (OpenSSH ist in Windows 11 enthalten):
 ```powershell
-ssh christian@<IP der VM>
+ssh aio-dev
 ```
-In der VM:
+Ohne den Eintrag: `ssh christian@aio-dev.mshome.net`. In der VM:
 ```bash
 sudo apt update && sudo apt full-upgrade -y
 sudo systemctl status unattended-upgrades --no-pager   # sollte "active" zeigen
@@ -284,9 +304,9 @@ sudo reboot
 Falls `unattended-upgrades` nicht aktiv ist: `sudo apt install unattended-upgrades` und
 `sudo dpkg-reconfigure -plow unattended-upgrades`.
 
-**Hinweis:** Die Adresse im `Default Switch` kann sich nach einem Neustart von Windows ändern
-**[Annahme]**. Dann mit `ip -4 addr show eth0` in der VM-Konsole neu nachsehen. Eine feste Adresse
-richte ich mit Paket S16 ein.
+**Hinweis:** Löst der Name einmal nicht auf, zeigt `ip -4 addr show eth0` in der VM-Konsole die
+aktuelle Adresse. Für Konsole und Webinterface bekommt die VM mit Paket S16 eine zweite Karte mit
+fester Adresse in einem internen Netz (README unter `host/` im Repo `ai-office-supervisor`).
 
 ### 4.7 Docker Engine installieren
 
