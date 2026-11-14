@@ -227,7 +227,7 @@ export class CausalChains {
 }
 
 /** Ob der Agent gerade einen Lauf hat. Ein Lauf ohne Ende gilt nach `staleRunMinutes` als verloren. */
-function activeRun(
+export function activeRun(
   state: OfficeState,
   agentId: string,
   now: Date,

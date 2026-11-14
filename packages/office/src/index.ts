@@ -235,3 +235,34 @@ export {
   type TickResult,
   type Wake,
 } from "./planner/planner.ts";
+
+export {
+  API_PREFIX,
+  DEFAULT_LOGIN_THROTTLE,
+  DEFAULT_POLL_MS,
+  LIVE_PATH,
+  MAX_BODY_BYTES as GATEWAY_MAX_BODY_BYTES,
+  MAX_SOCKETS_PER_SESSION,
+  OfficeGateway,
+  createGatewayServer,
+  type GatewayOptions,
+  type LoginThrottle,
+} from "./gateway/gateway.ts";
+export {
+  DEFAULT_SCRYPT,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  hashPassword,
+  isPasswordHash,
+  readPasswordFile,
+  verifyPassword,
+  writePasswordFile,
+  type ScryptParams,
+} from "./gateway/password.ts";
+export {
+  DEFAULT_SESSION_CONFIG,
+  SESSION_COOKIE,
+  Sessions,
+  type Session,
+  type SessionConfig,
+} from "./gateway/sessions.ts";
