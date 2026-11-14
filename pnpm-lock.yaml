@@ -41,6 +41,8 @@ importers:
 
   spikes/s1-github: {}
 
+  spikes/vm: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':
