@@ -53,7 +53,20 @@ info "bubblewrap direkt im Container"
   echo "\$ bwrap --unshare-all --bind /proc /proc (vorhandenes /proc, wie enableWeakerNestedSandbox)"
   docker exec aio-spike-s1a bwrap --ro-bind / / --dev /dev --bind /proc /proc --unshare-all \
     --die-with-parent true 2>&1 && echo "Exit 0" || echo "Exit $?"
+  # Diagnose (nur Information): Liegt die Sperre am Seccomp- oder am AppArmor-Profil von Docker?
+  # Ubuntu schränkt nicht privilegierte User-Namespaces zusätzlich über AppArmor ein (Sysctl
+  # kernel.apparmor_restrict_unprivileged_userns) [Annahme: eine der beiden ist die Ursache].
+  for opt in seccomp=unconfined apparmor=unconfined; do
+    echo "\$ bwrap --unshare-all in neuem Container mit --security-opt $opt"
+    docker run --rm --network none "${LAUF_HAERTUNG[@]}" --security-opt "$opt" "$IMAGE:sandbox" \
+      bwrap --ro-bind / / --dev /dev --bind /proc /proc --unshare-all --die-with-parent true 2>&1 \
+      && echo "Exit 0" || echo "Exit $?"
+  done
+  echo "Host: $(sysctl kernel.apparmor_restrict_unprivileged_userns 2>&1)"
 } | maske > "$dir/bwrap.txt"
+# Der Bericht liest die Datei im Container als Nutzer $AGENT_UID; mit umask 077 aus lib.sh wäre
+# sie nur für root lesbar (EACCES beim ersten Lauf am 19.11.2026).
+chmod 0644 "$dir/bwrap.txt"
 cat "$dir/bwrap.txt"
 
 info "Lauf mit claude -p (haiku)"
