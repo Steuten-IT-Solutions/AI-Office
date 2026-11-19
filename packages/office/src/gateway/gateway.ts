@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { CEO_ID } from "../domain/agent.ts";
+import { findRoom } from "../domain/building.ts";
 import { MESSAGE_KINDS, type Message, type MessageKind } from "../domain/message.ts";
 import { DomainError, type Office } from "../domain/office.ts";
 import { CLOSED_STATUSES } from "../domain/task.ts";
@@ -9,6 +10,14 @@ import type { JsonValue } from "../events/canonical-json.ts";
 import type { EventStore } from "../events/event-store.ts";
 import { DEFAULT_PLANNER_CONFIG, activeRun, type PlannerConfig } from "../planner/planner.ts";
 import { verifyPassword } from "./password.ts";
+import { StaticFiles, WEB_HEADERS } from "./static-files.ts";
+import {
+  checkConsoleUrl,
+  pullRequestListSchema,
+  quotaViewSchema,
+  type PullRequestView,
+  type QuotaView,
+} from "./views.ts";
 import {
   Sessions,
   clearedSessionCookie,
@@ -44,6 +53,9 @@ import {
  * Über den WebSocket gehen nur Hinweise „es gibt neue Ereignisse bis Sequenz N“. Die Daten holt
  * das Webinterface über HTTP; so gilt für beide Wege dieselbe Prüfung.
  *
+ * Das Gateway liefert auch das von Vite gebaute Webinterface aus (P10, `static-files.ts`): nur
+ * Dateien aus `web/dist/`, eigene CSP, keine Inline-Skripte.
+ *
  * Eine Nachricht des CEO schreibt das Gateway ins Ereignisprotokoll und ruft `onCeoMessage`.
  * Den Lauf beim Empfänger beantragt der Planer (P06) nach seinen Weckregeln: `auftrag` und
  * `frage` wecken, `info` nicht.
@@ -68,6 +80,7 @@ const ALLOWED_METHODS: Readonly<Record<string, string>> = {
   "/api/state": "GET",
   "/api/timeline": "GET",
   "/api/chat": "GET, POST",
+  "/api/prs": "GET",
   [LIVE_PATH]: "GET",
 };
 
@@ -111,11 +124,27 @@ export interface GatewayOptions {
   staleRunMinutes?: number;
   /** Für Fehler, die nicht an den Browser gehen. Standard: `console.error`. */
   log?: (message: string, error: unknown) => void;
+  /** Gebautes Webinterface. Standard: `packages/office/web/dist/`. */
+  web?: StaticFiles;
+  /**
+   * Stand des Kontingents vom Supervisor (S04). `null` oder fehlend: noch keine Messung, das
+   * Webinterface zeigt das an.
+   */
+  quota?: () => QuotaView | null;
+  /**
+   * Offene PRs aller Repos, gelesen vom Supervisor über die GitHub App (Kap. 5.11, E26). Das
+   * Office hält keinen GitHub-Zugang. `null` oder fehlend: noch nicht angebunden.
+   */
+  pullRequests?: () => PullRequestView[] | null;
+  /** Link zur Supervisor-Konsole (Kap. 5.11), nur `https:`. */
+  consoleUrl?: string;
 }
 
 interface Reply {
   status: number;
   body?: JsonValue;
+  /** Statt `body`: eine Datei des Webinterface. */
+  file?: { type: string; body: Buffer };
   headers?: Record<string, string | string[]>;
 }
 
@@ -175,6 +204,8 @@ export class OfficeGateway {
   private readonly options: GatewayOptions;
   private readonly throttle: LoginThrottle;
   private readonly now: () => number;
+  private readonly web: StaticFiles;
+  private readonly consoleUrl: string | null;
   private failures: number[] = [];
   /** Anmeldungen nacheinander: scrypt braucht viel Speicher und Rechenzeit. */
   private loginQueue: Promise<unknown> = Promise.resolve();
@@ -188,6 +219,8 @@ export class OfficeGateway {
     this.sessions = options.sessions ?? new Sessions();
     this.throttle = { ...DEFAULT_LOGIN_THROTTLE, ...options.loginThrottle };
     this.now = options.now ?? Date.now;
+    this.web = options.web ?? new StaticFiles();
+    this.consoleUrl = options.consoleUrl === undefined ? null : checkConsoleUrl(options.consoleUrl);
     this.notifiedSeq = options.office.state.lastSeq;
     this.sessions.onEnd((session) => {
       for (const [peer, owner] of this.peers) {
@@ -269,11 +302,15 @@ export class OfficeGateway {
         return reply;
       })
       .then((reply) => {
-        const body = reply.body === undefined ? undefined : JSON.stringify(reply.body);
+        const body =
+          reply.file?.body ?? (reply.body === undefined ? undefined : JSON.stringify(reply.body));
+        const type =
+          reply.file?.type ??
+          (reply.body === undefined ? undefined : "application/json; charset=utf-8");
         // Wie in der Office-API: Antwort vor dem Ende des Inhalts schließt die Verbindung.
         const close = !req.complete;
         res.writeHead(reply.status, {
-          ...(body === undefined ? {} : { "content-type": "application/json; charset=utf-8" }),
+          ...(type === undefined ? {} : { "content-type": type }),
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
           ...(close ? { connection: "close" } : {}),
@@ -363,8 +400,30 @@ export class OfficeGateway {
         });
       case "POST /api/chat":
         return this.write(req, this.authenticate(req), (body) => this.send(body));
+      case "GET /api/prs":
+        return this.read(req, () => {
+          this.authenticate(req);
+          return this.pullRequests();
+        });
       default:
         break;
+    }
+    // Webinterface: ohne Anmeldung und ohne Prüfung der Herkunft, die Dateien enthalten keine Daten.
+    const file = this.web.get(url.pathname);
+    if (file !== undefined) {
+      return req.method === "GET"
+        ? {
+            status: 200,
+            file,
+            headers: { ...WEB_HEADERS, "cache-control": file.cacheControl },
+          }
+        : { status: 405, body: { error: "Methode nicht erlaubt" }, headers: { allow: "GET" } };
+    }
+    if (url.pathname === "/" && !this.web.built) {
+      return {
+        status: 503,
+        body: { error: "Webinterface nicht gebaut: pnpm --filter @ai-office/office build:web" },
+      };
     }
     const allow = ALLOWED_METHODS[url.pathname];
     if (allow !== undefined) {
@@ -483,7 +542,9 @@ export class OfficeGateway {
     const state = office.state;
     const costs = new Map<string, number>();
     let total = 0;
+    let runCount = 0;
     for (const run of state.runs()) {
+      runCount += 1;
       costs.set(run.agentId, (costs.get(run.agentId) ?? 0) + run.totalCostUsd);
       total += run.totalCostUsd;
     }
@@ -505,6 +566,7 @@ export class OfficeGateway {
           role: agent.role,
           supervisorId: agent.supervisorId,
           roomId: agent.roomId,
+          roomName: findRoom(state.building, agent.roomId)?.name ?? null,
           avatarSeed: agent.avatarSeed,
           running: activeRun(state, agent.id, now, config) !== undefined,
           costUsd: costs.get(agent.id) ?? 0,
@@ -520,16 +582,74 @@ export class OfficeGateway {
             runType: task.runType,
             repo: task.repo,
           })),
-        costs: { totalUsd: total },
+        costs: { totalUsd: total, runs: runCount },
+        quota: this.quota(),
+        consoleUrl: this.consoleUrl,
       },
+    };
+  }
+
+  /** Kontingent vom Supervisor, geprüft. Ungültige Daten landen im Log, nicht beim Browser. */
+  private quota(): JsonValue {
+    let value: QuotaView | null | undefined;
+    try {
+      value = this.options.quota?.();
+    } catch (error) {
+      this.log("Gateway: Kontingent nicht lesbar", error);
+      return null;
+    }
+    if (value === undefined || value === null) {
+      return null;
+    }
+    const result = quotaViewSchema.safeParse(value);
+    if (!result.success) {
+      this.log("Gateway: Kontingent ungültig", result.error);
+      return null;
+    }
+    return result.data;
+  }
+
+  private pullRequests(): Reply {
+    let list: PullRequestView[] | null | undefined;
+    try {
+      list = this.options.pullRequests?.();
+    } catch (error) {
+      this.log("Gateway: PRs nicht lesbar", error);
+      return { status: 200, body: { available: false, pullRequests: [] } };
+    }
+    if (list === undefined || list === null) {
+      return { status: 200, body: { available: false, pullRequests: [] } };
+    }
+    const result = pullRequestListSchema.safeParse(list);
+    if (!result.success) {
+      this.log("Gateway: PRs ungültig", result.error);
+      return { status: 200, body: { available: false, pullRequests: [] } };
+    }
+    return {
+      status: 200,
+      body: { available: true, pullRequests: result.data as unknown as JsonValue },
     };
   }
 
   private timeline(params: URLSearchParams): Reply {
     // Erst angleichen: `lastSeq` darf nie hinter den gelieferten Ereignissen liegen.
     this.options.office.sync();
-    const afterSeq = integer(params.get("after"), 0, 0, Number.MAX_SAFE_INTEGER);
-    const limit = integer(params.get("limit"), DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT);
+    const office = this.options.office;
+    // `last=N`: die jüngsten N Ereignisse, für den ersten Aufbau der Zeitleiste.
+    const last = params.get("last");
+    if (last !== null && (params.get("after") !== null || params.get("limit") !== null)) {
+      throw new HttpError(400, "last schließt after und limit aus");
+    }
+    let afterSeq: number;
+    let limit: number;
+    if (last === null) {
+      afterSeq = integer(params.get("after"), 0, 0, Number.MAX_SAFE_INTEGER);
+      limit = integer(params.get("limit"), DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT);
+    } else {
+      limit = integer(last, DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT);
+      // Sequenzen sind lückenlos; gäbe es Lücken, kämen nur weniger als N Ereignisse.
+      afterSeq = Math.max(office.state.lastSeq - limit, 0);
+    }
     const events = this.options.store.read({ afterSeq, limit });
     return {
       status: 200,
@@ -543,9 +663,12 @@ export class OfficeGateway {
           runId: event.runId,
           occurredAt: event.occurredAt,
           payload: event.payload,
+          // Kosten des Laufs, aus dem die Handlung stammt (AK 11), sobald er beendet ist.
+          runCostUsd:
+            event.runId === null ? null : (office.state.run(event.runId)?.totalCostUsd ?? null),
         })),
         // Schreibt ein anderer Prozess zwischen `sync()` und `read()`, zählt das gelesene Ereignis.
-        lastSeq: Math.max(this.options.office.state.lastSeq, events.at(-1)?.seq ?? 0),
+        lastSeq: Math.max(office.state.lastSeq, events.at(-1)?.seq ?? 0),
       },
     };
   }
@@ -553,14 +676,21 @@ export class OfficeGateway {
   private chat(params: URLSearchParams): Reply {
     const office = this.options.office;
     office.sync();
+    // `last=N`: die jüngsten N Nachrichten, für den ersten Aufbau des Chats.
+    const last = params.get("last");
+    if (last !== null && (params.get("after") !== null || params.get("limit") !== null)) {
+      throw new HttpError(400, "last schließt after und limit aus");
+    }
     const afterSeq = integer(params.get("after"), 0, 0, Number.MAX_SAFE_INTEGER);
-    const limit = integer(params.get("limit"), DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT);
     const partner = params.get("with");
-    const messages = office.state
+    const all = office.state
       .messages({ afterSeq })
       .filter((m) => m.fromId === CEO_ID || m.toId === CEO_ID)
-      .filter((m) => partner === null || m.fromId === partner || m.toId === partner)
-      .slice(0, limit);
+      .filter((m) => partner === null || m.fromId === partner || m.toId === partner);
+    const messages =
+      last === null
+        ? all.slice(0, integer(params.get("limit"), DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT))
+        : all.slice(-integer(last, DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT));
     return { status: 200, body: { messages: messages as unknown as JsonValue } };
   }
 

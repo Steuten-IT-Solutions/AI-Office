@@ -1,0 +1,76 @@
+<!doctype html>
+<!--
+  Schlichtes Webinterface des AI Office (P10, plan.md Kap. 5.11). Vite baut daraus dist/. Keine
+  Inline-Skripte und keine Inline-Styles (CSP). Alle Inhalte setzt src/app.ts nur als Text.
+-->
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>AI Office</title>
+    <script type="module" src="/src/app.ts"></script>
+  </head>
+  <body>
+    <header>
+      <h1>AI Office</h1>
+      <span id="console-link"></span>
+      <button id="logout" type="button" hidden>Abmelden</button>
+    </header>
+    <p id="status" role="status" aria-live="polite">Lade …</p>
+
+    <main>
+      <section id="login" hidden>
+        <h2>Anmeldung</h2>
+        <form id="login-form">
+          <label for="password">Passwort</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+          <button type="submit">Anmelden</button>
+        </form>
+        <p id="login-error" role="alert"></p>
+      </section>
+
+      <div id="app" hidden>
+        <section id="chat-section">
+          <h2>Chat</h2>
+          <form id="chat-form">
+            <div class="row">
+              <label for="chat-to">An</label>
+              <select id="chat-to"></select>
+              <label for="chat-kind">Art</label>
+              <select id="chat-kind">
+                <option value="auftrag">Auftrag</option>
+                <option value="frage">Frage</option>
+                <option value="info">Info (weckt nicht)</option>
+              </select>
+            </div>
+            <textarea id="chat-text" rows="3" maxlength="20000" aria-label="Nachricht"></textarea>
+            <button id="chat-send" type="submit">Senden</button>
+            <p id="chat-error" role="alert"></p>
+          </form>
+          <ol id="chat-log" class="chat"></ol>
+        </section>
+
+        <section id="agents-section">
+          <h2>Agenten</h2>
+          <div id="agents"></div>
+        </section>
+
+        <section id="costs-section">
+          <h2>Kosten und Kontingent</h2>
+          <div id="costs"></div>
+        </section>
+
+        <section id="prs-section">
+          <h2>Pull Requests</h2>
+          <div id="prs"></div>
+        </section>
+
+        <section id="timeline-section">
+          <h2>Zeitleiste</h2>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

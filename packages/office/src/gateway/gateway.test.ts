@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,6 +20,8 @@ import {
 } from "./gateway.ts";
 import { hashPassword } from "./password.ts";
 import { SESSION_COOKIE, Sessions } from "./sessions.ts";
+import { CONTENT_SECURITY_POLICY, StaticFiles } from "./static-files.ts";
+import type { PullRequestView, QuotaView } from "./views.ts";
 import { acceptKey } from "./websocket.ts";
 
 const HOST = "office.aio.internal";
@@ -56,12 +58,20 @@ function setup(options: Partial<GatewayOptions> = {}): void {
     },
     ceoViaCooOnly: () => viaCoo,
     log: () => undefined,
+    // Ein kleiner Ersatz für die Ausgabe von Vite; den echten Build prüft static-files.test.ts.
+    web: new StaticFiles(join(dir, "dist")),
     ...options,
   });
 }
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "aio-gateway-"));
+  mkdirSync(join(dir, "dist", "assets"), { recursive: true });
+  writeFileSync(
+    join(dir, "dist", "index.html"),
+    '<!doctype html><script type="module" src="/assets/app-test.js"></script>',
+  );
+  writeFileSync(join(dir, "dist", "assets", "app-test.js"), "export {};");
   const start = loadStartData();
   store = EventStore.open(join(dir, "office.db"));
   office = Office.open(store, start.building, { now: () => new Date("2026-11-05T09:00:00Z") });
@@ -94,6 +104,7 @@ interface Response {
   status: number;
   headers: IncomingHttpHeaders;
   json: Record<string, unknown>;
+  text: string;
 }
 
 interface CallOptions {
@@ -119,10 +130,12 @@ function call(method: string, path: string, options: CallOptions = {}): Promise<
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("end", () => {
         const text = Buffer.concat(chunks).toString("utf8");
+        const json = (res.headers["content-type"] ?? "").startsWith("application/json");
         resolve({
           status: res.statusCode ?? 0,
           headers: res.headers,
-          json: text === "" ? {} : (JSON.parse(text) as Record<string, unknown>),
+          json: text === "" || !json ? {} : (JSON.parse(text) as Record<string, unknown>),
+          text,
         });
       });
     });
@@ -345,8 +358,9 @@ describe("Anfragen", () => {
   });
 
   it("antwortet 404 und 405 mit Allow", async () => {
-    expect((await call("GET", "/")).status).toBe(404);
+    expect((await call("GET", "/index.html")).status).toBe(404);
     expect((await call("GET", "/api/gibt-es-nicht")).status).toBe(404);
+    expect((await call("POST", "/assets/app-test.js", { body: {} })).headers["allow"]).toBe("GET");
     const res = await call("DELETE", "/api/chat");
     expect(res.status).toBe(405);
     expect(res.headers["allow"]).toBe("GET, POST");
@@ -361,7 +375,11 @@ describe("Anfragen", () => {
     expect(agents.map((a) => a.id)).toContain(COO);
     expect(agents.every((a) => !a.running && a.costUsd === 0)).toBe(true);
     expect(res.json["cooId"]).toBe(COO);
-    expect(res.json["costs"]).toEqual({ totalUsd: 0 });
+    expect(res.json["costs"]).toEqual({ totalUsd: 0, runs: 0 });
+    expect(res.json["quota"]).toBeNull();
+    expect(res.json["consoleUrl"]).toBeNull();
+    const coo = agents.find((a) => a.id === COO) as unknown as Record<string, unknown>;
+    expect(typeof coo["roomName"]).toBe("string");
     expect(res.json["lastSeq"]).toBe(office.state.lastSeq);
   });
 
@@ -1055,5 +1073,200 @@ describe("WebSocket", () => {
     });
     ws.close(1000);
     expect(await closed).toBe(1000);
+  });
+});
+
+describe("Webinterface (P10)", () => {
+  it("liefert die Seite ohne Anmeldung, mit CSP und ohne Daten", async () => {
+    const page = await call("GET", "/");
+    expect(page.status).toBe(200);
+    expect(page.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(page.headers["content-security-policy"]).toBe(CONTENT_SECURITY_POLICY);
+    expect(page.headers["x-frame-options"]).toBe("DENY");
+    expect(page.headers["x-content-type-options"]).toBe("nosniff");
+    expect(page.headers["cache-control"]).toBe("no-store");
+    expect(page.text).toContain('src="/assets/app-test.js"');
+    const script = await call("GET", "/assets/app-test.js");
+    expect(script.status).toBe(200);
+    expect(script.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(script.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(script.headers["content-security-policy"]).toBe(CONTENT_SECURITY_POLICY);
+    // Falscher Hostname auch für Dateien (DNS-Rebinding).
+    expect((await call("GET", "/", { headers: { host: "evil.example" } })).status).toBe(421);
+    expect((await call("GET", "/../package.json")).status).toBe(404);
+    expect((await call("GET", "/index.html")).status).toBe(404);
+  });
+
+  it("ohne Build meldet die Seite, wie man baut", async () => {
+    setup({ web: new StaticFiles(join(dir, "gibt-es-nicht")) });
+    const page = await call("GET", "/");
+    expect(page.status).toBe(503);
+    expect(page.json["error"]).toContain("build:web");
+  });
+
+  it("PRs: ohne Quelle nicht angebunden, mit Quelle geprüft", async () => {
+    const auth = await login();
+    const get = async () =>
+      (await call("GET", "/api/prs", { headers: { cookie: auth.cookie } })).json;
+    expect((await call("GET", "/api/prs")).status).toBe(401);
+    expect(await get()).toEqual({ available: false, pullRequests: [] });
+    const pr: PullRequestView = {
+      repo: "Steuten-IT-Solutions/AI-Office",
+      number: 30,
+      title: "<b>Titel</b>",
+      draft: true,
+      ci: "pending",
+      headSha: "a".repeat(40),
+      agentIds: [CTO],
+      costUsd: 1.25,
+      summary: "Zusammenfassung",
+      criticalPaths: ["package.json"],
+      updatedAt: "2026-11-05T09:00:00Z",
+    };
+    let list: PullRequestView[] | null = [pr];
+    const logged: string[] = [];
+    setup({
+      pullRequests: () => list,
+      log: (message) => {
+        logged.push(message);
+      },
+    });
+    const fresh = await login();
+    const read = async () =>
+      (await call("GET", "/api/prs", { headers: { cookie: fresh.cookie } })).json;
+    expect(await read()).toEqual({ available: true, pullRequests: [pr] });
+    // Ungültige Daten (hier ein Repo, aus dem der Browser einen Link bauen würde) gehen nicht raus.
+    list = [{ ...pr, repo: "evil.example/../x" }];
+    expect(await read()).toEqual({ available: false, pullRequests: [] });
+    list = [{ ...pr, extra: 1 } as unknown as PullRequestView];
+    expect(await read()).toEqual({ available: false, pullRequests: [] });
+    expect(logged).toEqual(["Gateway: PRs ungültig", "Gateway: PRs ungültig"]);
+    list = null;
+    expect(await read()).toEqual({ available: false, pullRequests: [] });
+  });
+
+  it("Kontingent und Link zur Konsole im Zustand, ungültiges Kontingent nicht", async () => {
+    const quota: QuotaView = {
+      measuredAt: "2026-11-05T09:00:00Z",
+      paused: false,
+      note: null,
+      windows: [
+        { label: "Woche gesamt", usedPercent: 31.5, pauseAtPercent: 55, resetsAt: null },
+        {
+          label: "5-Stunden-Fenster",
+          usedPercent: 12,
+          pauseAtPercent: 70,
+          resetsAt: "2026-11-05T12:00:00Z",
+        },
+      ],
+    };
+    let current: QuotaView | null = quota;
+    const logged: string[] = [];
+    setup({
+      quota: () => current,
+      consoleUrl: "https://konsole.aio-sup.internal",
+      log: (message) => {
+        logged.push(message);
+      },
+    });
+    const auth = await login();
+    const state = async () =>
+      (await call("GET", "/api/state", { headers: { cookie: auth.cookie } })).json;
+    expect(await state()).toMatchObject({ quota, consoleUrl: "https://konsole.aio-sup.internal/" });
+    current = { ...quota, measuredAt: "gestern" };
+    expect((await state())["quota"]).toBeNull();
+    expect(logged).toEqual(["Gateway: Kontingent ungültig"]);
+    for (const consoleUrl of [
+      "javascript:alert(1)",
+      "http://konsole",
+      "https://a:b@konsole",
+      "x",
+    ]) {
+      expect(() => {
+        setup({ consoleUrl });
+      }).toThrow(/consoleUrl/);
+    }
+  });
+
+  it("Zeitleiste: jüngste Ereignisse mit last, Kosten des Laufs je Handlung (AK 11)", async () => {
+    const auth = await login();
+    const get = async (query: string) =>
+      call("GET", `/api/timeline?${query}`, { headers: { cookie: auth.cookie } });
+    const trigger = office.sendMessage(CEO_ID, { toId: COO, kind: "auftrag", text: "los" });
+    office.recordRunStarted(
+      {
+        agentId: COO,
+        taskId: null,
+        runType: "buero",
+        model: "sonnet",
+        inboxUpToSeq: office.state.lastSeq,
+        triggerIds: [trigger.id],
+      },
+      { runId: "run-1" },
+    );
+    office.sendMessage(COO, { toId: CEO_ID, kind: "info", text: "erledigt" }, { runId: "run-1" });
+    const before = (await get("last=1")).json["events"] as { runCostUsd: number | null }[];
+    expect(before).toHaveLength(1);
+    expect(before[0]?.runCostUsd).toBeNull();
+    office.recordRunFinished(
+      COO,
+      {
+        taskId: null,
+        runType: "buero",
+        model: "claude-sonnet",
+        exit: "completed",
+        resultSubtype: "success",
+        totalCostUsd: 0.42,
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        numTurns: 2,
+        rateLimitStatus: null,
+        invalidLines: 0,
+        toolCalls: [],
+        inboxUpToSeq: office.state.lastSeq,
+      },
+      { runId: "run-1" },
+    );
+    const res = await get("last=4");
+    const events = res.json["events"] as {
+      seq: number;
+      type: string;
+      actor: string;
+      occurredAt: string;
+      runCostUsd: number | null;
+    }[];
+    expect(events.map((e) => e.type)).toEqual([
+      "message.sent",
+      "run.started",
+      "message.sent",
+      "run.finished",
+    ]);
+    expect(events.at(-1)?.seq).toBe(office.state.lastSeq);
+    expect(events.map((e) => e.runCostUsd)).toEqual([null, 0.42, 0.42, 0.42]);
+    expect(events.every((e) => e.actor !== "" && e.occurredAt !== "")).toBe(true);
+    expect((await get("last=999")).json["events"]).toHaveLength(office.state.lastSeq);
+    expect((await get("last=2&after=1")).status).toBe(400);
+    expect((await get("last=2&limit=1")).status).toBe(400);
+    expect((await get("last=0")).json["events"]).toHaveLength(1);
+  });
+
+  it("Chat: jüngste Nachrichten mit last", async () => {
+    const auth = await login();
+    for (const text of ["eins", "zwei", "drei"]) {
+      office.sendMessage(CEO_ID, { toId: COO, kind: "info", text });
+    }
+    office.sendMessage(CEO_ID, { toId: CTO, kind: "info", text: "anderer" });
+    const res = await call("GET", `/api/chat?with=${COO}&last=2`, {
+      headers: { cookie: auth.cookie },
+    });
+    expect((res.json["messages"] as { text: string }[]).map((m) => m.text)).toEqual([
+      "zwei",
+      "drei",
+    ]);
+    expect(
+      (await call("GET", "/api/chat?last=2&after=1", { headers: { cookie: auth.cookie } })).status,
+    ).toBe(400);
   });
 });

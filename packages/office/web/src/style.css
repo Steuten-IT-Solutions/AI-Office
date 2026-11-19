@@ -1,0 +1,248 @@
+/*
+ * Schlichtes Webinterface (P10). Pixel-Art und Gebäude kommen in Etappe 2 (E17, E19).
+ * Keine fremden Schriften oder Bilder: Die CSP erlaubt nur die eigene Herkunft.
+ */
+
+:root {
+  --bg: #f4f1e8;
+  --panel: #fffdf7;
+  --ink: #1f1d1a;
+  --muted: #6b665c;
+  --line: #2b2925;
+  --accent: #2f5d8a;
+  --warn: #a14a12;
+  --ok: #2d6a3a;
+  --own: #e6eef7;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1a18;
+    --panel: #262421;
+    --ink: #ece7dc;
+    --muted: #a59e90;
+    --line: #8a8478;
+    --accent: #8fb6dd;
+    --warn: #f0a56b;
+    --ok: #8ccf98;
+    --own: #2c3746;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    15px/1.45 ui-monospace,
+    "Cascadia Mono",
+    "DejaVu Sans Mono",
+    monospace;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 12px 16px;
+  border-bottom: 3px solid var(--line);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.3rem;
+  margin-right: auto;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+#status {
+  margin: 0;
+  padding: 4px 16px;
+  color: var(--muted);
+}
+
+main {
+  padding: 0 16px 24px;
+}
+
+#app {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+}
+
+#app[hidden],
+[hidden] {
+  display: none;
+}
+
+section {
+  background: var(--panel);
+  border: 3px solid var(--line);
+  box-shadow: 4px 4px 0 var(--line);
+  padding: 12px;
+  min-width: 0;
+}
+
+#timeline-section,
+#chat-section {
+  grid-column: 1 / -1;
+}
+
+a {
+  color: var(--accent);
+}
+
+button,
+.button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 4px 8px;
+}
+
+button,
+.button {
+  cursor: pointer;
+  display: inline-block;
+  text-decoration: none;
+  box-shadow: 2px 2px 0 var(--line);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--muted);
+  overflow-wrap: anywhere;
+}
+
+li:last-child {
+  border-bottom: none;
+}
+
+.meta,
+.role,
+.cost,
+time {
+  color: var(--muted);
+}
+
+.role,
+.meta {
+  display: block;
+}
+
+.empty,
+.note {
+  color: var(--muted);
+}
+
+.hint {
+  border-left: 4px solid var(--warn);
+  padding-left: 8px;
+}
+
+[data-state="running"] strong {
+  color: var(--ok);
+}
+
+[data-kind="wichtig"],
+[data-state="over"],
+[data-state="paused"],
+[data-state="failure"] {
+  color: var(--warn);
+}
+
+[data-kind="unbekannt"] {
+  color: var(--muted);
+}
+
+.critical {
+  margin: 4px 0;
+  color: var(--warn);
+}
+
+.critical ul {
+  padding-left: 16px;
+  list-style: square;
+}
+
+.critical li {
+  border: none;
+  padding: 0;
+}
+
+.summary {
+  margin: 4px 0;
+}
+
+.chat {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.chat .text {
+  white-space: pre-wrap;
+}
+
+.chat .own {
+  background: var(--own);
+  padding-left: 6px;
+}
+
+.timeline {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+#login-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+#login-error,
+#chat-error {
+  color: var(--warn);
+  margin: 4px 0 0;
+}
