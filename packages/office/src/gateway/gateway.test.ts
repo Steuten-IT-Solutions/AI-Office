@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ import {
 } from "./gateway.ts";
 import { hashPassword } from "./password.ts";
 import { SESSION_COOKIE, Sessions } from "./sessions.ts";
-import { CONTENT_SECURITY_POLICY } from "./static-files.ts";
+import { CONTENT_SECURITY_POLICY, StaticFiles } from "./static-files.ts";
 import type { PullRequestView, QuotaView } from "./views.ts";
 import { acceptKey } from "./websocket.ts";
 
@@ -58,12 +58,20 @@ function setup(options: Partial<GatewayOptions> = {}): void {
     },
     ceoViaCooOnly: () => viaCoo,
     log: () => undefined,
+    // Ein kleiner Ersatz für die Ausgabe von Vite; den echten Build prüft static-files.test.ts.
+    web: new StaticFiles(join(dir, "dist")),
     ...options,
   });
 }
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "aio-gateway-"));
+  mkdirSync(join(dir, "dist", "assets"), { recursive: true });
+  writeFileSync(
+    join(dir, "dist", "index.html"),
+    '<!doctype html><script type="module" src="/assets/app-test.js"></script>',
+  );
+  writeFileSync(join(dir, "dist", "assets", "app-test.js"), "export {};");
   const start = loadStartData();
   store = EventStore.open(join(dir, "office.db"));
   office = Office.open(store, start.building, { now: () => new Date("2026-11-05T09:00:00Z") });
@@ -352,7 +360,7 @@ describe("Anfragen", () => {
   it("antwortet 404 und 405 mit Allow", async () => {
     expect((await call("GET", "/index.html")).status).toBe(404);
     expect((await call("GET", "/api/gibt-es-nicht")).status).toBe(404);
-    expect((await call("POST", "/app.js", { body: {} })).headers["allow"]).toBe("GET");
+    expect((await call("POST", "/assets/app-test.js", { body: {} })).headers["allow"]).toBe("GET");
     const res = await call("DELETE", "/api/chat");
     expect(res.status).toBe(405);
     expect(res.headers["allow"]).toBe("GET, POST");
@@ -1077,13 +1085,23 @@ describe("Webinterface (P10)", () => {
     expect(page.headers["x-frame-options"]).toBe("DENY");
     expect(page.headers["x-content-type-options"]).toBe("nosniff");
     expect(page.headers["cache-control"]).toBe("no-store");
-    expect(page.text).toContain('<script type="module" src="/app.js"></script>');
-    const script = await call("GET", "/app.js");
+    expect(page.text).toContain('src="/assets/app-test.js"');
+    const script = await call("GET", "/assets/app-test.js");
     expect(script.status).toBe(200);
     expect(script.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(script.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(script.headers["content-security-policy"]).toBe(CONTENT_SECURITY_POLICY);
     // Falscher Hostname auch für Dateien (DNS-Rebinding).
     expect((await call("GET", "/", { headers: { host: "evil.example" } })).status).toBe(421);
     expect((await call("GET", "/../package.json")).status).toBe(404);
+    expect((await call("GET", "/index.html")).status).toBe(404);
+  });
+
+  it("ohne Build meldet die Seite, wie man baut", async () => {
+    setup({ web: new StaticFiles(join(dir, "gibt-es-nicht")) });
+    const page = await call("GET", "/");
+    expect(page.status).toBe(503);
+    expect(page.json["error"]).toContain("build:web");
   });
 
   it("PRs: ohne Quelle nicht angebunden, mit Quelle geprüft", async () => {

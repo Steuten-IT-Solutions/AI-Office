@@ -268,9 +268,9 @@ export {
 } from "./gateway/sessions.ts";
 export {
   CONTENT_SECURITY_POLICY,
-  DEFAULT_WEB_DIR,
+  CONTENT_TYPES,
+  DEFAULT_WEB_DIST,
   StaticFiles,
-  WEB_FILES,
   WEB_HEADERS,
   type WebFile,
 } from "./gateway/static-files.ts";

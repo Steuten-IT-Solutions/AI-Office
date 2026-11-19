@@ -10,7 +10,7 @@ import type { JsonValue } from "../events/canonical-json.ts";
 import type { EventStore } from "../events/event-store.ts";
 import { DEFAULT_PLANNER_CONFIG, activeRun, type PlannerConfig } from "../planner/planner.ts";
 import { verifyPassword } from "./password.ts";
-import { StaticFiles, WEB_FILES, WEB_HEADERS } from "./static-files.ts";
+import { StaticFiles, WEB_HEADERS } from "./static-files.ts";
 import {
   checkConsoleUrl,
   pullRequestListSchema,
@@ -53,8 +53,8 @@ import {
  * Über den WebSocket gehen nur Hinweise „es gibt neue Ereignisse bis Sequenz N“. Die Daten holt
  * das Webinterface über HTTP; so gilt für beide Wege dieselbe Prüfung.
  *
- * Das Gateway liefert auch das Webinterface aus (P10, `static-files.ts`): feste Liste von Dateien,
- * eigene CSP, keine Inline-Skripte.
+ * Das Gateway liefert auch das von Vite gebaute Webinterface aus (P10, `static-files.ts`): nur
+ * Dateien aus `web/dist/`, eigene CSP, keine Inline-Skripte.
  *
  * Eine Nachricht des CEO schreibt das Gateway ins Ereignisprotokoll und ruft `onCeoMessage`.
  * Den Lauf beim Empfänger beantragt der Planer (P06) nach seinen Weckregeln: `auftrag` und
@@ -82,7 +82,6 @@ const ALLOWED_METHODS: Readonly<Record<string, string>> = {
   "/api/chat": "GET, POST",
   "/api/prs": "GET",
   [LIVE_PATH]: "GET",
-  ...Object.fromEntries(Object.keys(WEB_FILES).map((path) => [path, "GET"])),
 };
 
 export interface LoginThrottle {
@@ -125,7 +124,7 @@ export interface GatewayOptions {
   staleRunMinutes?: number;
   /** Für Fehler, die nicht an den Browser gehen. Standard: `console.error`. */
   log?: (message: string, error: unknown) => void;
-  /** Dateien des Webinterface. Standard: `packages/office/web/`. */
+  /** Gebautes Webinterface. Standard: `packages/office/web/dist/`. */
   web?: StaticFiles;
   /**
    * Stand des Kontingents vom Supervisor (S04). `null` oder fehlend: noch keine Messung, das
@@ -409,12 +408,22 @@ export class OfficeGateway {
       default:
         break;
     }
-    if (req.method === "GET") {
-      // Ohne Anmeldung und ohne Prüfung der Herkunft: Die Dateien enthalten keine Daten.
-      const file = this.web.get(url.pathname);
-      if (file !== undefined) {
-        return { status: 200, file, headers: { ...WEB_HEADERS } };
-      }
+    // Webinterface: ohne Anmeldung und ohne Prüfung der Herkunft, die Dateien enthalten keine Daten.
+    const file = this.web.get(url.pathname);
+    if (file !== undefined) {
+      return req.method === "GET"
+        ? {
+            status: 200,
+            file,
+            headers: { ...WEB_HEADERS, "cache-control": file.cacheControl },
+          }
+        : { status: 405, body: { error: "Methode nicht erlaubt" }, headers: { allow: "GET" } };
+    }
+    if (url.pathname === "/" && !this.web.built) {
+      return {
+        status: 503,
+        body: { error: "Webinterface nicht gebaut: pnpm --filter @ai-office/office build:web" },
+      };
     }
     const allow = ALLOWED_METHODS[url.pathname];
     if (allow !== undefined) {

@@ -1,30 +1,29 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Auslieferung des Webinterface (P10). Der Browser-Code liegt als ES-Module ohne Build-Schritt in
- * `packages/office/web/`. Damit läuft im Browser genau der Code, der im PR geprüft wurde.
+ * Auslieferung des Webinterface (P10). Vite baut den Browser-Code nach `packages/office/web/dist/`
+ * (`pnpm --filter @ai-office/office build:web`, plan.md Kap. 3.4).
  *
- * Ausgeliefert wird nur, was hier steht. Pfade aus der Anfrage werden nie mit dem Verzeichnis
- * verbunden, Path Traversal ist damit ausgeschlossen.
+ * Ausgeliefert werden nur `index.html` unter `/` und die Dateien in `dist/assets/` mit bekannter
+ * Endung. Die Liste entsteht beim ersten Zugriff aus dem Verzeichnis; ein Pfad aus der Anfrage
+ * wird nur in dieser Liste nachgeschlagen und nie mit dem Verzeichnis verbunden. Path Traversal
+ * ist damit ausgeschlossen.
  */
 
-export const DEFAULT_WEB_DIR = fileURLToPath(new URL("../../web/", import.meta.url));
+export const DEFAULT_WEB_DIST = fileURLToPath(new URL("../../web/dist/", import.meta.url));
+
+/** Inhaltstypen nach Endung. Andere Dateien liefert das Gateway nicht aus. */
+export const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+};
 
 const HTML = "text/html; charset=utf-8";
-const JS = "text/javascript; charset=utf-8";
-const CSS = "text/css; charset=utf-8";
 
-/** URL-Pfad → Datei im Web-Verzeichnis und Inhaltstyp. */
-export const WEB_FILES: Readonly<Record<string, { file: string; type: string }>> = {
-  "/": { file: "index.html", type: HTML },
-  "/style.css": { file: "style.css", type: CSS },
-  "/app.js": { file: "app.js", type: JS },
-  "/api.js": { file: "api.js", type: JS },
-  "/dom.js": { file: "dom.js", type: JS },
-  "/format.js": { file: "format.js", type: JS },
-  "/views.js": { file: "views.js", type: JS },
-};
+/** Dateinamen, wie Vite sie in `assets/` schreibt. */
+const ASSET_NAME = /^[A-Za-z0-9_-]+\.(js|css)$/;
 
 /**
  * Content-Security-Policy des Office. Maßgeblich ist die des Reverse-Proxys (S13, Kap. 4.7), der
@@ -52,31 +51,81 @@ export const WEB_HEADERS: Readonly<Record<string, string>> = {
   "cross-origin-resource-policy": "same-origin",
 };
 
+/** Dateien unter `/assets/` tragen einen Hash im Namen und ändern sich nie. */
+const IMMUTABLE = "public, max-age=31536000, immutable";
+
 export interface WebFile {
   type: string;
   body: Buffer;
+  /** `Cache-Control`; `index.html` wird nie zwischengespeichert. */
+  cacheControl: string;
 }
 
-/** Liest die Dateien beim ersten Zugriff und hält sie danach im Speicher. */
+/** Die Dateien des gebauten Webinterface, im Speicher gehalten. */
 export class StaticFiles {
   private readonly dir: string;
-  private readonly cache = new Map<string, WebFile>();
+  private files: Map<string, WebFile> | null = null;
 
-  constructor(dir: string = DEFAULT_WEB_DIR) {
-    this.dir = dir.endsWith("/") ? dir : `${dir}/`;
+  constructor(dir: string = DEFAULT_WEB_DIST) {
+    this.dir = dir;
+  }
+
+  /** Ob der Build vorhanden ist (`index.html` existiert). */
+  get built(): boolean {
+    return this.load().has("/");
+  }
+
+  /** URL-Pfade, die ausgeliefert werden. */
+  paths(): string[] {
+    return [...this.load().keys()];
   }
 
   /** `undefined`, wenn der Pfad nicht zum Webinterface gehört. */
   get(path: string): WebFile | undefined {
-    const entry = Object.hasOwn(WEB_FILES, path) ? WEB_FILES[path] : undefined;
-    if (entry === undefined) {
-      return undefined;
+    return this.load().get(path);
+  }
+
+  private load(): Map<string, WebFile> {
+    if (this.files !== null) {
+      return this.files;
     }
-    let file = this.cache.get(path);
-    if (file === undefined) {
-      file = { type: entry.type, body: readFileSync(this.dir + entry.file) };
-      this.cache.set(path, file);
+    const files = new Map<string, WebFile>();
+    const index = join(this.dir, "index.html");
+    if (!isFile(index)) {
+      // Ohne Build kein Zwischenspeichern: Ein späteres `build:web` soll ohne Neustart wirken.
+      return files;
     }
-    return file;
+    files.set("/", { type: HTML, body: readFileSync(index), cacheControl: "no-store" });
+    const assets = join(this.dir, "assets");
+    for (const name of isDirectory(assets) ? readdirSync(assets).sort() : []) {
+      const match = ASSET_NAME.exec(name);
+      const path = join(assets, name);
+      if (match === null || !isFile(path)) {
+        continue;
+      }
+      files.set(`/assets/${name}`, {
+        type: CONTENT_TYPES[`.${match[1] as string}`] as string,
+        body: readFileSync(path),
+        cacheControl: IMMUTABLE,
+      });
+    }
+    this.files = files;
+    return files;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }

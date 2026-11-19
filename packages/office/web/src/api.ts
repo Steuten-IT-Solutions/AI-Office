@@ -5,41 +5,30 @@
  */
 
 export class ApiError extends Error {
-  /**
-   * @param {number} status
-   * @param {string} message
-   */
-  constructor(status, message) {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
   }
 }
 
-/**
- * @param {Response} res
- * @returns {Promise<unknown>}
- */
-async function body(res) {
+async function body(res: Response): Promise<unknown> {
   const text = await res.text();
   if (text === "") {
     return null;
   }
   try {
-    return /** @type {unknown} */ (JSON.parse(text));
+    return JSON.parse(text) as unknown;
   } catch {
     throw new ApiError(res.status, "Antwort ist kein JSON");
   }
 }
 
-/**
- * @param {unknown} data
- * @param {number} status
- * @returns {string}
- */
-function errorText(data, status) {
+function errorText(data: unknown, status: number): string {
   if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-    const message = /** @type {Record<string, unknown>} */ (data)["error"];
+    const message = (data as Record<string, unknown>)["error"];
     if (typeof message === "string") {
       return message;
     }
@@ -48,21 +37,14 @@ function errorText(data, status) {
 }
 
 export class Api {
-  /** @type {string | null} */
-  csrfToken = null;
+  csrfToken: string | null = null;
+  private readonly fetch: typeof fetch;
 
-  /**
-   * @param {typeof fetch} [fetchFn]
-   */
-  constructor(fetchFn) {
+  constructor(fetchFn?: typeof fetch) {
     this.fetch = fetchFn ?? globalThis.fetch.bind(globalThis);
   }
 
-  /**
-   * @param {string} path
-   * @returns {Promise<unknown>}
-   */
-  async get(path) {
+  async get(path: string): Promise<unknown> {
     const res = await this.fetch(path, {
       method: "GET",
       credentials: "same-origin",
@@ -76,14 +58,11 @@ export class Api {
     return data;
   }
 
-  /**
-   * @param {string} path
-   * @param {unknown} payload
-   * @returns {Promise<unknown>}
-   */
-  async post(path, payload) {
-    /** @type {Record<string, string>} */
-    const headers = { "content-type": "application/json", accept: "application/json" };
+  async post(path: string, payload: unknown): Promise<unknown> {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json",
+    };
     if (this.csrfToken !== null) {
       headers["x-csrf-token"] = this.csrfToken;
     }

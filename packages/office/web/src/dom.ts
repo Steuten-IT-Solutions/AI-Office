@@ -23,21 +23,15 @@ const ATTRIBUTES = new Set([
   "data-state",
 ]);
 
-/**
- * @typedef {string | number | Node | null | undefined | false} Child
- */
+export type Child = string | number | Node | null | undefined | false;
 
-/**
- * Element mit Attributen und Kindern. Zeichenketten und Zahlen werden Textknoten.
- *
- * @template {keyof HTMLElementTagNameMap} K
- * @param {Document} doc
- * @param {K} tag
- * @param {Record<string, string> | null} [attrs]
- * @param {...Child} children
- * @returns {HTMLElementTagNameMap[K]}
- */
-export function h(doc, tag, attrs, ...children) {
+/** Element mit Attributen und Kindern. Zeichenketten und Zahlen werden Textknoten. */
+export function h<K extends keyof HTMLElementTagNameMap>(
+  doc: Document,
+  tag: K,
+  attrs?: Record<string, string> | null,
+  ...children: Child[]
+): HTMLElementTagNameMap[K] {
   const element = doc.createElement(tag);
   for (const [name, value] of Object.entries(attrs ?? {})) {
     if (!ATTRIBUTES.has(name)) {
@@ -49,12 +43,7 @@ export function h(doc, tag, attrs, ...children) {
   return element;
 }
 
-/**
- * @param {Document} doc
- * @param {Element} parent
- * @param {readonly Child[]} children
- */
-export function append(doc, parent, children) {
+export function append(doc: Document, parent: Element, children: readonly Child[]): void {
   for (const child of children) {
     if (child === null || child === undefined || child === false) {
       continue;
@@ -67,29 +56,18 @@ export function append(doc, parent, children) {
   }
 }
 
-/**
- * Ersetzt den Inhalt eines Elements.
- *
- * @param {Document} doc
- * @param {Element} parent
- * @param {...Child} children
- */
-export function replace(doc, parent, ...children) {
+/** Ersetzt den Inhalt eines Elements. */
+export function replace(doc: Document, parent: Element, ...children: Child[]): void {
   parent.replaceChildren();
   append(doc, parent, children);
 }
 
-/**
- * Prüft eine URL für einen Link: nur `https:` ohne Zugangsdaten. Sonst `null`.
- *
- * @param {unknown} value
- * @returns {string | null}
- */
-export function safeHttpsUrl(value) {
+/** Prüft eine URL für einen Link: nur `https:` ohne Zugangsdaten. Sonst `null`. */
+export function safeHttpsUrl(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
-  let url;
+  let url: URL;
   try {
     url = new URL(value);
   } catch {
@@ -104,14 +82,13 @@ export function safeHttpsUrl(value) {
 /**
  * Link, der in einem neuen Tab öffnet, ohne `window.opener` und ohne Referrer. Ist die URL nicht
  * `https:`, entsteht nur der Text.
- *
- * @param {Document} doc
- * @param {unknown} url
- * @param {string} text
- * @param {Record<string, string>} [attrs]
- * @returns {HTMLElement}
  */
-export function externalLink(doc, url, text, attrs) {
+export function externalLink(
+  doc: Document,
+  url: unknown,
+  text: string,
+  attrs?: Record<string, string>,
+): HTMLElement {
   const href = safeHttpsUrl(url);
   if (href === null) {
     return h(doc, "span", attrs ?? null, text);

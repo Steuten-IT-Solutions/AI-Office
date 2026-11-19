@@ -2,9 +2,11 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["es2024", "dom", "dom.iterable"],
-    "allowJs": true,
-    "checkJs": true,
-    "noEmit": true
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node", "vite/client"]
   },
-  "include": ["*.js", "test/*.ts"]
+  "include": ["src", "test", "vite.config.ts"]
 }

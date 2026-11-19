@@ -1,6 +1,6 @@
 /**
  * Reine Funktionen für Texte des Webinterface (P10): Zeit, Kosten, Beschreibung der Ereignisse.
- * Kein DOM; die Ergebnisse gehen über `dom.js` nur als Text ins DOM.
+ * Kein DOM; die Ergebnisse gehen über `dom.ts` nur als Text ins DOM.
  *
  * Payloads kommen aus dem Ereignisprotokoll. Unbekannte Typen sind dort ungeprüft gespeichert
  * (P03), deshalb liest jede Funktion hier defensiv und rechnet mit beliebigen Werten.
@@ -12,68 +12,52 @@ export const TIMELINE_TEXT_CHARS = 280;
 /** `owner/name` nach den Zeichenregeln von GitHub, wie im Gateway (`views.ts`). */
 const REPO_PATTERN = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 
-/**
- * @typedef {object} Lookup
- * @property {(id: string) => string} agentName Anzeigename einer Agenten-ID, `ceo` oder `system`.
- * @property {(id: string) => string | null} taskTitle Titel einer Aufgabe, sonst `null`.
- */
+export interface Lookup {
+  /** Anzeigename einer Agenten-ID, `ceo` oder `system`. */
+  agentName(id: string): string;
+  /** Titel einer Aufgabe, sonst `null`. */
+  taskTitle(id: string): string | null;
+}
 
-/**
- * @typedef {object} TimelineEvent
- * @property {number} seq
- * @property {string} id
- * @property {string} type
- * @property {number} version
- * @property {string} actor
- * @property {string | null} runId
- * @property {string} occurredAt
- * @property {unknown} payload
- * @property {number | null} runCostUsd
- */
+/** Ein Eintrag aus `GET /api/timeline`. */
+export interface TimelineEvent {
+  seq: number;
+  id: string;
+  type: string;
+  version: number;
+  actor: string;
+  runId: string | null;
+  occurredAt: string;
+  payload: unknown;
+  runCostUsd: number | null;
+}
 
-/**
- * @typedef {object} EventText
- * @property {string} agentId Wer gehandelt hat (bei `run.started` der Agent, nicht `system`).
- * @property {string} text
- * @property {"normal" | "wichtig" | "unbekannt"} level
- */
+export interface EventText {
+  /** Wer gehandelt hat (bei `run.started` der Agent, nicht `system`). */
+  agentId: string;
+  text: string;
+  level: "normal" | "wichtig" | "unbekannt";
+}
 
-/**
- * Feld eines Payloads als Zeichenkette, sonst `""`.
- *
- * @param {unknown} payload
- * @param {string} key
- * @returns {string}
- */
-export function field(payload, key) {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return "";
-  }
-  const value = /** @type {Record<string, unknown>} */ (payload)[key];
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Feld eines Payloads als Zeichenkette, sonst `""`. */
+export function field(payload: unknown, key: string): string {
+  const value = record(payload)?.[key];
   return typeof value === "string" ? value : "";
 }
 
-/**
- * @param {unknown} payload
- * @param {string} key
- * @returns {number | null}
- */
-export function numberField(payload, key) {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return null;
-  }
-  const value = /** @type {Record<string, unknown>} */ (payload)[key];
+export function numberField(payload: unknown, key: string): number | null {
+  const value = record(payload)?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/**
- * Kürzt einen Text auf höchstens `max` Zeichen, mit „…“ am Ende.
- *
- * @param {string} text
- * @param {number} max
- * @returns {string}
- */
-export function shorten(text, max) {
+/** Kürzt einen Text auf höchstens `max` Zeichen, mit „…“ am Ende. */
+export function shorten(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join("")}…`;
 }
@@ -81,11 +65,8 @@ export function shorten(text, max) {
 /**
  * Kosten in US-Dollar. Kleine Beträge mit vier Nachkommastellen, damit einzelne Läufe sichtbar
  * bleiben.
- *
- * @param {number} usd
- * @returns {string}
  */
-export function formatUsd(usd) {
+export function formatUsd(usd: number): string {
   const digits = Math.abs(usd) < 1 ? 4 : 2;
   return new Intl.NumberFormat("de-DE", {
     style: "currency",
@@ -95,22 +76,12 @@ export function formatUsd(usd) {
   }).format(usd);
 }
 
-/**
- * @param {number} value
- * @returns {string}
- */
-export function formatPercent(value) {
+export function formatPercent(value: number): string {
   return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(value)} %`;
 }
 
-/**
- * Zeitpunkt in der Zeitzone des Browsers, oder in `timeZone` (für Tests).
- *
- * @param {string} iso
- * @param {string} [timeZone]
- * @returns {string}
- */
-export function formatTime(iso, timeZone) {
+/** Zeitpunkt in der Zeitzone des Browsers, oder in `timeZone` (für Tests). */
+export function formatTime(iso: string, timeZone?: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return iso;
@@ -122,11 +93,13 @@ export function formatTime(iso, timeZone) {
   }).format(date);
 }
 
-/** @type {Readonly<Record<string, string>>} */
-const KIND_LABELS = { auftrag: "Auftrag", frage: "Frage", info: "Info" };
+const KIND_LABELS: Readonly<Record<string, string>> = {
+  auftrag: "Auftrag",
+  frage: "Frage",
+  info: "Info",
+};
 
-/** @type {Readonly<Record<string, string>>} */
-const STATUS_LABELS = {
+const STATUS_LABELS: Readonly<Record<string, string>> = {
   offen: "offen",
   in_arbeit: "in Arbeit",
   blockiert: "blockiert",
@@ -134,37 +107,33 @@ const STATUS_LABELS = {
   abgebrochen: "abgebrochen",
 };
 
-/** @type {Readonly<Record<string, string>>} */
-const EXIT_LABELS = {
+const EXIT_LABELS: Readonly<Record<string, string>> = {
   completed: "abgeschlossen",
   error: "mit Fehler",
   aborted: "abgebrochen",
   no_result: "ohne Ergebnis",
 };
 
-/**
- * @param {Readonly<Record<string, string>>} labels
- * @param {string} value
- * @returns {string}
- */
-function label(labels, value) {
-  return Object.hasOwn(labels, value) ? /** @type {string} */ (labels[value]) : value;
+const CI_LABELS: Readonly<Record<string, string>> = {
+  success: "CI grün",
+  failure: "CI rot",
+  pending: "CI läuft",
+  none: "keine CI",
+};
+
+function label(labels: Readonly<Record<string, string>>, value: string): string {
+  return Object.hasOwn(labels, value) ? (labels[value] as string) : value;
 }
 
-/**
- * @param {string} kind
- * @returns {string}
- */
-export function kindLabel(kind) {
+export function kindLabel(kind: string): string {
   return label(KIND_LABELS, kind);
 }
 
-/**
- * @param {Lookup} lookup
- * @param {string} taskId
- * @returns {string}
- */
-function task(lookup, taskId) {
+export function ciLabel(ci: string): string {
+  return label(CI_LABELS, ci);
+}
+
+function task(lookup: Lookup, taskId: string): string {
   const title = taskId === "" ? null : lookup.taskTitle(taskId);
   return title === null ? "einer Aufgabe" : `„${shorten(title, 80)}“`;
 }
@@ -172,32 +141,23 @@ function task(lookup, taskId) {
 /**
  * Beschreibt ein Ereignis für die Zeitleiste (AK 11: Agent, Kosten, Zeitpunkt). Die Kosten stehen
  * in `runCostUsd`, der Zeitpunkt in `occurredAt`; beides setzt die Ansicht dazu.
- *
- * @param {TimelineEvent} event
- * @param {Lookup} lookup
- * @returns {EventText}
  */
-export function describeEvent(event, lookup) {
+export function describeEvent(event: TimelineEvent, lookup: Lookup): EventText {
   const p = event.payload;
-  const name = (/** @type {string} */ id) => lookup.agentName(id);
-  const short = (/** @type {string} */ text) => shorten(text, TIMELINE_TEXT_CHARS);
-  /** @type {(text: string, level?: EventText["level"]) => EventText} */
-  const by = (text, level = "normal") => ({ agentId: event.actor, text, level });
+  const name = (id: string): string => lookup.agentName(id);
+  const short = (text: string): string => shorten(text, TIMELINE_TEXT_CHARS);
+  const by = (text: string, level: EventText["level"] = "normal"): EventText => ({
+    agentId: event.actor,
+    text,
+    level,
+  });
   switch (event.type) {
     case "agent.hired": {
-      const profile = /** @type {unknown} */ (
-        typeof p === "object" && p !== null
-          ? /** @type {Record<string, unknown>} */ (p)["profile"]
-          : null
-      );
+      const profile = record(p)?.["profile"];
       return by(`stellt ${field(profile, "name") || "jemanden"} ein (${field(profile, "role")})`);
     }
     case "agent.profile_changed": {
-      const profile = /** @type {unknown} */ (
-        typeof p === "object" && p !== null
-          ? /** @type {Record<string, unknown>} */ (p)["profile"]
-          : null
-      );
+      const profile = record(p)?.["profile"];
       return by(`ändert das Profil von ${field(profile, "name") || "jemandem"}`);
     }
     case "task.created": {
@@ -251,14 +211,8 @@ export function describeEvent(event, lookup) {
   }
 }
 
-/**
- * Link zum PR in GitHub, gebaut aus Repo und Nummer. Nie eine URL aus den Daten übernehmen.
- *
- * @param {unknown} repo
- * @param {unknown} number
- * @returns {string | null}
- */
-export function githubPullUrl(repo, number) {
+/** Link zum PR in GitHub, gebaut aus Repo und Nummer. Nie eine URL aus den Daten übernehmen. */
+export function githubPullUrl(repo: unknown, number: unknown): string | null {
   if (typeof repo !== "string" || !REPO_PATTERN.test(repo)) {
     return null;
   }
@@ -266,20 +220,4 @@ export function githubPullUrl(repo, number) {
     return null;
   }
   return `https://github.com/${repo}/pull/${String(number)}`;
-}
-
-/** @type {Readonly<Record<string, string>>} */
-const CI_LABELS = {
-  success: "CI grün",
-  failure: "CI rot",
-  pending: "CI läuft",
-  none: "keine CI",
-};
-
-/**
- * @param {string} ci
- * @returns {string}
- */
-export function ciLabel(ci) {
-  return label(CI_LABELS, ci);
 }

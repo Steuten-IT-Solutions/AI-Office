@@ -1,10 +1,10 @@
 /**
  * Ansichten des schlichten Webinterface (P10, plan.md Kap. 5.11, 7.2): Agentenliste, Kosten und
- * Kontingent, Zeitleiste, Chat und PR-Ansicht. Jede Funktion baut Elemente über `dom.js`; Texte
+ * Kontingent, Zeitleiste, Chat und PR-Ansicht. Jede Funktion baut Elemente über `dom.ts`; Texte
  * von Agenten und aus GitHub erscheinen nur als Text (AK 9).
  */
 
-import { externalLink, h } from "./dom.js";
+import { externalLink, h } from "./dom.ts";
 import {
   ciLabel,
   describeEvent,
@@ -13,102 +13,93 @@ import {
   formatUsd,
   githubPullUrl,
   kindLabel,
-} from "./format.js";
+  type Lookup,
+  type TimelineEvent,
+} from "./format.ts";
 
 /** Hinweis bei jeder PR-Ansicht (Kap. 5.11, E26). */
 export const GITHUB_IS_BINDING =
   "Verbindlich ist die Ansicht in GitHub. Dieses Webinterface ist selbst veränderbarer Code, " +
   "seine Darstellung kann fehlerhaft sein. Freigeben kannst du nur in GitHub.";
 
-/**
- * @typedef {import("./format.js").Lookup} Lookup
- * @typedef {import("./format.js").TimelineEvent} TimelineEvent
- */
+/** Ein Agent aus `GET /api/state`. */
+export interface AgentView {
+  id: string;
+  name: string;
+  role: string;
+  supervisorId: string | null;
+  roomId: string;
+  roomName: string | null;
+  running: boolean;
+  costUsd: number;
+}
 
-/**
- * @typedef {object} AgentView
- * @property {string} id
- * @property {string} name
- * @property {string} role
- * @property {string | null} supervisorId
- * @property {string} roomId
- * @property {string | null} roomName
- * @property {boolean} running
- * @property {number} costUsd
- */
+/** Wie `QuotaView` im Gateway (`src/gateway/views.ts`). */
+export interface QuotaWindow {
+  label: string;
+  usedPercent: number;
+  pauseAtPercent: number | null;
+  resetsAt: string | null;
+}
 
-/**
- * @typedef {object} QuotaWindow
- * @property {string} label
- * @property {number} usedPercent
- * @property {number | null} pauseAtPercent
- * @property {string | null} resetsAt
- */
+export interface QuotaView {
+  measuredAt: string;
+  paused: boolean;
+  note: string | null;
+  windows: QuotaWindow[];
+}
 
-/**
- * @typedef {object} QuotaView
- * @property {string} measuredAt
- * @property {boolean} paused
- * @property {string | null} note
- * @property {QuotaWindow[]} windows
- */
+/** Antwort von `GET /api/state`. */
+export interface OfficeStateView {
+  lastSeq: number;
+  cooId: string | null;
+  ceoViaCooOnly: boolean;
+  agents: AgentView[];
+  openTasks: { id: string; title: string; status: string; assigneeId: string | null }[];
+  costs: { totalUsd: number; runs: number };
+  quota: QuotaView | null;
+  consoleUrl: string | null;
+}
 
-/**
- * @typedef {object} OfficeStateView
- * @property {number} lastSeq
- * @property {string | null} cooId
- * @property {boolean} ceoViaCooOnly
- * @property {AgentView[]} agents
- * @property {{ id: string, title: string, status: string, assigneeId: string | null }[]} openTasks
- * @property {{ totalUsd: number, runs: number }} costs
- * @property {QuotaView | null} quota
- * @property {string | null} consoleUrl
- */
+/** Eine Nachricht aus `GET /api/chat`. */
+export interface ChatMessage {
+  id: string;
+  seq: number;
+  occurredAt: string;
+  fromId: string;
+  toId: string;
+  kind: string;
+  text: string;
+}
 
-/**
- * @typedef {object} ChatMessage
- * @property {string} id
- * @property {number} seq
- * @property {string} occurredAt
- * @property {string} fromId
- * @property {string} toId
- * @property {string} kind
- * @property {string} text
- */
+/** Wie `PullRequestView` im Gateway (`src/gateway/views.ts`). */
+export interface PullRequestView {
+  repo: string;
+  number: number;
+  title: string;
+  draft: boolean;
+  ci: string;
+  headSha: string;
+  agentIds: string[];
+  costUsd: number | null;
+  summary: string;
+  criticalPaths: string[];
+  updatedAt: string;
+}
 
-/**
- * @typedef {object} PullRequestView
- * @property {string} repo
- * @property {number} number
- * @property {string} title
- * @property {boolean} draft
- * @property {string} ci
- * @property {string} headSha
- * @property {string[]} agentIds
- * @property {number | null} costUsd
- * @property {string} summary
- * @property {string[]} criticalPaths
- * @property {string} updatedAt
- */
+export interface PullRequestList {
+  available: boolean;
+  pullRequests: PullRequestView[];
+}
 
-/**
- * @param {Document} doc
- * @param {string} iso
- * @returns {HTMLElement}
- */
-function time(doc, iso) {
+function time(doc: Document, iso: string): HTMLElement {
   return h(doc, "time", { datetime: iso }, formatTime(iso));
 }
 
 /**
  * Agentenliste mit Rolle, Raum, Vorgesetztem, Zustand und Kosten.
- *
- * @param {Document} doc
- * @param {OfficeStateView} state
- * @param {Lookup} lookup
- * @returns {HTMLElement}
  */
-export function renderAgents(doc, state, lookup) {
+export function renderAgents(doc: Document, state: OfficeStateView, lookup: Lookup): HTMLElement {
   if (state.agents.length === 0) {
     return h(doc, "p", { class: "empty" }, "Noch keine Agenten.");
   }
@@ -144,12 +135,8 @@ export function renderAgents(doc, state, lookup) {
 
 /**
  * Kosten aus dem Hauptbuch des Office und Kontingent vom Supervisor (Kap. 6).
- *
- * @param {Document} doc
- * @param {OfficeStateView} state
- * @returns {HTMLElement}
  */
-export function renderCosts(doc, state) {
+export function renderCosts(doc: Document, state: OfficeStateView): HTMLElement {
   const quota = state.quota;
   return h(
     doc,
@@ -203,13 +190,12 @@ export function renderCosts(doc, state) {
 
 /**
  * Eintrag der Zeitleiste: Zeitpunkt, Agent, Handlung, Kosten des Laufs (AK 11).
- *
- * @param {Document} doc
- * @param {TimelineEvent} event
- * @param {Lookup} lookup
- * @returns {HTMLElement}
  */
-export function renderTimelineItem(doc, event, lookup) {
+export function renderTimelineItem(
+  doc: Document,
+  event: TimelineEvent,
+  lookup: Lookup,
+): HTMLElement {
   const described = describeEvent(event, lookup);
   return h(
     doc,
@@ -233,13 +219,12 @@ export function renderTimelineItem(doc, event, lookup) {
 
 /**
  * Nachricht im Chat. Der Text bleibt vollständig und unverändert, nur als Text.
- *
- * @param {Document} doc
- * @param {ChatMessage} message
- * @param {Lookup} lookup
- * @returns {HTMLElement}
  */
-export function renderChatMessage(doc, message, lookup) {
+export function renderChatMessage(
+  doc: Document,
+  message: ChatMessage,
+  lookup: Lookup,
+): HTMLElement {
   const own = message.fromId === "ceo";
   return h(
     doc,
@@ -260,13 +245,12 @@ export function renderChatMessage(doc, message, lookup) {
 /**
  * PR-Ansicht (Kap. 5.11, E26): Liste mit Status, CI, Agenten, Kosten, Zusammenfassung und
  * kritischen Pfaden. Der Hinweis auf GitHub steht immer dabei, auch ohne Daten.
- *
- * @param {Document} doc
- * @param {{ available: boolean, pullRequests: PullRequestView[] }} data
- * @param {Lookup} lookup
- * @returns {HTMLElement}
  */
-export function renderPullRequests(doc, data, lookup) {
+export function renderPullRequests(
+  doc: Document,
+  data: PullRequestList,
+  lookup: Lookup,
+): HTMLElement {
   const hint = h(doc, "p", { class: "hint", role: "note" }, GITHUB_IS_BINDING);
   if (!data.available) {
     return h(
@@ -337,11 +321,7 @@ export function renderPullRequests(doc, data, lookup) {
 
 /**
  * Link zur Supervisor-Konsole (Kap. 5.11). Notaus und Freigaben liegen dort, nicht hier (E26).
- *
- * @param {Document} doc
- * @param {string | null} url
- * @returns {HTMLElement | null}
  */
-export function renderConsoleLink(doc, url) {
+export function renderConsoleLink(doc: Document, url: string | null): HTMLElement | null {
   return url === null ? null : externalLink(doc, url, "Supervisor-Konsole (Notaus)");
 }

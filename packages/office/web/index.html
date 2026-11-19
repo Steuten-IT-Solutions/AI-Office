@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
-  Schlichtes Webinterface des AI Office (P10, plan.md Kap. 5.11). Keine Inline-Skripte und keine
-  Inline-Styles (CSP). Alle Inhalte setzt app.js nur als Text.
+  Schlichtes Webinterface des AI Office (P10, plan.md Kap. 5.11). Vite baut daraus dist/. Keine
+  Inline-Skripte und keine Inline-Styles (CSP). Alle Inhalte setzt src/app.ts nur als Text.
 -->
 <html lang="de">
   <head>
@@ -9,8 +9,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>AI Office</title>
-    <link rel="stylesheet" href="/style.css" />
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/src/app.ts"></script>
   </head>
   <body>
     <header>

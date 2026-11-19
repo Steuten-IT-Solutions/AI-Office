@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { externalLink, h, replace, safeHttpsUrl } from "../dom.js";
+import { externalLink, h, replace, safeHttpsUrl } from "../src/dom.ts";
 import {
   describeEvent,
   field,
@@ -8,7 +8,7 @@ import {
   shorten,
   type Lookup,
   type TimelineEvent,
-} from "../format.js";
+} from "../src/format.ts";
 import {
   GITHUB_IS_BINDING,
   renderAgents,
@@ -19,7 +19,7 @@ import {
   renderTimelineItem,
   type OfficeStateView,
   type PullRequestView,
-} from "../views.js";
+} from "../src/views.ts";
 import { FakeDocument, FakeText, fake } from "./fake-dom.ts";
 
 /** Typische Angriffe aus Agententext, Fremdtext und Namen (AK 9). */

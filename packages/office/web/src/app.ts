@@ -1,13 +1,15 @@
 /**
- * Einstieg des schlichten Webinterface (P10). Verbindet die Ansichten aus `views.js` mit dem
+ * Einstieg des schlichten Webinterface (P10). Verbindet die Ansichten aus `views.ts` mit dem
  * Gateway: Anmeldung, Zustand, Zeitleiste, Chat, PRs und Live-Hinweise per WebSocket.
  *
  * Über den WebSocket kommt nur „neue Ereignisse bis Sequenz N“. Die Daten holt dieser Code dann
- * über HTTP (P09). Texte gehen nur über `dom.js` ins DOM (AK 9).
+ * über HTTP (P09). Texte gehen nur über `dom.ts` ins DOM (AK 9).
  */
 
-import { Api, ApiError } from "./api.js";
-import { h, replace } from "./dom.js";
+import { Api, ApiError } from "./api.ts";
+import { h, replace } from "./dom.ts";
+import type { Lookup, TimelineEvent } from "./format.ts";
+import "./style.css";
 import {
   renderAgents,
   renderChatMessage,
@@ -15,15 +17,10 @@ import {
   renderCosts,
   renderPullRequests,
   renderTimelineItem,
-} from "./views.js";
-
-/**
- * @typedef {import("./views.js").OfficeStateView} OfficeStateView
- * @typedef {import("./views.js").ChatMessage} ChatMessage
- * @typedef {import("./views.js").PullRequestView} PullRequestView
- * @typedef {import("./format.js").TimelineEvent} TimelineEvent
- * @typedef {import("./format.js").Lookup} Lookup
- */
+  type ChatMessage,
+  type OfficeStateView,
+  type PullRequestList,
+} from "./views.ts";
 
 /** Einträge der Zeitleiste im DOM. Ältere fallen heraus. */
 const MAX_TIMELINE_ITEMS = 500;
@@ -35,11 +32,7 @@ const PAGE = 500;
 const PR_REFRESH_MS = 60_000;
 const MAX_RECONNECT_MS = 30_000;
 
-/**
- * @param {string} id
- * @returns {HTMLElement}
- */
-function byId(id) {
+function byId(id: string): HTMLElement {
   const element = document.getElementById(id);
   if (element === null) {
     throw new Error(`Element #${id} fehlt in index.html`);
@@ -50,21 +43,21 @@ function byId(id) {
 const ui = {
   status: byId("status"),
   login: byId("login"),
-  loginForm: /** @type {HTMLFormElement} */ (byId("login-form")),
-  password: /** @type {HTMLInputElement} */ (byId("password")),
+  loginForm: byId("login-form") as HTMLFormElement,
+  password: byId("password") as HTMLInputElement,
   loginError: byId("login-error"),
   app: byId("app"),
-  logout: /** @type {HTMLButtonElement} */ (byId("logout")),
+  logout: byId("logout") as HTMLButtonElement,
   consoleLink: byId("console-link"),
   agents: byId("agents"),
   costs: byId("costs"),
   prs: byId("prs"),
   timeline: byId("timeline"),
-  chatForm: /** @type {HTMLFormElement} */ (byId("chat-form")),
-  chatTo: /** @type {HTMLSelectElement} */ (byId("chat-to")),
-  chatKind: /** @type {HTMLSelectElement} */ (byId("chat-kind")),
-  chatText: /** @type {HTMLTextAreaElement} */ (byId("chat-text")),
-  chatSend: /** @type {HTMLButtonElement} */ (byId("chat-send")),
+  chatForm: byId("chat-form") as HTMLFormElement,
+  chatTo: byId("chat-to") as HTMLSelectElement,
+  chatKind: byId("chat-kind") as HTMLSelectElement,
+  chatText: byId("chat-text") as HTMLTextAreaElement,
+  chatSend: byId("chat-send") as HTMLButtonElement,
   chatError: byId("chat-error"),
   chatLog: byId("chat-log"),
 };
@@ -72,8 +65,7 @@ const ui = {
 const api = new Api();
 
 const session = {
-  /** @type {OfficeStateView | null} */
-  state: null,
+  state: null as OfficeStateView | null,
   /** Höchste Sequenz in der Zeitleiste. */
   timelineSeq: 0,
   /** Gesprächspartner im Chat und höchste Sequenz seiner Nachrichten. */
@@ -81,23 +73,18 @@ const session = {
   chatSeq: 0,
   /** Gemeldeter Stand vom WebSocket. */
   liveSeq: 0,
-  /** @type {Map<string, string>} */
-  taskTitles: new Map(),
-  /** @type {WebSocket | null} */
-  socket: null,
+  taskTitles: new Map<string, string>(),
+  socket: null as WebSocket | null,
   reconnectMs: 1000,
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  reconnectTimer: undefined,
-  /** @type {ReturnType<typeof setInterval> | undefined} */
-  prTimer: undefined,
+  reconnectTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+  prTimer: undefined as ReturnType<typeof setInterval> | undefined,
   refreshing: false,
   refreshAgain: false,
   /** Entwurf im Chat: dieselbe `clientId` bei einer Wiederholung (Idempotenz im Gateway). */
   draft: { text: "", to: "", kind: "", clientId: "" },
 };
 
-/** @type {Lookup} */
-const lookup = {
+const lookup: Lookup = {
   agentName(id) {
     if (id === "ceo") {
       return "CEO";
@@ -112,28 +99,16 @@ const lookup = {
   },
 };
 
-/**
- * @param {string} text
- */
-function setStatus(text) {
+function setStatus(text: string): void {
   replace(document, ui.status, text);
 }
 
-/**
- * @param {unknown} error
- * @returns {string}
- */
-function message(error) {
+function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Ist die Sitzung abgelaufen, geht es zurück zur Anmeldung.
- *
- * @param {unknown} error
- * @returns {boolean}
- */
-function handleAuthError(error) {
+/** Ist die Sitzung abgelaufen, geht es zurück zur Anmeldung. */
+function handleAuthError(error: unknown): boolean {
   if (error instanceof ApiError && error.status === 401) {
     showLogin("Sitzung abgelaufen, bitte neu anmelden.");
     return true;
@@ -141,10 +116,7 @@ function handleAuthError(error) {
   return false;
 }
 
-/**
- * @param {string} [notice]
- */
-function showLogin(notice) {
+function showLogin(notice?: string): void {
   stopLive();
   api.csrfToken = null;
   session.state = null;
@@ -157,7 +129,7 @@ function showLogin(notice) {
   ui.password.focus();
 }
 
-async function showApp() {
+async function showApp(): Promise<void> {
   ui.login.hidden = true;
   ui.app.hidden = false;
   ui.logout.hidden = false;
@@ -176,8 +148,12 @@ async function showApp() {
   }, PR_REFRESH_MS);
 }
 
+function refreshRequested(): boolean {
+  return session.refreshAgain;
+}
+
 /** Holt alles Neue. Läuft nie doppelt; ein Aufruf währenddessen holt danach noch einmal. */
-async function refresh() {
+async function refresh(): Promise<void> {
   if (session.refreshing) {
     session.refreshAgain = true;
     return;
@@ -189,7 +165,8 @@ async function refresh() {
       await loadState();
       await loadTimeline();
       await loadChat();
-    } while (session.refreshAgain);
+      // Über eine Funktion gelesen: Die Ladefunktionen setzen den Wert während der await-Pausen.
+    } while (refreshRequested());
     setStatus(session.socket?.readyState === WebSocket.OPEN ? "Live" : "Verbinde …");
   } catch (error) {
     if (!handleAuthError(error)) {
@@ -200,8 +177,8 @@ async function refresh() {
   }
 }
 
-async function loadState() {
-  const state = /** @type {OfficeStateView} */ (await api.get("/api/state"));
+async function loadState(): Promise<void> {
+  const state = (await api.get("/api/state")) as OfficeStateView;
   session.state = state;
   for (const task of state.openTasks) {
     session.taskTitles.set(task.id, task.title);
@@ -212,12 +189,8 @@ async function loadState() {
   updateRecipients(state);
 }
 
-/**
- * Empfänger im Chat. Mit der Weisung aus E46 nur der COO.
- *
- * @param {OfficeStateView} state
- */
-function updateRecipients(state) {
+/** Empfänger im Chat. Mit der Weisung aus E46 nur der COO. */
+function updateRecipients(state: OfficeStateView): void {
   const agents = state.ceoViaCooOnly
     ? state.agents.filter((a) => a.id === state.cooId)
     : state.agents;
@@ -237,17 +210,18 @@ function updateRecipients(state) {
   }
 }
 
-async function loadTimeline() {
+async function loadTimeline(): Promise<void> {
   const first = session.timelineSeq === 0;
   const path = first
     ? `/api/timeline?last=${String(INITIAL_ITEMS)}`
     : `/api/timeline?after=${String(session.timelineSeq)}&limit=${String(PAGE)}`;
-  const data = /** @type {{ events: TimelineEvent[], lastSeq: number }} */ (await api.get(path));
+  const data = (await api.get(path)) as { events: TimelineEvent[]; lastSeq: number };
   for (const event of data.events) {
     if (event.type === "task.created") {
-      const payload = /** @type {Record<string, unknown>} */ (event.payload);
-      if (typeof payload["title"] === "string") {
-        session.taskTitles.set(event.id, payload["title"]);
+      const payload = event.payload as Record<string, unknown> | null;
+      const title = payload?.["title"];
+      if (typeof title === "string") {
+        session.taskTitles.set(event.id, title);
       }
     }
     // Neueste oben.
@@ -265,7 +239,7 @@ async function loadTimeline() {
   }
 }
 
-async function loadChat() {
+async function loadChat(): Promise<void> {
   const partner = ui.chatTo.value;
   if (partner === "") {
     return;
@@ -281,9 +255,7 @@ async function loadChat() {
   } else {
     query.set("after", String(session.chatSeq));
   }
-  const data = /** @type {{ messages: ChatMessage[] }} */ (
-    await api.get(`/api/chat?${query.toString()}`)
-  );
+  const data = (await api.get(`/api/chat?${query.toString()}`)) as { messages: ChatMessage[] };
   // Während der Anfrage kann der Partner gewechselt haben.
   if (partner !== session.chatPartner) {
     return;
@@ -300,14 +272,12 @@ async function loadChat() {
   }
 }
 
-async function refreshPullRequests() {
+async function refreshPullRequests(): Promise<void> {
   if (session.state === null) {
     return;
   }
   try {
-    const data = /** @type {{ available: boolean, pullRequests: PullRequestView[] }} */ (
-      await api.get("/api/prs")
-    );
+    const data = (await api.get("/api/prs")) as PullRequestList;
     replace(document, ui.prs, renderPullRequests(document, data, lookup));
   } catch (error) {
     if (!handleAuthError(error)) {
@@ -316,7 +286,7 @@ async function refreshPullRequests() {
   }
 }
 
-function startLive() {
+function startLive(): void {
   stopLive();
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${scheme}//${location.host}/api/live`);
@@ -326,16 +296,16 @@ function startLive() {
     setStatus("Live");
   });
   socket.addEventListener("message", (event) => {
-    let data;
+    let data: unknown;
     try {
-      data = /** @type {unknown} */ (JSON.parse(String(event.data)));
+      data = JSON.parse(String(event.data));
     } catch {
       return;
     }
     if (typeof data !== "object" || data === null) {
       return;
     }
-    const lastSeq = /** @type {Record<string, unknown>} */ (data)["lastSeq"];
+    const lastSeq = (data as Record<string, unknown>)["lastSeq"];
     if (typeof lastSeq === "number" && lastSeq > session.liveSeq) {
       session.liveSeq = lastSeq;
       void refresh();
@@ -362,7 +332,7 @@ function startLive() {
   });
 }
 
-function stopLive() {
+function stopLive(): void {
   clearTimeout(session.reconnectTimer);
   clearInterval(session.prTimer);
   const socket = session.socket;
@@ -370,12 +340,12 @@ function stopLive() {
   socket?.close();
 }
 
-/** @returns {Promise<boolean>} */
-async function checkSession() {
+async function checkSession(): Promise<boolean> {
   try {
-    const data = /** @type {{ authenticated: boolean, csrfToken?: string }} */ (
-      await api.get("/api/session")
-    );
+    const data = (await api.get("/api/session")) as {
+      authenticated: boolean;
+      csrfToken?: string;
+    };
     if (!data.authenticated || data.csrfToken === undefined) {
       showLogin(api.csrfToken === null ? "" : "Sitzung abgelaufen, bitte neu anmelden.");
       return false;
@@ -396,10 +366,10 @@ ui.loginForm.addEventListener("submit", (event) => {
     .post("/api/login", { password })
     .then((data) => {
       ui.password.value = "";
-      api.csrfToken = /** @type {{ csrfToken: string }} */ (data).csrfToken;
+      api.csrfToken = (data as { csrfToken: string }).csrfToken;
       return showApp();
     })
-    .catch((/** @type {unknown} */ error) => {
+    .catch((error: unknown) => {
       replace(document, ui.loginError, message(error));
     });
 });
@@ -438,7 +408,7 @@ ui.chatForm.addEventListener("submit", (event) => {
       session.draft = { text: "", to: "", kind: "", clientId: "" };
       return refresh();
     })
-    .catch((/** @type {unknown} */ error) => {
+    .catch((error: unknown) => {
       if (!handleAuthError(error)) {
         // Der Entwurf bleibt; ein erneutes Senden nutzt dieselbe clientId.
         replace(document, ui.chatError, message(error));
