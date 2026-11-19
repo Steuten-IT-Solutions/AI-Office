@@ -21,13 +21,19 @@ daher noch nicht gemessen.**
   **[Annahme: das AppArmor-Profil `docker-default` oder die Einschränkung durch
   `kernel.apparmor_restrict_unprivileged_userns = 1`; nicht getrennt gemessen]**.
 
-**Folge (Entscheidung des CEO):**
+## Entscheidung
 
-1. R5 ausdrücklich akzeptieren und Ersatzprüfungen aus 5.13, optional S1a′ (CLI und Bash unter
-   getrennten Nutzern), **oder**
-2. eigenes Seccomp-Profil (Docker-Standard plus User-Namespaces) und, falls nötig, eigenes
-   AppArmor-Profil für die Lauf-Container. Das lockert die Härtung des Containers an einer Stelle,
-   damit die Sandbox im Container härter wird. Dafür wäre ein weiterer Messlauf nötig.
+**Der CEO hat am 19.11.2026 R5 ausdrücklich akzeptiert** (plan.md 5.7, Fall „No-Go“). Im
+Lauf-Container gibt es keine Bash-Sandbox; der Schutz kommt aus der Container-Isolation (nicht
+privilegiert, `--cap-drop ALL`, schreibgeschütztes Dateisystem, eigenes Netz ohne Weg nach außen,
+Proxy mit Allowlist, siehe S1b und S1g). Das Token kann nur Modellanfragen stellen und wird bei
+Verdacht sofort neu ausgestellt. Für die Abnahme gilt die Ausnahme aus plan.md 5.13: Statt der
+Lesbarkeit des Tokens wird geprüft, dass es nicht in der Umgebung von Bash-Befehlen steht und
+außerhalb der Allowlist nicht abfließen kann.
+
+Verworfen wurde damit der Weg über eigene Seccomp- und AppArmor-Profile, die die Härtung des
+Containers lockern würden, damit bwrap darin startet. S1a′ (CLI und Bash unter getrennten Nutzern)
+bleibt als spätere Option offen.
 
 ## Bericht des Skripts
 
