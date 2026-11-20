@@ -2,10 +2,15 @@
  * Spike S1d: Reicht das Rate-Limit der App für Polling? (plan.md Kap. 5.9)
  *
  * Legt zwei Test-PRs an, misst die Kosten eines Poll-Zyklus (PR-Liste, Reviews und Checks je PR)
- * über die Header `x-ratelimit-*` und prüft, ob bedingte Anfragen mit ETag (HTTP 304) zählen.
- * Danach werden die PRs geschlossen und die Branches gelöscht.
+ * und prüft, ob bedingte Anfragen mit ETag (HTTP 304) zählen. Danach werden die PRs geschlossen
+ * und die Branches gelöscht.
+ *
+ * Gemessen wird über GET /rate_limit, und zwar erst, wenn der Zähler still steht. Der erste Lauf
+ * am 20.11.2026 hat Einzelwerte aus den Antwort-Headern verglichen. Dabei stieg der Zähler um 13,
+ * obwohl nur eine 304-Anfrage dazwischen lag. Eine Ruhemessung und eine Kontrolle mit normalen
+ * Anfragen zeigen jetzt, ob die Messung selbst stimmt.
  */
-import { api, installationToken, loadConfig, type ApiResponse } from "./github.ts";
+import { api, installationToken, loadConfig } from "./github.ts";
 import { Report } from "./report.ts";
 
 const TEST_PRS = 2;
@@ -22,11 +27,63 @@ export function hourlyShare(perCycle: number, intervalSeconds: number, limit: nu
   return (perCycle * (3600 / intervalSeconds)) / limit;
 }
 
-function used(response: ApiResponse): number {
-  if (response.rate === null) {
-    throw new Error("Antwort ohne x-ratelimit-Header");
+/** Pause zwischen zwei Lesungen des Zählers, damit verzögerte Buchungen sichtbar werden. */
+const SETTLE_MS = 5000;
+/** Höchstzahl der Lesungen, bis der Zähler zweimal hintereinander gleich ist. */
+const SETTLE_TRIES = 12;
+const IDLE_MS = 15000;
+const SAMPLES = 10;
+const CYCLES = 3;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+interface Snapshot {
+  used: number;
+  limit: number;
+  reset: number;
+}
+
+/** Liest den Zähler über GET /rate_limit, das laut GitHub-Doku selbst nicht zählt. */
+async function snapshot(token: string): Promise<Snapshot> {
+  const response = await api(token, "GET", "/rate_limit");
+  const core = (response.body as { resources?: { core?: Snapshot } }).resources?.core;
+  if (core === undefined) {
+    throw new Error(`GET /rate_limit ohne resources.core (HTTP ${String(response.status)})`);
   }
-  return response.rate.used;
+  return core;
+}
+
+/** Wartet, bis zwei Lesungen im Abstand von SETTLE_MS gleich sind. */
+async function settled(token: string): Promise<Snapshot> {
+  let last = await snapshot(token);
+  for (let i = 0; i < SETTLE_TRIES; i++) {
+    await sleep(SETTLE_MS);
+    const now = await snapshot(token);
+    if (now.used === last.used && now.reset === last.reset) {
+      return now;
+    }
+    last = now;
+  }
+  throw new Error("Zähler steht nicht still, fremde Anfragen auf derselben Installation?");
+}
+
+/**
+ * Verbrauch einer Aktion: Zählerstand nach dem Stillstand minus Zählerstand davor.
+ * null, wenn das Stundenfenster dazwischen zurückgesetzt wurde.
+ */
+export async function measure(
+  token: string,
+  action: () => Promise<void>,
+  read: (token: string) => Promise<Snapshot> = settled,
+): Promise<number | null> {
+  const before = await read(token);
+  await action();
+  const after = await read(token);
+  return after.reset === before.reset ? after.used - before.used : null;
+}
+
+function showDelta(delta: number | null): string {
+  return delta === null ? "Stundenfenster zurückgesetzt, bitte wiederholen" : `+${String(delta)}`;
 }
 
 async function main(): Promise<void> {
@@ -72,47 +129,80 @@ async function main(): Promise<void> {
       prNumbers.push((pr.body as { number: number }).number);
     }
 
-    const start = await api(token, "GET", "/rate_limit");
-    const limit = start.rate?.limit ?? 0;
+    const first = await snapshot(token);
+    const limit = first.limit;
     report.add("Limit der Installation", "≥ 5.000/h", `${String(limit)}/h`, limit >= 5000);
 
-    const list = await api(token, "GET", `${repoPath}/pulls?state=open&per_page=100`);
-    const usedBefore = used(list);
-    const pulls = list.body as { number: number; head: { sha: string } }[];
-    let lastUsed = usedBefore;
-    for (const pr of pulls) {
-      const reviews = await api(token, "GET", `${repoPath}/pulls/${String(pr.number)}/reviews`);
-      const checks = await api(token, "GET", `${repoPath}/commits/${pr.head.sha}/check-runs`);
-      lastUsed = Math.max(used(reviews), used(checks));
-    }
-    const cycleCost = lastUsed - usedBefore + 1;
+    // Die Anlage der PRs oben hat den Zähler bewegt. Erst warten, bis er still steht.
+    const idle = await measure(token, () => sleep(IDLE_MS));
     report.add(
-      `Kosten eines Poll-Zyklus mit ${String(pulls.length)} offenen PRs`,
-      `${String(requestsPerCycle(pulls.length))} Anfragen (1 + 2 je PR)`,
-      `${String(cycleCost)} Anfragen`,
-      cycleCost <= requestsPerCycle(pulls.length),
+      `Ruhemessung: ${String(IDLE_MS / 1000)} s ohne Anfragen`,
+      "+0",
+      showDelta(idle),
+      idle === null ? false : idle === 0,
+    );
+
+    const listPath = `${repoPath}/pulls?state=open&per_page=100`;
+    const control = await measure(token, async () => {
+      for (let i = 0; i < SAMPLES; i++) {
+        await api(token, "GET", listPath);
+      }
+    });
+    report.add(
+      `Kontrolle: ${String(SAMPLES)} normale GET-Anfragen`,
+      `+${String(SAMPLES)}`,
+      showDelta(control),
+      control === SAMPLES,
+    );
+
+    let openPrs = 0;
+    const cycles = await measure(token, async () => {
+      for (let c = 0; c < CYCLES; c++) {
+        const list = await api(token, "GET", listPath);
+        const pulls = list.body as { number: number; head: { sha: string } }[];
+        openPrs = pulls.length;
+        for (const pr of pulls) {
+          await api(token, "GET", `${repoPath}/pulls/${String(pr.number)}/reviews`);
+          await api(token, "GET", `${repoPath}/commits/${pr.head.sha}/check-runs`);
+        }
+      }
+    });
+    const cycleCost = cycles === null ? null : cycles / CYCLES;
+    report.add(
+      `Kosten eines Poll-Zyklus mit ${String(openPrs)} offenen PRs (Mittel aus ${String(CYCLES)})`,
+      `${String(requestsPerCycle(openPrs))} Anfragen (1 + 2 je PR)`,
+      cycleCost === null ? showDelta(null) : `${String(cycleCost)} Anfragen`,
+      cycleCost !== null && cycleCost <= requestsPerCycle(openPrs),
     );
 
     let conditionalFree = false;
-    const etag = list.etag;
-    if (etag !== null) {
-      const before = await api(token, "GET", `${repoPath}/pulls?state=open&per_page=100`);
-      const conditional = await api(token, "GET", `${repoPath}/pulls?state=open&per_page=100`, {
-        etag: before.etag ?? etag,
+    const reference = await api(token, "GET", listPath);
+    const etag = reference.etag;
+    if (etag === null) {
+      report.add("Bedingte Anfrage (If-None-Match)", "ETag vorhanden", "kein ETag", false);
+    } else {
+      const statuses = new Set<number>();
+      const conditional = await measure(token, async () => {
+        for (let i = 0; i < SAMPLES; i++) {
+          statuses.add((await api(token, "GET", listPath, { etag })).status);
+        }
       });
-      const after = await api(token, "GET", "/rate_limit");
-      const delta = (after.rate?.used ?? 0) - used(before);
+      const all304 = statuses.size === 1 && statuses.has(304);
       report.add(
-        "Bedingte Anfrage (If-None-Match)",
-        "HTTP 304",
-        `HTTP ${String(conditional.status)}, Zähler danach +${String(delta)}`,
-        conditional.status === 304,
+        `Bedingte Anfragen (If-None-Match), ${String(SAMPLES)} Stück`,
+        "alle HTTP 304",
+        `HTTP ${[...statuses].join(", ")}`,
+        all304,
       );
-      conditionalFree = conditional.status === 304 && delta === 0;
+      conditionalFree = all304 && conditional === 0;
       report.add(
-        "Zählt eine 304-Antwort gegen das Limit?",
-        "messen",
-        delta === 0 ? "nein" : `ja (+${String(delta)})`,
+        "Zählen 304-Antworten gegen das Limit?",
+        "messen (Doku: nein)",
+        conditional === null
+          ? showDelta(null)
+          : conditional === 0
+            ? "nein (+0)"
+            : `ja (+${String(conditional)} für ${String(SAMPLES)})`,
         null,
       );
     }
