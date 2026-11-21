@@ -9,6 +9,7 @@ import {
   AGENT_PROFILE_CHANGED,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
+  GIT_OUTCOME,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_STARTED,
@@ -18,6 +19,7 @@ import {
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
   parseEscalationRaised,
+  parseGitOutcome,
   parseMessageSent,
   parseRunFinished,
   parseRunStarted,
@@ -27,11 +29,18 @@ import {
   parseTaskHandover,
   parseTaskStatusChanged,
   MAX_TEXT_CHARS,
+  type GitOutcome,
   type RunFinished,
   type RunStarted,
 } from "./events.ts";
 import type { Escalation, Message, MessageKind } from "./message.ts";
-import { OfficeState, type RunRecord, type RunStart, type Thought } from "./office-state.ts";
+import {
+  OfficeState,
+  type GitOutcomeRecord,
+  type RunRecord,
+  type RunStart,
+  type Thought,
+} from "./office-state.ts";
 import type { Task, TaskStatus } from "./task.ts";
 import { ValidationError, truncateText, type Parsed } from "./validation.ts";
 
@@ -399,6 +408,16 @@ export class Office {
     const payload = valid("Laufabschluss", parseRunFinished(input));
     const event = this.commit(RUN_FINISHED, actor, payload, options);
     return this.state.run(event.runId as string) as RunRecord;
+  }
+
+  /**
+   * Hält den endgültigen Stand der Git-Übergabe eines beendeten Werkbank-Laufs fest (S08).
+   * Handelnder ist `system`. Idempotent über `<Lauf-ID>:git`.
+   */
+  recordGitOutcome(runId: string, input: GitOutcome): GitOutcomeRecord {
+    const payload = valid("Git-Übergabe", parseGitOutcome(input));
+    this.commit(GIT_OUTCOME, "system", payload, { runId, idempotencyKey: `${runId}:git` });
+    return this.state.gitOutcome(runId) as GitOutcomeRecord;
   }
 
   /**

@@ -9,6 +9,7 @@ import {
   DOMAIN_EVENT_TYPES,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
+  GIT_OUTCOME,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_STARTED,
@@ -19,6 +20,7 @@ import {
   TASK_STATUS_CHANGED,
   type EscalationAnswered,
   type EscalationRaised,
+  type GitOutcome,
   type MessageSent,
   type RunFinished,
   type RunStarted,
@@ -35,6 +37,7 @@ import {
   isReopen,
   type Task,
   type TaskAssignment,
+  type TaskHandoverNote,
 } from "./task.ts";
 import type { RunType } from "../llm/runner.ts";
 
@@ -96,6 +99,20 @@ export interface WakeItem {
   taskId: string | null;
 }
 
+/** Endgültiger Stand der Git-Übergabe eines Werkbank-Laufs (S08). */
+export interface GitOutcomeRecord extends GitOutcome {
+  runId: string;
+  /** Aufgabe des Laufs aus `run.finished`. */
+  taskId: string | null;
+  seq: number;
+  occurredAt: string;
+}
+
+/** Eine Übergabenotiz mit ihrer Aufgabe, auch frühere (für die Fingerabdrücke, S08). */
+export interface HandoverRecord extends TaskHandoverNote {
+  taskId: string;
+}
+
 /** Gedankenblase eines Laufs für die Zeitleiste (Kap. 3.3 Nr. 5). */
 export interface Thought {
   id: string;
@@ -139,6 +156,8 @@ export class OfficeState {
   private readonly assignmentById = new Map<string, WakeItem>();
   /** Je Agent: bis zu dieser Sequenznummer hat ein abgeschlossener Lauf das Postfach gelesen. */
   private readonly inboxRead = new Map<string, number>();
+  private readonly handoverList: HandoverRecord[] = [];
+  private readonly gitOutcomeById = new Map<string, GitOutcomeRecord>();
 
   constructor(building: Building) {
     this.building = building;
@@ -217,6 +236,28 @@ export class OfficeState {
   /** Zugelassene Läufe in Reihenfolge des Protokolls, beendete eingeschlossen. */
   runStarts(): RunStart[] {
     return [...this.runStartById.values()];
+  }
+
+  /** Alle Übergabenotizen in Reihenfolge des Protokolls, nicht nur die letzte je Aufgabe. */
+  handovers(options: { afterSeq?: number } = {}): HandoverRecord[] {
+    const afterSeq = options.afterSeq ?? 0;
+    return this.handoverList.filter((h) => h.seq > afterSeq);
+  }
+
+  /** Endgültiger Stand der Git-Übergabe eines Laufs, sonst `undefined` (S08). */
+  gitOutcome(runId: string): GitOutcomeRecord | undefined {
+    return this.gitOutcomeById.get(runId);
+  }
+
+  /** Letzter endgültiger Stand der Git-Übergabe eines Laufs zu dieser Aufgabe. */
+  latestGitOutcome(taskId: string): GitOutcomeRecord | undefined {
+    let latest: GitOutcomeRecord | undefined;
+    for (const outcome of this.gitOutcomeById.values()) {
+      if (outcome.taskId === taskId && (latest === undefined || outcome.seq > latest.seq)) {
+        latest = outcome;
+      }
+    }
+    return latest;
   }
 
   /** Nachricht, Eskalation oder Zuweisung mit dieser Ereignis-ID. */
@@ -339,6 +380,8 @@ export class OfficeState {
         return this.checkEscalation(actor, payload as EscalationRaised);
       case ESCALATION_ANSWERED.type:
         return this.checkEscalationAnswered(actor, payload as EscalationAnswered);
+      case GIT_OUTCOME.type:
+        return this.checkGitOutcome(actor, runId);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -449,15 +492,17 @@ export class OfficeState {
       case TASK_HANDOVER.type: {
         const p = payload as TaskHandover;
         const task = this.taskById.get(p.taskId) as Task;
+        const handover: TaskHandoverNote = {
+          note: p.note,
+          auto: p.auto,
+          writtenBy: event.actor,
+          runId: event.runId,
+          seq: event.seq,
+        };
+        this.handoverList.push({ ...handover, taskId: p.taskId });
         this.taskById.set(p.taskId, {
           ...task,
-          handover: {
-            note: p.note,
-            auto: p.auto,
-            writtenBy: event.actor,
-            runId: event.runId,
-            seq: event.seq,
-          },
+          handover,
           updatedSeq: event.seq,
           updatedAt: event.occurredAt,
         });
@@ -487,6 +532,17 @@ export class OfficeState {
         if (p.exit === "completed" && p.inboxUpToSeq > this.inboxReadSeq(event.actor)) {
           this.inboxRead.set(event.actor, p.inboxUpToSeq);
         }
+        return;
+      }
+      case GIT_OUTCOME.type: {
+        const runId = event.runId as string;
+        this.gitOutcomeById.set(runId, {
+          ...(payload as GitOutcome),
+          runId,
+          taskId: (this.runById.get(runId) as RunRecord).taskId,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+        });
         return;
       }
       case RUN_STARTED.type: {
@@ -681,6 +737,30 @@ export class OfficeState {
     }
     if (p.inboxUpToSeq > this.lastSeq) {
       return `Postfach bis ${String(p.inboxUpToSeq)} liegt hinter dem Protokoll`;
+    }
+    return null;
+  }
+
+  /**
+   * Den Stand der Git-Übergabe schreibt nur das System, einmal je Lauf, und erst nach dessen Ende:
+   * Das Git-Gate beginnt mit der Übergabe, wenn der Container beendet ist (S08).
+   */
+  private checkGitOutcome(actor: string, runId: string | null): string | null {
+    if (actor !== "system") {
+      return "Den Stand der Git-Übergabe schreibt nur das System";
+    }
+    if (runId === null) {
+      return "Ereignis gehört zu keinem Lauf";
+    }
+    const run = this.runById.get(runId);
+    if (run === undefined) {
+      return `Lauf ${runId} ist noch nicht abgeschlossen`;
+    }
+    if (run.runType !== "werkbank") {
+      return `Lauf ${runId} ist kein Werkbank-Lauf`;
+    }
+    if (this.gitOutcomeById.has(runId)) {
+      return `Stand der Git-Übergabe von ${runId} ist schon festgehalten`;
     }
     return null;
   }

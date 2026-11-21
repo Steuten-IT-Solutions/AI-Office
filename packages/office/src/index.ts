@@ -74,6 +74,8 @@ export {
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
   ESCALATION_RAISED,
+  GIT_OUTCOME,
+  GIT_OUTCOME_STATES,
   MAX_HANDOVER_CHARS,
   MAX_TEXT_CHARS,
   MAX_THOUGHT_CHARS,
@@ -92,6 +94,7 @@ export {
   type AgentHired,
   type AgentProfileChanged,
   type EscalationRaised,
+  type GitOutcome,
   type MessageSent,
   type RunFinished,
   type RunStarted,
@@ -119,6 +122,8 @@ export {
 export {
   OfficeState,
   domainRegistry,
+  type GitOutcomeRecord,
+  type HandoverRecord,
   type PendingEvent,
   type RunRecord,
   type RunStart,
@@ -215,6 +220,7 @@ export {
   IpcTransportError,
   SupervisorClient,
   supervisorEscalationGate,
+  supervisorGitAccess,
   supervisorRunAccess,
   supervisorRunRequester,
   type SupervisorClientOptions,
@@ -244,6 +250,22 @@ export {
   type RunEndReport,
   type RunFollowerOptions,
 } from "./runs/run-follower.ts";
+export {
+  FINGERPRINT_WORDS,
+  FingerprintReporter,
+  fingerprintWords,
+  fingerprintsFirst,
+  fingerprintsOf,
+  type FingerprintAccess,
+  type FingerprintReport,
+  type FingerprintSource,
+} from "./git/fingerprints.ts";
+export {
+  GitOutcomeFollower,
+  finalOutcome,
+  type GitAccess,
+  type GitOutcomeResult,
+} from "./git/outcome-follower.ts";
 
 export {
   API_PREFIX,

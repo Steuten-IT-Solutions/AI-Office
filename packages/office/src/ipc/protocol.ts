@@ -1,7 +1,8 @@
 /*
  * KOPIE von `packages/supervisor/src/ipc/protocol.ts` aus Steuten-IT-Solutions/ai-office-supervisor,
- * Stand be2da1c (S05). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
- * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S05 `run.token` und `run.output` hinzu.
+ * Stand e24f278 (S08). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
+ * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S08 `git.status` und `fingerprints.add`
+ * hinzu.
  *
  * Die Prüfungen hier dienen im Office nur dem Komfort (E22): Fehler fallen auf, bevor eine
  * Anfrage den Socket erreicht. Maßgeblich ist die Prüfung im Supervisor.
@@ -28,6 +29,10 @@ import { z } from "zod";
  *
  * Ergänzt in S05 (CEO-Entscheidung vom 21.11.2026): `run.token` und `run.output`. Bestehende
  * Methoden sind unverändert; ein Office, das die neuen nicht kennt, spricht v1 weiter wie bisher.
+ *
+ * Ergänzt in S08 (CEO-Entscheidung vom 21.11.2026): `git.status` (was das Git-Gate aus der
+ * Übergabe eines Laufs gemacht hat) und `fingerprints.add` (Fingerabdrücke aus CEO-Chat und
+ * Gedächtnis für den Ausgangsfilter, E33). Ebenfalls nur hinzugefügt.
  *
  * Die Methoden folgen der abschließenden Liste in Kap. 4.6. Git-Übergabe, PR und Merge-Antrag
  * fehlen bewusst: Sie kommen nach E40 direkt aus dem Container über das Supervisor-Gateway (S07),
@@ -211,6 +216,66 @@ const officeHeadParams = z.strictObject({
 
 const officeHeadResult = z.strictObject({ recorded: z.literal(true), auditSeq: z.int().min(1) });
 
+const BRANCH_PATTERN = /^agent\/r-[0-9a-f]{16}$/;
+const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+
+/**
+ * Stand der Übergabe eines Laufs im Git-Gate (S08). Das Office zeigt ihn an und gibt ihn dem
+ * Agenten in einem späteren Lauf weiter (Kap. 5.9). Gründe nennen Art und Ort eines Funds, nie
+ * den gefundenen Text.
+ */
+const gitStatusResult = z.discriminatedUnion("state", [
+  /** Lauf unbekannt oder noch nicht beendet. */
+  z.strictObject({ state: z.literal("unknown") }),
+  /** Beendet ohne Anmeldung zur Übergabe (oder kein Werkbank-Lauf): nichts zu pushen. */
+  z.strictObject({ state: z.literal("none") }),
+  /** In Arbeit oder wartet auf einen neuen Versuch (z. B. GitHub nicht erreichbar, Notaus). */
+  z.strictObject({
+    state: z.literal("pending"),
+    attempts: z.int().min(0),
+    lastError: text(MAX_REASON_CHARS).nullable(),
+  }),
+  /** Endgültig abgelehnt: Ausgangsfilter, Identität, Refs oder GitHub. */
+  z.strictObject({ state: z.literal("rejected"), reason: text(MAX_REASON_CHARS) }),
+  /** Gepusht, der PR fehlt noch. */
+  z.strictObject({
+    state: z.literal("pushed"),
+    branch: z.string().regex(BRANCH_PATTERN),
+    head: z.string().regex(COMMIT_PATTERN),
+  }),
+  z.strictObject({
+    state: z.literal("pr_opened"),
+    branch: z.string().regex(BRANCH_PATTERN),
+    head: z.string().regex(COMMIT_PATTERN),
+    pr: z.int().min(1),
+    url: z.url({ protocol: /^https$/ }).max(300),
+  }),
+  /** Nach mehreren technischen Fehlern aufgegeben. */
+  z.strictObject({ state: z.literal("failed"), reason: text(MAX_REASON_CHARS) }),
+]);
+
+/** Höchstzahl Fingerabdrücke je Aufruf. 5.000 × 67 Bytes bleiben unter `MAX_FRAME_BYTES`. */
+export const MAX_FINGERPRINTS_PER_CALL = 5_000;
+export const FINGERPRINT_SOURCES = ["ceo_chat", "memory"] as const;
+
+/**
+ * Fingerabdrücke für den Ausgangsfilter (S08, Kap. 5.9 „Fingerabdrücke aus CEO-Chat und
+ * Gedächtnis“). Je Fenster aus 8 aufeinanderfolgenden Wörtern der SHA-256 (hex) von
+ * `wörter.join(" ")`; Wörter sind die Folgen aus Buchstaben und Ziffern nach NFKC und
+ * Kleinschreibung (`fingerprintsOf` im Supervisor). Kein Klartext. Nur Hinzufügen.
+ */
+const fingerprintsAddParams = z.strictObject({
+  source: z.enum(FINGERPRINT_SOURCES),
+  hashes: z.array(z.string().regex(SHA256_PATTERN)).min(1).max(MAX_FINGERPRINTS_PER_CALL),
+});
+
+const fingerprintsAddResult = z.strictObject({
+  /** Davon neu. */
+  added: z.int().min(0),
+  /** Gespeicherte Abdrücke insgesamt. */
+  total: z.int().min(0),
+});
+
 export const METHODS = {
   "run.request": { params: runRequestParams, result: runRequestResult },
   "profile.check": { params: profileCheckParams, result: verdict },
@@ -219,6 +284,8 @@ export const METHODS = {
   "office.reportHead": { params: officeHeadParams, result: officeHeadResult },
   "run.token": { params: runIdParams, result: runTokenResult },
   "run.output": { params: runOutputParams, result: runOutputResult },
+  "git.status": { params: runIdParams, result: gitStatusResult },
+  "fingerprints.add": { params: fingerprintsAddParams, result: fingerprintsAddResult },
 } as const;
 
 export type IpcMethod = keyof typeof METHODS;

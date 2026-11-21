@@ -323,8 +323,37 @@ function taskSection(state: OfficeState, task: Task, options: { withHandover: bo
         : `## Übergabenotiz\n\n${h.auto ? "Automatisch erzeugt" : `Von ${agentLabel(state, h.writtenBy)}`}:\n\n${quote(h.note)}`,
       "Schreib am Ende des Laufs mit `handover` eine kurze Übergabenotiz. Der nächste Lauf kennt deinen Stand nur daraus.",
     );
+    if (task.runType === "werkbank") {
+      parts.push(gitOutcomeSection(state, task));
+    }
   }
   return parts.join("\n\n");
+}
+
+/**
+ * Was das Git-Gate aus der letzten Übergabe zu dieser Aufgabe gemacht hat (S08, Kap. 5.9). Der
+ * Grund einer Ablehnung kommt vom Supervisor und nennt nur Art und Ort eines Funds; er steht
+ * trotzdem als Zitat da wie jeder fremde Text.
+ */
+function gitOutcomeSection(state: OfficeState, task: Task): string {
+  const title = "## Letzte Übergabe ins Repo";
+  const outcome = state.latestGitOutcome(task.id);
+  if (outcome === undefined) {
+    return `${title}\n\nNoch keine abgeschlossene Übergabe zu dieser Aufgabe.`;
+  }
+  const run = `Lauf \`${outcome.runId}\`, festgehalten ${outcome.occurredAt}`;
+  switch (outcome.state) {
+    case "pr_opened":
+      return `${title}\n\n${run}: gepusht auf \`${outcome.branch as string}\` (\`${outcome.head as string}\`), PR #${String(outcome.pr)} ist offen: ${outcome.url as string}`;
+    case "none":
+      return `${title}\n\n${run}: Der Lauf hat nichts übergeben.`;
+    case "rejected":
+      return `${title}\n\n${run}: vom Git-Gate abgelehnt, nichts gepusht. Grund:\n\n${quote(outcome.reason as string)}\n\nBehebe den Grund und übergib neu.`;
+    case "failed":
+      return `${title}\n\n${run}: Die Übergabe ist technisch gescheitert, nichts gepusht. Grund:\n\n${quote(outcome.reason as string)}`;
+    case "unknown":
+      return `${title}\n\n${run}: Der Supervisor kennt den Lauf nicht mehr; der Stand ist unbekannt.`;
+  }
 }
 
 function taskLabel(state: OfficeState, taskId: string): string {
