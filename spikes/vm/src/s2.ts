@@ -2,8 +2,14 @@
  * Spike S2: Kontingent (docs/etappe-0.md 3.2, plan.md Kap. 6, Fakt 5–7).
  *
  * Läuft in einem Lauf-Container mit beiden Zugängen:
- *  - voller Login in /claude-voll (CLAUDE_CONFIG_DIR) nur für `/usage`,
+ *  - voller Login in /claude-voll (CLAUDE_CONFIG_DIR) für `/usage`,
  *  - setup-token in CLAUDE_CODE_OAUTH_TOKEN für die Läufe (wie später im Büro).
+ *
+ * Messwege für den Zähler (S2a wählt den ersten lesbaren):
+ *  - `json`, `stream`: `/usage` im Print-Modus (Plan). Am 21.11.2026 mit CLI 2.1.312 ohne Werte:
+ *    Die Antwort war nur „You are currently using your subscription to power your Claude Code usage“.
+ *  - `event` (S2a′, Vorschlag): ein kurzer `haiku`-Lauf; der Zähler steht in dessen
+ *    `rate_limit_event` unter `unifiedWindows` (undokumentiert, siehe usage.ts `windowRows`).
  * Der Zähler ist zwischen Ihrer Nutzung und dem Büro geteilt (Fakt 5): Während S2b und S2c
  * dürfen Sie Claude nicht nutzen.
  *
@@ -24,18 +30,34 @@ import { officeTools } from "./mcp-attrappe.ts";
 import { ATTRAPPE } from "./s1b.ts";
 import { stability, factor, median } from "./statistik.ts";
 import { isObject, type RunSummary } from "./stream.ts";
-import { delta, resetKinds, usageRows, weeklyKind, type UsageRow } from "./usage.ts";
+import { delta, resetKinds, usageRows, weeklyKind, windowRows, type UsageRow } from "./usage.ts";
 
 const WORK = "/work";
 const RESULT_FILE = join(WORK, "s2-ergebnis.json");
 const VOLL_ENV = { CLAUDE_CODE_OAUTH_TOKEN: undefined, CLAUDE_CONFIG_DIR: "/claude-voll" };
 
-export type Method = "json" | "stream";
+export type Method = "json" | "stream" | "event";
+export type Access = "voll" | "token";
+
+/** Messweg aus S2a: womit S2b bis S2d den Zähler lesen. */
+export interface Messweg {
+  methode: Method;
+  zugang: Access;
+}
+
+/** Messweg `event`: der kleinste Lauf, der ein `rate_limit_event` auslöst. */
+export const EVENT_PROMPT = "Antworte nur mit OK.";
+
+/** Bezeichnungen in claude.ai (Einstellungen → Nutzung) für die Abfrage in S2a. */
+const CLAUDE_AI_HINWEIS: Record<string, string> = {
+  five_hour: "Aktuelle Sitzung",
+  seven_day: "Wochenlimit",
+};
 
 export interface Snapshot {
   zeit: string;
   methode: Method;
-  zugang: "voll" | "token";
+  zugang: Access;
   rows: UsageRow[];
   costUsd: number | null;
   isError: boolean | null;
@@ -62,12 +84,25 @@ export interface Block {
   before: Snapshot;
   after: Snapshot;
   runs: RunRecord[];
+  /** Σ der Läufe, beim Messweg `event` plus die Kosten eines Messlaufs (`messkostenUsd`). */
   costUsd: number;
+  /**
+   * Messweg `event`: Zwischen zwei Messungen liegt genau ein Messlauf, ob der Zähler im Ereignis
+   * den eigenen Aufruf schon enthält oder nicht [Annahme: einer von beiden Fällen]. Gezählt werden
+   * deshalb die Kosten des Messlaufs nach dem Block.
+   */
+  messkostenUsd?: number;
   delta: Record<string, number>;
 }
 
 export interface Results {
-  a?: { snapshots: Snapshot[]; vergleich: Record<string, number | null>; methode: Method | null };
+  a?: {
+    snapshots: Snapshot[];
+    vergleich: Record<string, number | null>;
+    methode: Method | null;
+    /** Zugang des Messwegs; fehlt bei Ergebnissen vor S2a′ (dann `voll`). */
+    zugang?: Access;
+  };
   b?: {
     before: Snapshot;
     after: Snapshot;
@@ -132,12 +167,35 @@ export function resultOf(messages: unknown[]): Record<string, unknown> | null {
   return null;
 }
 
-/** `/usage` abfragen. Ob das im Print-Modus geht, ist genau die Frage von S2a. */
-export async function query(method: Method, access: "voll" | "token"): Promise<Snapshot> {
-  const args =
-    method === "json"
-      ? ["-p", "--output-format", "json", "--", "/usage"]
-      : ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
+/** Argumente des CLI je Messweg. */
+export function queryArgs(method: Method): string[] {
+  switch (method) {
+    case "json":
+      return ["-p", "--output-format", "json", "--", "/usage"];
+    case "stream":
+      return ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
+    case "event":
+      return [
+        "-p",
+        "--model",
+        "haiku",
+        "--max-turns",
+        "1",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--",
+        EVENT_PROMPT,
+      ];
+  }
+}
+
+/**
+ * Zähler lesen: `/usage` (ob das im Print-Modus geht, ist die Frage von S2a) oder das
+ * `rate_limit_event` eines kurzen Laufs (S2a′). Der Messweg `event` kostet selbst Kontingent.
+ */
+export async function query(method: Method, access: Access): Promise<Snapshot> {
+  const args = queryArgs(method);
   const stdin =
     method === "stream"
       ? `${JSON.stringify({ type: "user", message: { role: "user", content: "/usage" } })}\n`
@@ -154,7 +212,7 @@ export async function query(method: Method, access: "voll" | "token"): Promise<S
     zeit: new Date().toISOString(),
     methode: method,
     zugang: access,
-    rows: usageRows(messages, text),
+    rows: method === "event" ? windowRows(messages) : usageRows(messages, text),
     costUsd: typeof result?.["total_cost_usd"] === "number" ? result["total_cost_usd"] : null,
     isError: typeof result?.["is_error"] === "boolean" ? result["is_error"] : null,
     exitCode: raw.exitCode,
@@ -198,33 +256,57 @@ async function confirmQuiet(): Promise<void> {
   }
 }
 
+/**
+ * Reihenfolge der Messwege: zuerst `/usage` mit vollem Login (kostet laut Plan nichts), dann das
+ * `rate_limit_event` mit `setup-token` (so läse es das Büro), zuletzt mit vollem Login.
+ */
+export const MESSWEGE: readonly Messweg[] = [
+  { methode: "json", zugang: "voll" },
+  { methode: "stream", zugang: "voll" },
+  { methode: "event", zugang: "token" },
+  { methode: "event", zugang: "voll" },
+];
+
+/** Erster lesbarer Messweg in der Reihenfolge von `MESSWEGE`; `/usage` mit Token zählt nie. */
+export function chooseSnapshot(snapshots: Snapshot[]): Snapshot | null {
+  for (const w of MESSWEGE) {
+    const s = snapshots.find((x) => x.methode === w.methode && x.zugang === w.zugang);
+    if (s !== undefined && readable(s)) {
+      return s;
+    }
+  }
+  return null;
+}
+
 async function teilA(results: Results): Promise<void> {
-  console.log("\nS2a: /usage per Skript");
+  console.log("\nS2a: Zähler per Skript (/usage und rate_limit_event)");
   const snapshots: Snapshot[] = [];
-  for (const [method, access] of [
-    ["json", "voll"],
-    ["stream", "voll"],
-    ["json", "token"],
-  ] as const) {
-    const s = await query(method, access);
+  for (const { methode, zugang } of [...MESSWEGE, { methode: "json", zugang: "token" } as const]) {
+    const s = await query(methode, zugang);
     console.log(`  ${show(s)}`);
     snapshots.push(s);
   }
-  const usable = snapshots.find((s) => s.zugang === "voll" && readable(s)) ?? null;
+  const usable = chooseSnapshot(snapshots);
   const vergleich: Record<string, number | null> = {};
   if (usable !== null) {
     console.log(
       "\nBitte jetzt in claude.ai die Nutzungsanzeige öffnen (Einstellungen → Nutzung) und die Werte eingeben.",
     );
     for (const row of usable.rows) {
+      const hint = CLAUDE_AI_HINWEIS[row.kind];
       const answer = await ask(
-        `  Wert in claude.ai für „${row.kind}“ (Skript: ${String(row.percent)} %), leer = überspringen: `,
+        `  Wert in claude.ai für „${row.kind}“${hint === undefined ? "" : ` (${hint})`} (Skript: ${String(row.percent)} %), leer = überspringen: `,
       );
       const value = Number(answer.replace(",", ".").replace("%", ""));
       vergleich[row.kind] = answer === "" || !Number.isFinite(value) ? null : value;
     }
   }
-  results.a = { snapshots, vergleich, methode: usable?.methode ?? null };
+  results.a = {
+    snapshots,
+    vergleich,
+    methode: usable?.methode ?? null,
+    ...(usable === null ? {} : { zugang: usable.zugang }),
+  };
   // S2a beginnt den Spike: Die Budget-Basis wird hier neu gesetzt (auch bei einer Wiederholung).
   if (usable === null) {
     delete results.budgetStart;
@@ -234,14 +316,14 @@ async function teilA(results: Results): Promise<void> {
   save(results);
 }
 
-function method(results: Results): Method {
+function method(results: Results): Messweg {
   const m = results.a?.methode ?? null;
   if (m === null) {
     throw new Error(
-      "S2a hat keinen Weg gefunden, /usage per Skript zu lesen. S2b und S2c entfallen (Fallback aus Kap. 6).",
+      "S2a hat keinen Weg gefunden, den Zähler per Skript zu lesen. S2b und S2c entfallen (Fallback aus Kap. 6).",
     );
   }
-  return m;
+  return { methode: m, zugang: results.a?.zugang ?? "voll" };
 }
 
 async function teilB(results: Results): Promise<void> {
@@ -249,7 +331,7 @@ async function teilB(results: Results): Promise<void> {
   const m = method(results);
   await confirmQuiet();
   const budgetPp = envNumber("AIO_S2_BUDGET_PP", 5);
-  const before = await query(m, "voll");
+  const before = await query(m.methode, m.zugang);
   const baseline = budgetBaseline(results, before);
   const costs: (number | null)[] = [];
   let errors = 0;
@@ -264,7 +346,7 @@ async function teilB(results: Results): Promise<void> {
       break;
     }
     previous = after;
-    after = await query(m, "voll");
+    after = await query(m.methode, m.zugang);
     costs.push(after.costUsd);
     if (!readable(after)) {
       errors++;
@@ -346,7 +428,7 @@ async function teilC(results: Results): Promise<void> {
   for (const [file, content] of Object.entries(STANDARD_FILES)) {
     writeFileSync(join(cwd, file), content);
   }
-  const start = await query(m, "voll");
+  const start = await query(m.methode, m.zugang);
   const weekly = weeklyKind(start.rows);
   const c: NonNullable<Results["c"]> = {
     blocks: [],
@@ -385,9 +467,10 @@ async function teilC(results: Results): Promise<void> {
           break;
         }
       }
-      const after = await query(m, "voll");
+      const after = await query(m.methode, m.zugang);
       const blockBefore = current;
-      const cost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+      const messkosten = m.methode === "event" ? (after.costUsd ?? 0) : 0;
+      const cost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0) + messkosten;
       c.blocks.push({
         model,
         index,
@@ -395,6 +478,7 @@ async function teilC(results: Results): Promise<void> {
         after,
         runs,
         costUsd: cost,
+        ...(m.methode === "event" ? { messkostenUsd: messkosten } : {}),
         delta: delta(current.rows, after.rows),
       });
       current = after;
@@ -505,7 +589,7 @@ async function teilD(results: Results): Promise<void> {
   // keine weiteren bezahlten Läufe.
   const m = method(results);
   const budgetPp = results.c?.budgetPp ?? envNumber("AIO_S2_BUDGET_PP", 5);
-  const now = await query(m, "voll");
+  const now = await query(m.methode, m.zugang);
   const baseline = budgetBaseline(results, now);
   const planMd = readFileSync("/opt/spike/docs/plan.md", "utf8");
   const tools = officeTools();
@@ -555,7 +639,7 @@ async function teilD(results: Results): Promise<void> {
         return;
       }
       previous = current;
-      current = await query(m, "voll");
+      current = await query(m.methode, m.zugang);
     }
   }
   results.d = { runs, abbruch: null };
@@ -599,6 +683,57 @@ export function sampleGaps(c: NonNullable<Results["c"]>, model: string): string 
   return gaps.length === 0 ? null : gaps.join("; ");
 }
 
+/** Messung mit Werten und Reset-Zeit je Fenster, aus Struktur gelesen. */
+function usableRows(s: Snapshot): boolean {
+  return (
+    readable(s) &&
+    s.rows.some((r) => r.source !== "text") &&
+    s.rows.every((r) => r.resetsAt !== null)
+  );
+}
+
+export function snapshotLabel(s: Snapshot): string {
+  const zugang = s.zugang === "voll" ? "vollem Login" : "setup-token";
+  switch (s.methode) {
+    case "json":
+      return `S2a: /usage per claude -p --output-format json mit ${zugang}`;
+    case "stream":
+      return `S2a: /usage per stream-json (Protokoll des Agent SDK) mit ${zugang}`;
+    case "event":
+      return `S2a′: Zähler aus rate_limit_event eines haiku-Laufs mit ${zugang}`;
+  }
+}
+
+function expectedText(s: Snapshot, eventOk: boolean): string {
+  if (s.methode === "event") {
+    return s.zugang === "token"
+      ? "maschinenlesbar: je Fenster utilization, resetsAt (unifiedWindows, undokumentiert)"
+      : "zur Information wie mit setup-token";
+  }
+  if (s.zugang === "token") {
+    return "kein Bericht (Token hat nur user:inference, Fakt 7)";
+  }
+  return eventOk
+    ? "Plan: je Fenster kind, percent, resets_at (Information, S2a′ trägt)"
+    : "maschinenlesbar: je Fenster kind, percent, resets_at";
+}
+
+/**
+ * Bewertung je Messweg. Trägt der Weg über das `rate_limit_event` mit `setup-token` (S2a′), sind
+ * die `/usage`-Wege nur noch Information: Das Go-Kriterium von S2a („maschinenlesbar, ± 1
+ * Prozentpunkt“) prüft dann S2a′ mit dem Abgleich in claude.ai. Diese Abweichung vom Plan ist ein
+ * Vorschlag an den CEO.
+ */
+export function expectation(s: Snapshot, eventOk: boolean, ok: boolean): boolean | null {
+  if (s.methode === "event") {
+    return s.zugang === "token" ? ok : null;
+  }
+  if (s.zugang === "token" || eventOk) {
+    return null;
+  }
+  return ok;
+}
+
 function fmt(n: number | null | undefined, digits = 4): string {
   return n === null || n === undefined || Number.isNaN(n) ? "–" : n.toFixed(digits);
 }
@@ -611,20 +746,23 @@ export function buildReport(results: Results, context: string[]): Report {
   if (a === undefined) {
     report.add("S2a ausgeführt", "ja", "nein", null);
   } else {
+    const eventOk = a.snapshots.some(
+      (s) => s.methode === "event" && s.zugang === "token" && usableRows(s),
+    );
     for (const s of a.snapshots) {
       const structured = s.rows.some((r) => r.source !== "text");
       const complete = s.rows.length > 0 && s.rows.every((r) => r.resetsAt !== null);
-      const expectation = s.zugang === "token" ? null : readable(s) && structured && complete;
+      const ok = readable(s) && structured && complete;
       report.add(
-        `S2a: /usage per ${s.methode === "json" ? "claude -p --output-format json" : "stream-json (Protokoll des Agent SDK)"} mit ${s.zugang === "voll" ? "vollem Login" : "setup-token"}`,
-        s.zugang === "voll"
-          ? "maschinenlesbar: je Fenster kind, percent, resets_at"
-          : "kein Bericht (Token hat nur user:inference, Fakt 7)",
+        snapshotLabel(s),
+        expectedText(s, eventOk),
         `${s.rows.length === 0 ? "keine Werte" : `${String(s.rows.length)} Fenster, ${structured ? "strukturiert" : "nur aus Text gelesen"}${complete ? "" : ", ohne Reset-Zeit"}`}; Kosten ${String(s.costUsd ?? "?")} USD; Exit ${String(s.exitCode)}${s.stderr === "" ? "" : `; ${s.stderr}`}`,
-        expectation,
+        expectation(s, eventOk, ok),
       );
     }
-    const used = a.snapshots.find((s) => s.methode === a.methode && s.zugang === "voll");
+    const used = a.snapshots.find(
+      (s) => s.methode === a.methode && s.zugang === (a.zugang ?? "voll"),
+    );
     // Das Go-Kriterium verlangt den Abgleich: Jedes gelesene Fenster braucht einen Wert aus
     // claude.ai, sonst ist S2a nicht geprüft.
     for (const row of used?.rows ?? []) {
@@ -656,7 +794,7 @@ export function buildReport(results: Results, context: string[]): Report {
       ),
     );
     report.section(
-      "S2a: Ergebnistext von /usage (gekürzt)",
+      "S2a: Ergebnistext je Messweg (gekürzt)",
       a.snapshots.flatMap((s) => [
         `**${s.methode}/${s.zugang}:**`,
         "```",
@@ -690,12 +828,15 @@ export function buildReport(results: Results, context: string[]): Report {
     const comparable =
       readable(b.before) && readable(b.after) && kindsBefore === kindsAfter && resets.length === 0;
     const anstieg = "S2b: 30 Abfragen, Anstieg der Prozentwerte";
+    // Beim Messweg `event` ist jede Abfrage ein bezahlter haiku-Lauf: S2b misst dann, was eine
+    // Messung kostet (Information). Im Büro käme der Zähler mit jedem Lauf ohne eigene Abfrage.
+    const eventWeg = b.before.methode === "event";
     if (comparable) {
       report.add(
-        anstieg,
-        "kein messbarer Anstieg",
+        eventWeg ? `${anstieg} (Messweg rate_limit_event)` : anstieg,
+        eventWeg ? "Messwert: Verbrauch von 30 Messläufen" : "kein messbarer Anstieg",
         `Δ ${JSON.stringify(d)}; Fehler ${String(b.errors)}`,
-        rising.length === 0 && b.errors === 0,
+        eventWeg ? null : rising.length === 0 && b.errors === 0,
       );
     } else {
       report.invalid(
@@ -708,7 +849,12 @@ export function buildReport(results: Results, context: string[]): Report {
     const cost = measured.reduce((sum, c) => sum + c, 0);
     const kosten = "S2b: Σ total_cost_usd der Abfragen";
     if (measured.length === b.costs.length && measured.length > 0) {
-      report.add(kosten, "0 oder vernachlässigbar (< 0,01 USD)", `${fmt(cost)} USD`, cost < 0.01);
+      report.add(
+        kosten,
+        eventWeg ? "Messwert" : "0 oder vernachlässigbar (< 0,01 USD)",
+        `${fmt(cost)} USD`,
+        eventWeg ? null : cost < 0.01,
+      );
     } else {
       report.invalid(
         kosten,
@@ -778,11 +924,12 @@ export function buildReport(results: Results, context: string[]): Report {
     );
     report.table(
       "S2c: Blöcke",
-      ["Modell", "Block", "Σ USD", "Δ Prozentpunkte", "Läufe ok"],
+      ["Modell", "Block", "Σ USD", "davon Messlauf", "Δ Prozentpunkte", "Läufe ok"],
       c.blocks.map((bl) => [
         bl.model,
         String(bl.index),
         fmt(bl.costUsd),
+        fmt(bl.messkostenUsd),
         JSON.stringify(bl.delta),
         `${String(bl.runs.filter((r) => r.subtype === "success").length)}/${String(bl.runs.length)}`,
       ]),
