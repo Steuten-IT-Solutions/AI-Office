@@ -1,7 +1,7 @@
 /*
  * KOPIE von `packages/supervisor/src/ipc/protocol.ts` aus Steuten-IT-Solutions/ai-office-supervisor,
- * Stand 3dff78a (S02). Unterhalb dieses Kommentars unverändert; geändert wird nur mit einer neuen
- * Protokollversion, und dann zuerst im Supervisor (P02, plan.md Kap. 4.6).
+ * Stand be2da1c (S05). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
+ * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S05 `run.token` und `run.output` hinzu.
  *
  * Die Prüfungen hier dienen im Office nur dem Komfort (E22): Fehler fallen auf, bevor eine
  * Anfrage den Socket erreicht. Maßgeblich ist die Prüfung im Supervisor.
@@ -25,6 +25,9 @@ import { z } from "zod";
  * Versionen aus `SUPPORTED_VERSIONS`, sonst `unsupported_version` mit der Liste. Eine neue
  * Version bekommt eigene Schemas; v1 bleibt unverändert, solange das Office sie spricht. Der
  * Client im Office (P02) ist eine Kopie dieser Datei, fest auf eine Version.
+ *
+ * Ergänzt in S05 (CEO-Entscheidung vom 21.11.2026): `run.token` und `run.output`. Bestehende
+ * Methoden sind unverändert; ein Office, das die neuen nicht kennt, spricht v1 weiter wie bisher.
  *
  * Die Methoden folgen der abschließenden Liste in Kap. 4.6. Git-Übergabe, PR und Merge-Antrag
  * fehlen bewusst: Sie kommen nach E40 direkt aus dem Container über das Supervisor-Gateway (S07),
@@ -109,6 +112,61 @@ const runRequestResult = z.discriminatedUnion("decision", [
   z.strictObject({ decision: z.literal("rejected"), reason: text(MAX_REASON_CHARS) }),
 ]);
 
+const runIdParams = z.strictObject({ runId: id });
+
+/**
+ * Office-Token eines zugelassenen Laufs abholen (S05, E40, Kap. 4.6 „Identität eines Laufs“).
+ * Erst mit dem ersten Abruf startet der Container: Das CLI verbindet die Office-API schon beim
+ * Start, das Office muss das Token vorher kennen. Weitere Abrufe liefern dasselbe Token.
+ */
+const runTokenResult = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("started"),
+    /** Für `Authorization: Bearer …` an der Office-API; gilt nur für diesen Lauf. */
+    officeToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    /** Danach soll das Office das Token nicht mehr annehmen. */
+    expiresAt: z.iso.datetime(),
+  }),
+  z.strictObject({ state: z.literal("ended"), reason: text(MAX_REASON_CHARS) }),
+  z.strictObject({ state: z.literal("unknown") }),
+]);
+
+/**
+ * Ausgabe eines Laufs abholen (S05): Ausschnitt aus dem Rohprotokoll (`stream-json` des CLI) ab
+ * `offset` in Bytes. `data` endet an einem Zeilenende, wenn der Ausschnitt eines enthält, sonst
+ * geht die Zeile im nächsten Abruf weiter. Das Office ruft ab `nextOffset` weiter ab, bis `state`
+ * `ended` ist und `data` leer.
+ */
+const runOutputParams = z.strictObject({ runId: id, offset: z.int().min(0) });
+
+/** Größter Ausschnitt in Zeichen. Der Supervisor liest höchstens 128 KiB je Abruf. */
+export const MAX_OUTPUT_CHARS = 128 * 1024;
+
+const outputSlice = {
+  data: z.string().max(MAX_OUTPUT_CHARS),
+  nextOffset: z.int().min(0),
+  /** Das Rohprotokoll hat seine Obergrenze erreicht; danach Angekommenes fehlt. */
+  truncated: z.boolean(),
+};
+
+const runOutputResult = z.discriminatedUnion("state", [
+  /** Zugelassen, Token noch nicht abgeholt. */
+  z.strictObject({ state: z.literal("waiting"), ...outputSlice }),
+  z.strictObject({ state: z.literal("running"), ...outputSlice }),
+  z.strictObject({
+    state: z.literal("ended"),
+    ...outputSlice,
+    end: z.strictObject({
+      reason: text(MAX_REASON_CHARS),
+      /** Exit-Code des Containers, `null` ohne Start oder nach einem Signal. */
+      exitCode: z.int().nullable(),
+      /** Aus `ergebnis.json` (P12), nicht vertrauenswürdig: `normal`, `lease`, `stopp`. */
+      finishedBy: z.enum(["normal", "lease", "stopp"]).nullable(),
+    }),
+  }),
+  z.strictObject({ state: z.literal("unknown") }),
+]);
+
 /**
  * Profil anlegen oder ändern (Kap. 4.6, 5.5): nur die Felder, die die Richtlinie betreffen.
  * Persona-Texte bleiben Office-Daten.
@@ -159,6 +217,8 @@ export const METHODS = {
   "workplaces.change": { params: workplacesChangeParams, result: verdict },
   "escalation.checkToCeo": { params: escalationCheckParams, result: verdict },
   "office.reportHead": { params: officeHeadParams, result: officeHeadResult },
+  "run.token": { params: runIdParams, result: runTokenResult },
+  "run.output": { params: runOutputParams, result: runOutputResult },
 } as const;
 
 export type IpcMethod = keyof typeof METHODS;

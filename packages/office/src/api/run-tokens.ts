@@ -4,8 +4,9 @@ import type { RunType } from "../llm/runner.ts";
 /**
  * Office-Tokens der Läufe (plan.md Kap. 4.6 „Identität eines Laufs“, E40).
  *
- * Der Supervisor stellt beim Containerstart das Office-Token aus und meldet es dem Office mit der
- * Identität des Laufs (Schnittstelle P02). Das Office prüft nur: Ein Aufruf der Office-API gilt
+ * Der Supervisor stellt beim Containerstart das Office-Token aus; das Office holt es mit
+ * `run.token` ab und meldet es hier mit der Identität aus seinem `run.started` an (S05,
+ * `RunFollower`). Das Office prüft nur: Ein Aufruf der Office-API gilt
  * für genau den Lauf, zu dem sein Token gehört. Agent, Aufgabe und Lauftyp kommen aus dem Token,
  * nie aus den Argumenten eines Werkzeugs.
  *
@@ -60,6 +61,11 @@ export class RunTokens {
       return null;
     }
     return { ...grant, expiresAt: new Date(grant.expiresAt.getTime()) };
+  }
+
+  /** Ob der Lauf ein angemeldetes Token hat, auch ein abgelaufenes, solange es nicht entfernt ist. */
+  hasRun(runId: string): boolean {
+    return [...this.grants.values()].some((g) => g.runId === runId);
   }
 
   /** Zieht das Token eines Laufs zurück, z. B. am Laufende oder beim Notaus. */

@@ -215,6 +215,7 @@ export {
   IpcTransportError,
   SupervisorClient,
   supervisorEscalationGate,
+  supervisorRunAccess,
   supervisorRunRequester,
   type SupervisorClientOptions,
 } from "./ipc/client.ts";
@@ -235,6 +236,14 @@ export {
   type TickResult,
   type Wake,
 } from "./planner/planner.ts";
+export {
+  DEFAULT_MAX_SLICES_PER_POLL,
+  RunFollower,
+  type FollowResult,
+  type RunAccess,
+  type RunEndReport,
+  type RunFollowerOptions,
+} from "./runs/run-follower.ts";
 
 export {
   API_PREFIX,
