@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import {
   IpcTransportError,
   SupervisorClient,
   supervisorEscalationGate,
+  supervisorRunAccess,
   type SupervisorClientOptions,
 } from "./client.ts";
 import { MAX_PROMPT_CHARS } from "./protocol.ts";
@@ -389,5 +391,42 @@ describe("supervisorEscalationGate", () => {
     await supervisor((incoming) => [fail(incoming.id, "not_available", "kommt mit S03")]);
     const gate = supervisorEscalationGate(client());
     await expect(gate.checkEscalationToCeo(request)).rejects.toBeInstanceOf(IpcCallError);
+  });
+});
+
+describe("supervisorRunAccess", () => {
+  const runId = "r-0000000000000001";
+
+  it("ruft run.token und run.output mit Lauf-ID und Offset auf", async () => {
+    const officeToken = randomBytes(32).toString("base64url");
+    await supervisor((incoming) => [
+      incoming.method === "run.token"
+        ? ok(incoming, { state: "started", officeToken, expiresAt: "2026-11-21T09:00:00.000Z" })
+        : ok(incoming, { state: "running", data: "{}\n", nextOffset: 7, truncated: false }),
+    ]);
+    const runs = supervisorRunAccess(client());
+    await expect(runs.token(runId)).resolves.toEqual({
+      state: "started",
+      officeToken,
+      expiresAt: "2026-11-21T09:00:00.000Z",
+    });
+    await expect(runs.output(runId, 4)).resolves.toMatchObject({ state: "running", nextOffset: 7 });
+    expect(received.map((r) => [r.method, r.params])).toEqual([
+      ["run.token", { runId }],
+      ["run.output", { runId, offset: 4 }],
+    ]);
+  });
+
+  it("sendet keinen negativen Offset und nimmt kein Token in falscher Form an", async () => {
+    await supervisor((incoming) => [
+      ok(incoming, { state: "started", officeToken: "kurz", expiresAt: "2026-11-21T09:00:00Z" }),
+    ]);
+    const runs = supervisorRunAccess(client());
+    const invalid = await rejection(runs.output(runId, -1));
+    expect(invalid).toBeInstanceOf(IpcCallError);
+    expect((invalid as IpcCallError).sent).toBe(false);
+    const broken = await rejection(runs.token(runId));
+    expect(broken).toBeInstanceOf(IpcTransportError);
+    expect((broken as Error).message).toMatch(/Ergebnis von run.token ungültig/);
   });
 });

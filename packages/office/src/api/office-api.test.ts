@@ -802,8 +802,11 @@ describe("Office-Tokens", () => {
     }).toThrow("Lauf r1 hat bereits");
     expect(registry.resolve("a".repeat(32), NOW)).toEqual(grant);
     expect(registry.resolve("a".repeat(33), NOW)).toBeNull();
+    expect(registry.hasRun("r1")).toBe(true);
+    expect(registry.hasRun("r2")).toBe(false);
     registry.revoke("r1");
     expect(registry.resolve("a".repeat(32), NOW)).toBeNull();
+    expect(registry.hasRun("r1")).toBe(false);
   });
 
   it("nimmt abgelaufene Tokens nicht an und räumt sie weg", () => {

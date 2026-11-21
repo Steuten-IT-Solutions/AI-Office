@@ -3,6 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import { z } from "zod";
 import type { EscalationGate } from "../api/tools.ts";
 import type { RunRequester } from "../planner/planner.ts";
+import type { RunAccess } from "../runs/run-follower.ts";
 import {
   ERROR_CODES,
   MAX_FRAME_BYTES,
@@ -388,6 +389,21 @@ export function supervisorRunRequester(client: SupervisorClient): RunRequester {
   return {
     requestRun(params) {
       return client.call("run.request", params);
+    },
+  };
+}
+
+/**
+ * `RunAccess` des `RunFollower` über den Supervisor (S05). Beide Aufrufe sind wiederholbar:
+ * `run.token` liefert bei jedem Abruf dasselbe Token, `run.output` liest nur.
+ */
+export function supervisorRunAccess(client: SupervisorClient): RunAccess {
+  return {
+    token(runId) {
+      return client.call("run.token", { runId });
+    },
+    output(runId, offset) {
+      return client.call("run.output", { runId, offset });
     },
   };
 }
