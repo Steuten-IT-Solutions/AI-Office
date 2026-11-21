@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { z } from "zod";
 import type { EscalationGate } from "../api/tools.ts";
+import type { FingerprintAccess } from "../git/fingerprints.ts";
+import type { GitAccess } from "../git/outcome-follower.ts";
 import type { RunRequester } from "../planner/planner.ts";
 import type { RunAccess } from "../runs/run-follower.ts";
 import {
@@ -404,6 +406,18 @@ export function supervisorRunAccess(client: SupervisorClient): RunAccess {
     },
     output(runId, offset) {
       return client.call("run.output", { runId, offset });
+    },
+  };
+}
+
+/** Git-Gate für das Office (S08): Stand der Übergabe und Fingerabdrücke. */
+export function supervisorGitAccess(client: SupervisorClient): GitAccess & FingerprintAccess {
+  return {
+    status(runId) {
+      return client.call("git.status", { runId });
+    },
+    addFingerprints(params) {
+      return client.call("fingerprints.add", params);
     },
   };
 }

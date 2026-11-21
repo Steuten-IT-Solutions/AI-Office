@@ -148,6 +148,36 @@ export interface MessageSent {
   replyToId: string | null;
 }
 
+/**
+ * Endgültiger Stand der Übergabe eines Werkbank-Laufs im Git-Gate (S08), wie ihn der Supervisor
+ * mit `git.status` meldet. Zwischenstände (`pending`, `pushed`) hält das Office nicht fest.
+ * Handelnder ist `system`, die Lauf-ID steht im Feld `runId` des Ereignisses.
+ *
+ * - `none`: Der Lauf hat nichts zur Übergabe angemeldet.
+ * - `pr_opened`: gepusht, PR geöffnet.
+ * - `rejected`: vom Git-Gate abgelehnt (Ausgangsfilter, Identität, Refs, GitHub).
+ * - `failed`: nach mehreren technischen Fehlern aufgegeben.
+ * - `unknown`: Der Supervisor kennt den beendeten Lauf nicht (mehr), etwa nach Ablauf der
+ *   Aufbewahrung.
+ *
+ * Der Grund nennt laut Supervisor Art und Ort eines Funds, nie den gefundenen Text.
+ */
+export interface GitOutcome {
+  state: (typeof GIT_OUTCOME_STATES)[number];
+  /** Nur bei `pr_opened`. */
+  branch: string | null;
+  head: string | null;
+  pr: number | null;
+  url: string | null;
+  /** Nur bei `rejected` und `failed`. */
+  reason: string | null;
+}
+
+export const GIT_OUTCOME_STATES = ["none", "pr_opened", "rejected", "failed", "unknown"] as const;
+
+/** Wie `MAX_REASON_CHARS` im IPC-Protokoll (P02). */
+export const MAX_GIT_REASON_CHARS = 2_000;
+
 /** Ereignis-IDs sind UUIDs (siehe `EventStore.append`). */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -347,6 +377,68 @@ export function parseRunStarted(payload: unknown): Parsed<RunStarted> {
   });
 }
 
+/** Wie im IPC-Protokoll (S08): Branch je Lauf, voller Commit-Hash, PR-Link über https. */
+const GIT_BRANCH_PATTERN = /^agent\/r-[0-9a-f]{16}$/;
+const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const MAX_URL_CHARS = 300;
+
+export function parseGitOutcome(payload: unknown): Parsed<GitOutcome> {
+  const r = new Reader(payload).only("state", "branch", "head", "pr", "url", "reason");
+  const state = r.oneOf("state", GIT_OUTCOME_STATES);
+  const value: GitOutcome = {
+    state,
+    branch: r.optionalString("branch"),
+    head: r.optionalString("head"),
+    pr: r.raw("pr") === null || r.raw("pr") === undefined ? null : r.integer("pr", 1, COUNT_MAX),
+    url: r.optionalString("url"),
+    reason: r.optionalString("reason"),
+  };
+  const opened = state === "pr_opened";
+  const withReason = state === "rejected" || state === "failed";
+  if (opened) {
+    if (value.branch === null || !GIT_BRANCH_PATTERN.test(value.branch)) {
+      r.issues.push("branch: agent/r-<16 Hex-Zeichen> erwartet");
+    }
+    if (value.head === null || !GIT_COMMIT_PATTERN.test(value.head)) {
+      r.issues.push("head: Commit-Hash mit 40 Hex-Zeichen erwartet");
+    }
+    if (value.pr === null) {
+      r.issues.push("pr: PR-Nummer erwartet");
+    }
+    if (value.url === null || !isHttpsUrl(value.url)) {
+      r.issues.push(`url: https-Link mit höchstens ${String(MAX_URL_CHARS)} Zeichen erwartet`);
+    }
+  } else if (
+    value.branch !== null ||
+    value.head !== null ||
+    value.pr !== null ||
+    value.url !== null
+  ) {
+    r.issues.push("branch, head, pr und url gibt es nur bei pr_opened");
+  }
+  if (withReason) {
+    if (value.reason === null || value.reason === "") {
+      r.issues.push("reason: Grund erwartet");
+    } else if (value.reason.length > MAX_GIT_REASON_CHARS) {
+      r.issues.push(`reason: höchstens ${String(MAX_GIT_REASON_CHARS)} Zeichen`);
+    }
+  } else if (value.reason !== null) {
+    r.issues.push("reason gibt es nur bei rejected und failed");
+  }
+  return parsed(r, value);
+}
+
+function isHttpsUrl(text: string): boolean {
+  if (text.length > MAX_URL_CHARS) {
+    return false;
+  }
+  try {
+    return new URL(text).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function eventType<T>(type: string, parse: (payload: unknown) => Parsed<T>): EventType<T> {
   return {
     type,
@@ -373,6 +465,7 @@ export const RUN_FINISHED = eventType("run.finished", parseRunFinished);
 export const RUN_STARTED = eventType("run.started", parseRunStarted);
 export const ESCALATION_RAISED = eventType("escalation.raised", parseEscalationRaised);
 export const ESCALATION_ANSWERED = eventType("escalation.answered", parseEscalationAnswered);
+export const GIT_OUTCOME = eventType("git.outcome", parseGitOutcome);
 
 export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   AGENT_HIRED,
@@ -387,4 +480,5 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   ESCALATION_RAISED,
   ESCALATION_ANSWERED,
   RUN_STARTED,
+  GIT_OUTCOME,
 ];
