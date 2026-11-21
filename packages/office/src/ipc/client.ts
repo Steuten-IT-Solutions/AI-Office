@@ -3,6 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import { z } from "zod";
 import type { EscalationGate } from "../api/tools.ts";
 import type { FingerprintAccess } from "../git/fingerprints.ts";
+import type { MergeAccess } from "../git/merge-follower.ts";
 import type { GitAccess } from "../git/outcome-follower.ts";
 import type { RunRequester } from "../planner/planner.ts";
 import type { RunAccess } from "../runs/run-follower.ts";
@@ -410,11 +411,19 @@ export function supervisorRunAccess(client: SupervisorClient): RunAccess {
   };
 }
 
-/** Git-Gate für das Office (S08): Stand der Übergabe und Fingerabdrücke. */
-export function supervisorGitAccess(client: SupervisorClient): GitAccess & FingerprintAccess {
+/**
+ * Git-Gate und Merge-Gate für das Office: Stand der Übergabe und Fingerabdrücke (S08), Stand des
+ * Merge-Antrags (S09). Alle Abfragen sind wiederholbar.
+ */
+export function supervisorGitAccess(
+  client: SupervisorClient,
+): GitAccess & FingerprintAccess & MergeAccess {
   return {
     status(runId) {
       return client.call("git.status", { runId });
+    },
+    mergeStatus(runId) {
+      return client.call("git.merge_status", { runId });
     },
     addFingerprints(params) {
       return client.call("fingerprints.add", params);
