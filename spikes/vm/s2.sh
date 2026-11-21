@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Spike S2: Kontingent (docs/etappe-0.md 3.2). Braucht den vollen Login (zugang.sh voll) und das
-# setup-token (zugang.sh token), dazu ein ruhiges Zeitfenster: Während S2b und S2c bitte Claude
+# setup-token (zugang.sh token; S2a′ liest den Zähler aus dem rate_limit_event eines Laufs mit dem
+# Token), dazu ein ruhiges Zeitfenster: Während S2b und S2c bitte Claude
 # nirgends nutzen. Budget: bis 5 Prozentpunkte des Wochenlimits (vom CEO am 25.10.2026
 # freigegeben); S2c bricht ab, sobald der Wochenzähler um so viel gestiegen ist.
 #

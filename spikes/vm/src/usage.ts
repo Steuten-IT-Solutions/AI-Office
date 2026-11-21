@@ -102,6 +102,44 @@ export function findTextRows(text: string): UsageRow[] {
   return rows;
 }
 
+/**
+ * Zähler aus dem `rate_limit_event` eines Laufs (Weg S2a′, Probe in aio-dev am 21.11.2026 mit
+ * CLI 2.1.312): `rate_limit_info.unifiedWindows` enthält je Fenster (`five_hour`, `seven_day`)
+ * `utilization` als Anteil 0..1, `resetsAt` in Unix-Sekunden und `status`. Das Feld ist nicht
+ * dokumentiert [Annahme: Form bleibt bei dieser Version stabil]; belegt ist nur die Beobachtung.
+ * Mit vollem Login und mit `setup-token` kam derselbe Inhalt. Maßgeblich ist das letzte Ereignis.
+ */
+export function windowRows(messages: unknown[]): UsageRow[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!isObject(m) || m["type"] !== "rate_limit_event" || !isObject(m["rate_limit_info"])) {
+      continue;
+    }
+    const windows = m["rate_limit_info"]["unifiedWindows"];
+    if (!isObject(windows)) {
+      continue;
+    }
+    const rows: UsageRow[] = [];
+    for (const [kind, w] of Object.entries(windows)) {
+      if (!isObject(w) || typeof w["utilization"] !== "number") {
+        continue;
+      }
+      const reset = w["resetsAt"];
+      rows.push({
+        kind,
+        // Auf zwei Nachkommastellen runden: 0.57 * 100 ergibt sonst 56.99999999999999.
+        percent: Math.round(w["utilization"] * 10_000) / 100,
+        resetsAt: typeof reset === "number" || typeof reset === "string" ? String(reset) : null,
+        source: `$[${String(i)}].rate_limit_info.unifiedWindows.${kind}`,
+      });
+    }
+    if (rows.length > 0) {
+      return rows;
+    }
+  }
+  return [];
+}
+
 /** Strukturierte Zeilen haben Vorrang; sonst die aus dem Text. Doppelte `kind` nur einmal. */
 export function usageRows(messages: unknown[], resultText: string | null): UsageRow[] {
   // rate_limit_event trägt eine eigene Auslastung je Limit; die gehört nicht zu /usage (S2e).
@@ -153,11 +191,12 @@ export function resetKinds(before: UsageRow[], after: UsageRow[]): string[] {
 }
 
 /**
- * Fenster für das Wochenlimit über alle Modelle: `weekly_all` laut Plan Fakt 7, sonst die erste
- * Bezeichnung mit „week“/„woche“ ohne Modellnamen [Annahme].
+ * Fenster für das Wochenlimit über alle Modelle: `weekly_all` laut Plan Fakt 7 oder `seven_day`
+ * aus dem `rate_limit_event` (gleicher Wert und gleicher Reset wie die Wochenanzeige in
+ * claude.ai, Abgleich am 21.11.2026), sonst die erste Bezeichnung mit „week“/„woche“ ohne Modellnamen [Annahme].
  */
 export function weeklyKind(rows: UsageRow[]): string | null {
-  const exact = rows.find((r) => r.kind === "weekly_all");
+  const exact = rows.find((r) => r.kind === "weekly_all" || r.kind === "seven_day");
   if (exact !== undefined) {
     return exact.kind;
   }

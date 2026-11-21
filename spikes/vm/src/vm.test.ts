@@ -22,9 +22,12 @@ import {
   budgetStop,
   budgetUsed,
   buildReport as s2Report,
+  chooseSnapshot,
+  expectation,
   officeGaps,
   officePrompt,
   parseOutput,
+  queryArgs,
   readable,
   resultOf,
   sampleGaps,
@@ -42,6 +45,7 @@ import {
   resetKinds,
   usageRows,
   weeklyKind,
+  windowRows,
 } from "./usage.ts";
 
 // Kein Test ruft das CLI oder ein LLM auf (E23). Die stream-json-Zeilen sind von Hand gebaut.
@@ -446,6 +450,108 @@ describe("S2: /usage lesen", () => {
       result: "x",
     });
     expect(parseOutput('{"type":"a"}\n{"type":"result"}\nkaputt')).toHaveLength(2);
+  });
+});
+
+describe("S2a′: Zähler aus rate_limit_event", () => {
+  // Form wie in aio-dev am 21.11.2026 mit CLI 2.1.312 beobachtet (IDs ersetzt).
+  const EVENT = {
+    type: "rate_limit_event",
+    rate_limit_info: {
+      status: "allowed",
+      resetsAt: 1795278000,
+      rateLimitType: "five_hour",
+      overageStatus: "rejected",
+      overageDisabledReason: "org_level_disabled",
+      isUsingOverage: false,
+      unifiedWindows: {
+        five_hour: { utilization: 0.57, resetsAt: 1795278000, status: "allowed" },
+        seven_day: { utilization: 0.08, resetsAt: 1795305600, status: "allowed" },
+      },
+    },
+    uuid: "u",
+    session_id: "s",
+  };
+  const snap = (methode: Snapshot["methode"], zugang: Snapshot["zugang"], rows = 0): Snapshot => ({
+    zeit: "",
+    methode,
+    zugang,
+    rows: Array.from({ length: rows }, (_, i) => ({
+      kind: i === 0 ? "five_hour" : "seven_day",
+      percent: 1,
+      resetsAt: "1795278000",
+      source: "$[0].rate_limit_info.unifiedWindows",
+    })),
+    costUsd: 0.01,
+    isError: false,
+    exitCode: 0,
+    text: "",
+    stderr: "",
+  });
+
+  it("liest beide Fenster in Prozent mit Reset", () => {
+    const rows = windowRows([{ type: "system" }, EVENT, { type: "result" }]);
+    expect(rows.map((r) => [r.kind, r.percent, r.resetsAt])).toEqual([
+      ["five_hour", 57, "1795278000"],
+      ["seven_day", 8, "1795305600"],
+    ]);
+    expect(weeklyKind(rows)).toBe("seven_day");
+  });
+
+  it("nimmt das letzte Ereignis und übergeht Ereignisse ohne unifiedWindows", () => {
+    const later = {
+      type: "rate_limit_event",
+      rate_limit_info: { unifiedWindows: { seven_day: { utilization: 0.1, resetsAt: 2 } } },
+    };
+    const bare = { type: "rate_limit_event", rate_limit_info: { status: "allowed" } };
+    expect(windowRows([EVENT, later, bare]).map((r) => [r.kind, r.percent])).toEqual([
+      ["seven_day", 10],
+    ]);
+    expect(windowRows([{ type: "result", result: "Session 3%" }])).toEqual([]);
+  });
+
+  it("baut den Messlauf mit haiku und einem Turn", () => {
+    const args = queryArgs("event");
+    expect(args).toContain("haiku");
+    expect(args.slice(args.indexOf("--max-turns"), args.indexOf("--max-turns") + 2)).toEqual([
+      "--max-turns",
+      "1",
+    ]);
+    expect(args.at(-2)).toBe("--");
+  });
+
+  it("wählt /usage vor rate_limit_event und das Token vor dem vollen Login", () => {
+    const usage = snap("json", "voll", 2);
+    const eventToken = snap("event", "token", 2);
+    const eventVoll = snap("event", "voll", 2);
+    expect(chooseSnapshot([eventVoll, eventToken, usage])).toBe(usage);
+    expect(chooseSnapshot([snap("json", "voll"), eventVoll, eventToken])).toBe(eventToken);
+    expect(chooseSnapshot([snap("json", "token", 2)])).toBeNull();
+  });
+
+  it("bewertet /usage nur noch zur Information, wenn S2a′ trägt", () => {
+    expect(expectation(snap("json", "voll"), true, false)).toBeNull();
+    expect(expectation(snap("json", "voll"), false, false)).toBe(false);
+    expect(expectation(snap("event", "token"), true, true)).toBe(true);
+    expect(expectation(snap("event", "voll"), true, true)).toBeNull();
+    const report = s2Report(
+      {
+        a: {
+          snapshots: [snap("json", "voll"), snap("event", "token", 2)],
+          vergleich: { five_hour: 1, seven_day: 2 },
+          methode: "event",
+          zugang: "token",
+        },
+      },
+      [],
+    );
+    expect(report.findings.map((f) => f.verdict)).toEqual([
+      "info",
+      "erwartet",
+      "erwartet",
+      "erwartet",
+    ]);
+    expect(report.outcome).toMatch(/^Go/);
   });
 });
 
