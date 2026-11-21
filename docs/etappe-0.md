@@ -143,8 +143,8 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
    - Require branches to be up to date before merging
    - Do not allow bypassing the above settings
    - Allow force pushes: **aus**; Allow deletions: **aus**
-   - „Restrict who can push to matching branches“: nur die App. Sie muss in dieser Liste stehen,
-     sonst lehnt GitHub ihren Merge per API mit HTTP 405 ab (S1e, E52).
+   - „Restrict who can push to matching branches“: die App und der CEO. Die App muss in dieser
+     Liste stehen, sonst lehnt GitHub ihren Merge per API mit HTTP 405 ab (S1e, E52).
 3. `CODEOWNERS` kommt per PR (Paket P01).
 4. Die Schritte 2 und 3 erst nach dem Merge von P01 aktivieren. Sonst kann P01 selbst nicht
    gemergt werden. Bis dahin merged nur der CEO.
