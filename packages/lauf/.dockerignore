@@ -1,0 +1,6 @@
+# Build-Kontext ist packages/lauf (README.md). Ins Image kommen nur Startprozess und Einstellungen.
+**
+!src/*.ts
+!image/managed-settings.json
+src/*.test.ts
+src/test-*.ts
