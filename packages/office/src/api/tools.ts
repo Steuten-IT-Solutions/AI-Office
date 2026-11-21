@@ -41,7 +41,9 @@ export interface ToolContext {
 }
 
 export interface ToolOutput {
+  /** Satz für das Modell. Der MCP-Server legt ihn als `hinweis` in `structuredContent`. */
   text: string;
+  /** Ergebnisdaten. Der Schlüssel `hinweis` ist für den Satz reserviert. */
   structured: Record<string, JsonValue>;
 }
 

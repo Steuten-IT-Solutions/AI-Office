@@ -159,6 +159,12 @@ async function tool(bearer: string, name: string, args: Record<string, unknown>)
   const reply = await rpc(bearer, "tools/call", { name, arguments: args });
   expect(reply.status).toBe(200);
   const result = reply.body?.result;
+  if (result?.isError === false) {
+    // Das CLI zeigt dem Modell nur `structuredContent`; der Satz muss dort als `hinweis` stehen.
+    // `content` trägt dasselbe Objekt als JSON (MCP 2026-07-28, „Structured Content“).
+    expect(typeof result.structuredContent?.["hinweis"]).toBe("string");
+    expect(JSON.parse(result.content?.[0]?.text ?? "")).toEqual(result.structuredContent);
+  }
   return {
     isError: result?.isError,
     text: result?.content?.[0]?.text ?? "",
@@ -419,6 +425,7 @@ describe("Werkzeuge", () => {
     expect(first.isError).toBe(false);
     const message = office.state.message(first.data["messageId"] ?? "");
     expect(message).toMatchObject({ fromId: CTO, toId: COO, runId: "lauf-1" });
+    expect(first.data["hinweis"]).toBe(`Nachricht ${message?.id ?? ""} an ${COO} gesendet.`);
 
     const again = await tool(t, "send_message", args);
     expect(again.data).toEqual(first.data);
@@ -476,6 +483,7 @@ describe("Werkzeuge", () => {
     expect((await tool(coo, "delegate", { taskId, assigneeId: CTO })).data).toEqual({
       taskId,
       assigneeId: CTO,
+      hinweis: `Aufgabe ${taskId} an ${CTO} delegiert.`,
     });
 
     const cto = token(CTO, { taskId, runType: "werkbank", runId: "lauf-cto" });

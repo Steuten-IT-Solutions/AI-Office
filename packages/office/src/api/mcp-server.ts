@@ -384,16 +384,28 @@ export class OfficeApi {
     }
   }
 
+  /**
+   * Ergebnis eines Werkzeugaufrufs. Bei Erfolg steht der Satz für das Modell als `hinweis` auch
+   * in `structuredContent`: Das CLI 2.1.312 gibt dem Modell bei `structuredContent` nur dieses
+   * Objekt weiter, nicht den Text in `content` (Probe vom 21.11.2026 am Supervisor-Gateway, S07).
+   * `content` enthält dasselbe Objekt als JSON, wie es MCP 2026-07-28 für die Abwärtskompatibilität
+   * empfiehlt (SHOULD, „Structured Content“ in
+   * https://modelcontextprotocol.io/specification/2026-07-28/server/tools). Bei einem Fehler
+   * (`isError`) kommt der Text beim Modell an; dort bleibt es beim Satz.
+   */
   private toolResult(
     id: RequestId,
     text: string,
     structured: Record<string, JsonValue> | null,
   ): Reply {
+    if (structured === null) {
+      return rpcResult(id, { content: [{ type: "text", text }], isError: true });
+    }
+    const structuredContent = { ...structured, hinweis: text };
     return rpcResult(id, {
-      content: [{ type: "text", text }],
-      ...(structured === null
-        ? { isError: true }
-        : { structuredContent: structured, isError: false }),
+      content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+      structuredContent,
+      isError: false,
     });
   }
 }
