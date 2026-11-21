@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E51 und E52 am 21.11.2026).
+> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E53 und E54 am 21.11.2026).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -37,7 +37,7 @@
 | E24 | **Migrationen nach dem Muster Expand/Contract** mit Regeln für Vorwärtskompatibilität (Kap. 4.5) | Rollback ohne Rücksicherung, keine verlorenen Ereignisse | Review 4, Review 6 |
 | E25 | **Nur der Supervisor startet Container.** Das Office läuft als eigener Unix-Nutzer ohne Docker-Zugriff und ohne Zugriff auf Secrets. Kommunikation nur über einen Unix-Socket (Kap. 4.7). | Wer Container starten kann, ist faktisch Root. Ohne Trennung wäre der Supervisor keine Grenze. | Review 6 |
 | E26 | Die **Merge-Freigabe** für `AI-Office` erteilt der CEO als **PR-Review direkt in GitHub**. Der Supervisor merged nur, wenn ein Approve des CEO auf genau dem aktuellen Head-SHA vorliegt. **Die PRs sind im Webinterface eingebunden:** Liste, Status, CI, kritische Pfade, Zusammenfassung und ein Direktlink zum Review in GitHub (Kap. 5.11). Der Klick auf „Approve“ erfolgt in GitHub. Alle übrigen Freigaben der Stufe C und der Notaus liegen in einer **eigenen, kleinen Supervisor-Konsole**. | GitHub zeigt den echten Diff an, hat eigene Zwei-Faktor-Authentifizierung und kann von den Agenten nicht verändert werden. Ein Freigabeknopf im Office müsste einen GitHub-Zugang des CEO halten. Eine Office-Version mit Fehler oder Manipulation könnte ihn dann missbrauchen. | Review 6, Runde 7 |
-| E27 | **Zwei Arten von Claude-Zugang:** In den Lauf-Containern nur ein **`setup-token`**, das ausschließlich Modellanfragen stellen kann. Der volle Login liegt nur beim Supervisor und dient nur der Abfrage des Kontingents. | Kleinerer Schaden, wenn ein Zugang abgegriffen wird. Kein Konflikt beim Erneuern der Anmeldung. | Review 6 |
+| E27 | **Ein Claude-Zugang, das `setup-token`:** Es kann ausschließlich Modellanfragen stellen. Es liegt in den Lauf-Containern und dient auch den Messläufen des Supervisors (E53). Einen vollen Login gibt es nicht. | Kleinerer Schaden, wenn ein Zugang abgegriffen wird. Kein Konflikt beim Erneuern der Anmeldung. Der volle Login war nur für `/usage` vorgesehen; `/usage` liefert im Print-Modus aber keine Werte, und das `setup-token` liefert denselben Zähler (Spike S2, E53). | Review 6, Review 25 |
 | E28 | **Git-Übergabe als `git bundle`:** Der Host führt nie Git im Verzeichnis eines Agenten aus. Der Supervisor importiert in ein eigenes Bare-Repo ohne Hooks und ohne Repo-Konfiguration. | Git-Hooks und Git-Konfiguration aus Agentenhand würden sonst auf dem Host laufen. | Review 6 |
 | E29 | **Egress-Härtung:** Paket-Registries nur über einen Pull-through-Cache, der nur lesend zugreift. Kein direktes DNS. Recherche-Läufe ohne Bash, ohne Repo, mit Webzugriff nur über ein Werkzeug der Office-API. | Verhindert Datenabfluss über Registries, DNS und WebFetch. | Review 6 |
 | E30 | **CI-Härtung:** Workflows haben standardmäßig nur Leserechte. Ein Pflicht-Check zählt nur, wenn die Workflow-Dateien im PR unverändert sind. Die GitHub App bekommt **keine** Berechtigung für Workflows, also ändert nur der CEO Workflows. | Agenten-Branches liegen im selben Repo. Die Freigabe für Forks greift dort nicht, und Pushes mit einem App-Token lösen Workflows aus. | Review 6 |
@@ -63,6 +63,8 @@
 | E50 | **Managed Settings vom Supervisor, nicht aus dem Image:** Die Managed-Settings-Datei der Lauf-Container liegt im Supervisor-Repo. Der Container-Manager bindet das ganze Verzeichnis `/etc/claude-code` schreibgeschützt ein. Das Lauf-Image enthält nur den leeren Einhängepunkt. Der Startprozess startet nichts, wenn die Datei fehlt oder nicht lesbar ist. | CEO-Entscheidung. Das Lauf-Image ändern Agenten per PR, das Supervisor-Repo nicht. Eine übersehene Änderung im Review kann die Rechte der Läufe dann nicht verändern. Das ganze Verzeichnis, weil das CLI laut Doku `managed-settings.json` mit jeder `*.json` aus `managed-settings.d/` zusammenführt. Die Prüfung im Startprozess, weil das CLI laut Doku ohne die Richtlinie startet, wenn das Betriebssystem das Lesen verweigert, und das bei `-p` nur auf stderr meldet (<https://code.claude.com/docs/en/managed-settings>). Das Image bleibt ein kritischer Pfad, weil ein Image-PR z. B. das CLI oder den Startprozess austauschen kann. | Review 23 |
 | E51 | **Polling mit bedingten Anfragen (ETag):** Der GitHub-Adapter des Supervisors fragt PR-Liste, Reviews und Checks mit `If-None-Match` und dem zuletzt erhaltenen `ETag` ab, im Intervall von 60 s. Steigt der Verbrauch über 20 % des Limits (Header `x-ratelimit-used` im Verhältnis zu `x-ratelimit-limit`), verlängert der Adapter das Intervall, z. B. auf 90 s. Ein Webhook ist damit nicht nötig. Umsetzung in Kap. 5.9 und Paket S09. | CEO-Entscheidung nach Spike S1d (20.11.2026, `spikes/ergebnisse/S1d.md`): Das Limit der Installation lag bei 5.000 Anfragen pro Stunde. Ein Poll-Zyklus kostete 1 Anfrage plus 2 je offenem PR. Ohne ETag belegen 10 offene PRs bei 60 s also 21 × 60 = 1.260 Anfragen pro Stunde, das sind 25,2 % des Limits und mehr als die Grenze von 20 % aus S1d. 10 bedingte Anfragen mit HTTP 304 erhöhten den Zähler nicht. Das deckt sich mit der Doku: „Making a conditional request does not count against your primary rate limit if a `304` response is returned and the request was made while correctly authorized with an `Authorization` header.“ (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api>). Mit ETag kosten nur Abfragen, deren Daten sich geändert haben. Ändert sich in jedem Zyklus alles, bleibt es bei 25,2 %, dann greift die Verlängerung (90 s: 16,8 %). | Review 24 |
 | E52 | **Die App steht ab dem Merge-Gate unter „Restrict who can push to matching branches“:** Mit der Zielstufe des Branch-Schutzes (S09, `einrichtung.md` 5.3) wird die App `aio-supervisor` in diese Liste eingetragen. Der CEO bleibt ebenfalls in der Liste. In der Übergangsstufe nach E48 steht nur der CEO darin. | CEO-Entscheidung nach Spike S1e (20.11.2026, `spikes/ergebnisse/S1e.md`): Mit Approve auf dem aktuellen Head, aber ohne die App in der Liste, lehnte GitHub den Merge der App mit HTTP 405 ab („You're not authorized to push to this branch“). Mit der App in der Liste wurde gemergt. Ohne Approve, mit veraltetem Approve und mit veraltetem SHA lehnte GitHub den Merge ebenfalls ab. Nicht gemessen: ein direkter Push der App auf `main`, während sie in der Liste steht. **[Annahme]**: GitHub lehnt ihn wegen „Require a pull request before merging“ ohne Bypass ab. | Review 24 |
+| E53 | **Kontingent aus dem `rate_limit_event`:** Jeder Lauf mit `--output-format stream-json --verbose` liefert ein `rate_limit_event`. Darin steht unter `rate_limit_info.unifiedWindows` je Fenster (`five_hour`, `seven_day`) die Auslastung `utilization` (Anteil 0..1, zwei Nachkommastellen), `resetsAt` (Unix-Sekunden) und `status`. **Maßgeblich für die Admission sind Messläufe des Supervisors:** ein eigener Lauf-Container mit `setup-token`, `haiku`, `--max-turns 1`, festem Prompt und ohne Werkzeuge, gestartet, wenn die letzte Messung älter als ein Höchstalter ist **[Annahme: 5 min, justieren]**. Zählerstände aus den Läufen der Agenten verwendet der Supervisor **nur in Richtung Vorsicht**: Ein höherer Stand, `allowed_warning` oder `rejected` bremst sofort; ein niedrigerer Stand lockert nichts. Fehlt das Feld (z. B. nach einem Update des CLI), gilt der Fallback aus Kap. 6. Umsetzung in Kap. 6 und Paket S04. | CEO-Entscheidung nach Spike S2 (21.11.2026, `spikes/ergebnisse/S2.md`): `/usage` lieferte per `claude -p` weder als JSON noch als `stream-json` Werte. Der Zähler aus dem Ereignis stimmte mit claude.ai überein (Sitzung 59 % gegen 60 %, Woche 8 % gegen 8 %, gleiche Resetzeiten), mit `setup-token` wie mit vollem Login. 30 Messläufe kosteten laut CLI zusammen 0,0051 USD und bewegten keinen Zähler. Nur in Richtung Vorsicht, weil ein Agent im Container nach R5 das Token und seine Prozesse kontrollieren und so auch Ereignisse fälschen kann **[Annahme: Er kann in die Ausgabe des CLI schreiben]**. **Das Feld ist nicht dokumentiert** (beobachtet mit CLI 2.1.312); es wird vor jedem Update des CLI geprüft (R2). | Review 25 |
+| E54 | **Faktor „USD → Prozentpunkte“ im Betrieb kalibrieren:** S04 lernt den Faktor je Modell und Fenster laufend aus dem Hauptbuch (Σ `total_cost_usd`) und den Messläufen, über Zeiträume, in denen der Zähler um mehrere Prozentpunkte steigt. Bis genug Daten da sind, gilt ein konservativer Startwert: Woche **4,4 Prozentpunkte je USD** als oberer Wert. Wie bisher reserviert die Admission mit dem oberen Wert und dem Zuschlag (Kap. 6). | CEO-Entscheidung nach Spike S2 (21.11.2026): S2c war nicht messbar. Ganz S2 kostete laut CLI etwa 0,23 USD, der Wochenzähler blieb bei 8 %. Bei ganzen Prozentpunkten ergibt das keinen Faktor; ein Block müsste mehrere Punkte verbrauchen, und das passte nicht in die freigegebenen 5 Punkte. Der Startwert ist die obere Schranke daraus: weniger als 1 Punkt für 0,23 USD, also unter 1 / 0,23 ≈ 4,35 Punkte je USD, aufgerundet. **[Annahme]**: Die Kostenschätzung des CLI (Fakt 6) ist für diese Schranke genau genug. Für das 5-Stunden-Fenster gibt S2 keine verwertbare Schranke; dort gilt bis zur Kalibrierung nur die Pause ab 70 %. | Review 25 |
 
 ---
 
@@ -83,14 +85,12 @@
 6. **Verbrauchsmessung:** `claude -p --output-format json` liefert `total_cost_usd`, `usage` und `modelUsage`. Das sind **lokale Schätzungen**.
    Quelle: <https://code.claude.com/docs/en/headless>
 7. **Kontingent abfragen:**
-   - Ein `/usage`-Prompt liefert einen `SDKUsageReport`. Er enthält Zeilen pro Zeitfenster: `kind` (z. B. `session`, `weekly_all`, `weekly_scoped`), `percent` und `resets_at`.
-   - Die Schnittstelle ist als „experimental“ gekennzeichnet.
-   - Den Bericht gibt es nur bei einer claude.ai-Anmeldung mit bekanntem Plan bzw. dem Scope `user:profile`. Ein `setup-token` hat nur `user:inference`.
+   - Stand 25.10.2026 nannte die SDK-Referenz einen `SDKUsageReport` als Antwort auf einen `/usage`-Prompt, mit Zeilen pro Zeitfenster (`kind`, `percent`, `resets_at`), als „experimental“ gekennzeichnet und nur bei einer claude.ai-Anmeldung mit dem Scope `user:profile`. Ein `setup-token` hat nur `user:inference`. Bei der Prüfung am 21.11.2026 fand sich der `SDKUsageReport` dort nicht.
    - `rate_limit_event` meldet die Stati `allowed`, `allowed_warning` und `rejected`.
 
-   Quelle: <https://code.claude.com/docs/en/agent-sdk/typescript> (Abschnitte `SDKUsageReport`, `SDKRateLimitEvent`, `SDKAssistantMessage`)
+   Quelle: <https://code.claude.com/docs/en/agent-sdk/typescript> (Abschnitte `SDKUsageReport`, `SDKRateLimitEvent`, `SDKAssistantMessage`, Stand 25.10.2026)
 
-   **Nicht verifiziert:** ob `/usage` per `claude -p` zuverlässig abrufbar ist und ob der Aufruf selbst Kontingent kostet. Das klärt Spike S2.
+   **Gemessen in Spike S2 (21.11.2026, CLI 2.1.312, `spikes/ergebnisse/S2.md`):** `/usage` liefert per `claude -p` keine Werte, nur den Satz „You are currently using your subscription to power your Claude Code usage“. Dafür enthält das `rate_limit_event` jedes Laufs unter `unifiedWindows` die Auslastung je Fenster mit Resetzeit, auch mit dem `setup-token`. Diese Felder sind **nicht dokumentiert**. Dokumentiert ist ein ähnlicher Inhalt nur für das Statuszeilen-Skript (`rate_limits.five_hour.used_percentage`, <https://code.claude.com/docs/en/statusline>). Umsetzung: E53.
 8. **Laufbegrenzung pro Aufruf:**
    - `--max-turns` begrenzt die Turns.
    - `--max-budget-usd` begrenzt die geschätzten Kosten, kann aber überschritten werden.
@@ -139,7 +139,7 @@
 - **Rechtliche Grauzone (R1):** Ob ein autonomes Mehragentensystem im Dauerbetrieb noch „ordinary, individual usage“ ist, ist nicht geklärt (Fakt 3, Fakt 4). **Empfehlung:** vor dem Dauerbetrieb bei Anthropic schriftlich anfragen. Bis dahin halten Pausen im Betrieb, die 60-%-Grenze und eine sparsame Modellwahl die Nutzung so nah wie möglich an einem individuellen Gebrauch.
 - **Kapazität ist die Engpassressource.** Das Kontingent wird gemessen, vorhergesagt und rationiert (Kap. 6).
 - **ChatGPT-Abo:** nicht im MVP (Fakt 12). Für später ist der Adapter `LlmRunner` vorgesehen.
-- **Authentifizierung (E27):** In den Läufen nur das `setup-token`. Es kann ausschließlich Modellanfragen stellen und läuft **ein Jahr** (Fakt 2). Der Supervisor speichert das Ablaufdatum, warnt den CEO 30 Tage vorher (E37) und pausiert das Büro, sobald Läufe mit Authentifizierungsfehlern enden. Neu ausgestellt wird es vom CEO per `claude setup-token`. Der volle Login liegt nur beim Supervisor, für `/usage` (Fakt 7). Läuft dieser Login ab, fehlt nur die Kontingentmessung. Das Büro pausiert dann vorsorglich (R3).
+- **Authentifizierung (E27):** In den Läufen nur das `setup-token`. Es kann ausschließlich Modellanfragen stellen und läuft **ein Jahr** (Fakt 2). Der Supervisor speichert das Ablaufdatum, warnt den CEO 30 Tage vorher (E37) und pausiert das Büro, sobald Läufe mit Authentifizierungsfehlern enden. Neu ausgestellt wird es vom CEO per `claude setup-token`. Dasselbe Token dient den Messläufen des Supervisors für das Kontingent (E53). Einen vollen Login gibt es nicht.
 - **GitHub (Fakten 14–17):** Ein öffentliches Repo ist für die CI nicht nötig. Es liefert aber kostenlose Minuten und Branch-Schutz. Weil Agenten-Branches im selben Repo liegen, braucht es die CI-Härtung aus E30.
 
 ---
@@ -173,7 +173,7 @@ flowchart TB
       RUNNER[Container-Manager<br/>baut Flags · startet/stoppt Läufe]
       GIT[Git-Gate<br/>Bundle-Import · Secret-Scan · Ausgangsfilter · Push · Merge]
       DEPLOY[Deployer<br/>Build-Container · Health · Rollback]
-      SEC[Secrets<br/>App-Key · voller Claude-Login · setup-token]
+      SEC[Secrets<br/>App-Key · setup-token]
       AUDIT[(Audit-Log)]
     end
 
@@ -696,7 +696,7 @@ claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --ma
 | Fall | Verhalten |
 |---|---|
 | Anthropic nicht erreichbar oder `rejected` | Lauf endet, Aufgabe bleibt, erneuter Versuch mit Backoff. Bei Limit: „Feierabend bis Reset“ |
-| Voller Login des Supervisors abgelaufen | Keine Kontingentmessung, daher Pause. Benachrichtigung (E37) |
+| Messlauf liefert keinen Zählerstand (z. B. Feld fehlt nach einem Update des CLI) | Keine Kontingentmessung, daher Pause und Fallback aus Kap. 6. Benachrichtigung (E37) |
 | Container stürzt ab | Automatische Übergabenotiz, Aufgabe neu eingeplant, idempotente Aufrufe |
 | Speicher voll | Admission stoppt neue Läufe. Der Health-Check meldet einen Umgebungsfehler, **ohne** Rollback. Benachrichtigung |
 | Office startet nicht | Rollback bzw. „Last-known-good“ bis zur Contract-Grenze, höchstens ein automatischer Versuch |
@@ -712,8 +712,8 @@ claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --ma
 ## 6. Kosten- und Limitkonzept
 
 - **Interne Währung:** `total_cost_usd` und die Token-Zahlen pro Lauf (Fakt 6), gebucht auf Agent, Abteilung und Aufgabe.
-- **Messung:** Der Supervisor fragt `/usage` mit seinem vollen Login ab (Fakt 7) und wertet `rate_limit_event` aus. **Alle** gemeldeten Fenster zählen: Sitzung, Woche gesamt und Woche je Modell.
-- **Kalibrierung:** Aus Messungen vor und nach jedem Lauf lernt der Supervisor je Modell und Fenster den Faktor „geschätzte USD → Prozentpunkte“. Annahme: Der Faktor ist ausreichend stabil (Spike S2).
+- **Messung (E53):** Der Supervisor liest den Zähler aus dem `rate_limit_event` eigener Messläufe mit dem `setup-token`. Ereignisse aus den Läufen der Agenten wirken nur bremsend. **Alle** gemeldeten Fenster zählen: Sitzung, Woche gesamt und, falls das CLI sie meldet, Woche je Modell. Eine Messung kostete in S2 etwa 0,0002 USD und bewegte keinen Zähler.
+- **Kalibrierung (E54):** Aus dem Hauptbuch und den Messläufen lernt der Supervisor je Modell und Fenster den Faktor „geschätzte USD → Prozentpunkte“, über Zeiträume mit einem Anstieg um mehrere Prozentpunkte, weil der Zähler nur ganze Punkte zeigt. Startwert für die Woche: 4,4 Punkte je USD als oberer Wert. Ob der Faktor stabil ist, zeigt erst der Betrieb; S2c war dafür zu klein.
 - **Admission nach Prognose (E31):**
   - **Reservierung:** Vor dem Start wird ein **konservativer** Verbrauch des Laufs vom Spielraum abgezogen und nach dem Lauf verrechnet. Er berechnet sich aus `--max-budget-usd` × Überschreitungszuschlag × oberem Wert des Faktors.
     Zuschlag und Faktor lernt der Supervisor aus den beobachteten Abweichungen; anfangs sind sie bewusst hoch **[Annahme: Zuschlag 1,5]**. Das Risiko, dass parallele Läufe zusammen das Limit überschreiten, sinkt damit stark.
@@ -725,11 +725,11 @@ claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --ma
   - **Tages-Zielkurve (E12):** Das Büro startet nur Läufe, solange der Gesamtverbrauch der Woche unter `55 % × (vergangene Tage + 1) / 7` liegt. Die Kurve bezieht sich auf den Gesamtzähler, so wie es E12 vorgibt. Nutzt der CEO an einem Tag viel, bekommt das Büro an diesem Tag entsprechend weniger.
   - **5-Stunden-Fenster:** Pause ab **70 %** **[Annahme, justieren]**, damit der CEO jederzeit selbst arbeiten kann.
   - **Parallelität:** Ergibt sich aus dem Spielraum. Ein neuer Lauf startet nur, wenn seine Reservierung noch hineinpasst.
-- **Fallback, falls `/usage` nicht per Skript abrufbar ist (S2 negativ):**
+- **Fallback, falls der Zähler nicht lesbar ist (z. B. `unifiedWindows` fehlt nach einem Update des CLI):**
   - Ein konservatives Wochenbudget in geschätzten USD, das der CEO selbst festlegt. Er kalibriert es anfangs anhand der Anzeige in Claude.
   - `rate_limit_event` mit `allowed_warning` führt sofort zur Pause.
   - E3 gilt dann nur als Näherung. **Das wird dem CEO offen gemeldet.**
-- **Grundkosten pro Lauf:** Jeder `claude -p`-Lauf hat einen Sockel aus System-Prompt, Werkzeugbeschreibungen und MCP-Schemas **[Annahme: Größenordnung in Spike S2 messen]**. Deshalb gibt es Weckregeln und Bündelung (E32).
+- **Grundkosten pro Lauf:** Jeder `claude -p`-Lauf hat einen Sockel aus System-Prompt, Werkzeugbeschreibungen und MCP-Schemas. In S2d waren das bei einem Office-ähnlichen Lauf (Verfassung, 8 Werkzeuge) etwa 17.500 Tokens, ab dem zweiten Lauf aus dem Cache: laut CLI 0,0002 USD mit `haiku` und 0,0017 USD mit `sonnet`, der erste Lauf mit Aufbau des Caches 0,0035 bzw. 0,0251 USD. Deshalb gibt es Weckregeln und Bündelung (E32).
 - **Limit erreicht:** Läufe enden sauber, die Warteschlange bleibt. Das Gebäude zeigt „Feierabend bis <Reset>“. Kein Zukauf (E2).
 - **Wirtschaftlicher Druck (E5):**
   - Der CFO verteilt das Wochenbudget auf die Abteilungen. Das ist weich, aber sichtbar.
@@ -758,7 +758,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | Spike | Frage | Kriterium / Folge |
 |---|---|---|
 | S1 | Isolation: Bash-Sandbox in Docker, Lesbarkeit des Tokens (Umgebung, `/proc`), Hostliste für Anthropic, Push auf Workflow-Dateien ohne App-Berechtigung, Rate-Limits der App | Go: Container + Sandbox. No-Go: Restrisiko R5 ausdrücklich akzeptieren (Kap. 5.7) |
-| S2 | Kontingent: Ist `/usage` per Skript abrufbar? Kostet die Abfrage selbst Kontingent? Wie stabil ist der Faktor USD → %? Wie hoch sind die Grundkosten pro Lauf? | Go: Admission nach Kap. 6. No-Go: Fallback aus Kap. 6, dem CEO melden |
+| S2 | Kontingent: Ist `/usage` per Skript abrufbar? Kostet die Abfrage selbst Kontingent? Wie stabil ist der Faktor USD → %? Wie hoch sind die Grundkosten pro Lauf? | Go: Admission nach Kap. 6. No-Go: Fallback aus Kap. 6, dem CEO melden. **Ergebnis (21.11.2026):** Zähler über das `rate_limit_event` lesbar (E53), Faktor nicht messbar, Kalibrierung im Betrieb (E54) |
 | S3 | Statik: RAM, CPU und Speicher pro Lauf | Legt die Statik und die Servergröße fest. |
 | S4 | Rechtliches: Anfrage bei Anthropic (R1) | Bei Ablehnung: Antrieb (E2) neu entscheiden |
 
@@ -780,7 +780,7 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 3. Ein absichtlich fehlerhaftes Release führt zum automatischen Rollback. Der Zustand bleibt erhalten, ein Revert-PR wird angelegt, Merges sind gesperrt.
 4. Bei vollem Speicher meldet der Health-Check einen Umgebungsfehler, und es gibt keinen Rollback.
 5. Alle drei Stufen des Notaus wirken. Pause und Stopp greifen innerhalb von 10 s **[Annahme: Zielwert]**.
-6. **Kontingent unter realer Last:** Bei 5 parallel beantragten Läufen kurz vor der Pausenschwelle bleibt der Wochenverbrauch unter 60 % (Messung über `/usage`, sofern S2 positiv ist). Eine provozierte Überschreitung wird gemeldet und senkt die Schwelle (Kap. 6).
+6. **Kontingent unter realer Last:** Bei 5 parallel beantragten Läufen kurz vor der Pausenschwelle bleibt der Wochenverbrauch unter 60 % (Messung über die Messläufe aus E53). Eine provozierte Überschreitung wird gemeldet und senkt die Schwelle (Kap. 6).
 7. Ein Zyklus A → B → C → A und ein ausgeschöpftes Weckbudget werden erkannt. Der CEO wird per E-Mail benachrichtigt.
 8. Alle Negativtests aus Kap. 5.13 und die Sandbox-Tests bestehen. Bei akzeptiertem R5 gilt die dort beschriebene Ausnahme für die Lesbarkeit des Tokens.
 9. Agententext mit HTML oder Skript wird im Webinterface nur als Text angezeigt.
@@ -795,8 +795,8 @@ Das MVP ist die **kleinste Version, die sich sicher selbst weiterentwickeln kann
 | ID | Punkt | Status |
 |---|---|---|
 | R1 | Lizenz-Grauzone „ordinary, individual usage“ im Dauerbetrieb (Fakt 3, 4) | Hohes Risiko. Spike S4: Anfrage bei Anthropic |
-| R2 | Grenzen von Max 5x nicht veröffentlicht, die Usage-Schnittstelle ist experimentell. | Spike S2, Fallback in Kap. 6 |
-| R3 | Der volle Login beim Supervisor kann ablaufen. | Dann Pause und Benachrichtigung. Die Läufe selbst hängen davon nicht ab (E27). |
+| R2 | Grenzen von Max 5x nicht veröffentlicht. Der Zähler im `rate_limit_event` ist nicht dokumentiert und kann sich mit einem Update des CLI ändern (E53). | CLI gepinnt; vor jedem Update ein Messlauf mit der neuen Version, der beide Fenster lesen muss. Sonst Fallback aus Kap. 6 |
+| R3 | Der volle Login beim Supervisor kann ablaufen. | Entfallen (Review 25): Es gibt keinen vollen Login mehr (E27, E53). |
 | R4 | Öffentliches Repo: Pläne und Prompts sind sichtbar, Agenten-Branches lösen CI aus. | Gemindert durch E30, E33 |
 | R5 | Das `setup-token` im Container kann abgegriffen werden, wenn die Isolation nicht greift (Fakt 9). | Spike S1. Schaden begrenzt: nur Modellanfragen, harter Egress. Restrisiko gegebenenfalls ausdrücklich akzeptiert |
 | R11 | Datenabfluss über den Browser des CEO: Ein manipuliertes Office kann Text in eine URL schreiben und den Browser dorthin navigieren lassen. Die CSP des Supervisors sperrt Fetch, Bilder und Formulare, aber keine Navigation der ganzen Seite und kein WebRTC. | Navigation: **vom CEO akzeptiert** (O13, E45). WebRTC: Firefox mit abgeschaltetem WebRTC (E49). Öffnet der CEO das Webinterface in einem anderen Browser, bleibt WebRTC offen. Ausnutzbar erst, wenn manipulierter Office-Code das CEO-Review passiert hat. |
@@ -1032,3 +1032,7 @@ Bei der Zerlegung in Etappe 0 fiel auf, dass die Managed Settings laut Kap. 5.7 
 ### Review 24 – Entscheidung des CEO zu den Spikes S1d und S1e (21.11.2026)
 
 Die Spikes S1d und S1e liefen am 20.11.2026 gegen ein Test-Repo (PR #28, Berichte in `spikes/ergebnisse/`). S1d ergab, dass Polling ohne ETag bei 10 offenen PRs und 60 s Intervall 25,2 % des Limits belegt und damit über der Grenze von 20 % liegt. 304-Antworten zählten nicht. S1e ergab, dass die App nur mergen kann, wenn sie unter „Restrict who can push to matching branches“ steht. Der CEO hat beide Vorschläge aus den Berichten bestätigt und festgelegt, dass die App erst mit der Zielstufe ab S09 in die Liste kommt und er selbst darin bleibt. Aufgenommen als E51 und E52, in Kap. 5.9, in `etappe-0.md` (1.4, S09) und in `einrichtung.md` Teil 5.
+
+### Review 25 – Entscheidung des CEO zu Spike S2 (21.11.2026)
+
+Spike S2 lief am 21.11.2026 in `aio-dev` (`spikes/ergebnisse/S2.md`, Skripte aus PR #34). `/usage` lieferte im Print-Modus keine Werte; den `SDKUsageReport` aus Fakt 7 fand ich auf der SDK-Referenz nicht. Zwei Proben zeigten, dass das `rate_limit_event` jedes Laufs den Zähler je Fenster enthält, auch mit dem `setup-token`, und mit claude.ai übereinstimmt. S2c war nicht messbar, weil ganz S2 nur etwa 0,23 USD kostete und der Wochenzähler nur ganze Punkte zeigt. Der CEO hat entschieden: S2c wird festgehalten und nicht wiederholt, der Faktor wird im Betrieb kalibriert, und der volle Login entfällt. Aufgenommen als E53 und E54, Änderung von E27, Fakt 7, Kap. 2, 3, 5.14, 6, 7.2, 7.4 und R2, R3 sowie in `etappe-0.md` (1.5, 3.2, S04).

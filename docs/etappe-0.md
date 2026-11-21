@@ -153,9 +153,9 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
    kommt erst mit S09 in die Liste unter „Restrict who can push“ (E52). Schritte in
    [`einrichtung.md`](einrichtung.md) Teil 5.
 
-### 1.5 Claude: `setup-token` und voller Login ⚠
+### 1.5 Claude: `setup-token` (voller Login entfallen) ⚠
 
-Nach E27 gibt es zwei Zugänge. Beide stellen Sie selbst her, beide in der VM `aio-dev` als Nutzer `aio-sup`
+Nach E27 gibt es nur noch einen Zugang (seit Review 25). Sie stellen ihn selbst her, in der VM `aio-dev` als Nutzer `aio-sup`
 (der Nutzer entsteht mit dem Provisionierungsskript aus Paket S16; für die Spikes reicht vorerst ein
 eigenes Spike-Verzeichnis).
 
@@ -165,10 +165,10 @@ eigenes Spike-Verzeichnis).
    ([Doku](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token)).
    Ablage: Datei `/etc/aio/secrets/claude-setup-token`, Modus 0600, Besitzer `aio-sup`. Das
    Erstellungsdatum notieren (Warnung 30 Tage vor Ablauf, Kap. 2.3).
-2. **Voller Login** (nur für `/usage` im Supervisor): mit eigenem Konfigurationsverzeichnis, z. B.
-   `CLAUDE_CONFIG_DIR=/etc/aio/claude-full claude`, darin `/login`. Über SSH zeigt der Browser
-   einen Code, den Sie im Terminal einfügen (Doku, Abschnitt „Log in to Claude Code“). Die
-   Anmeldung landet in `.credentials.json` mit Modus 0600 im angegebenen Verzeichnis.
+2. **Voller Login: entfallen** (plan.md E27, E53, Review 25). Er war nur für `/usage` vorgesehen.
+   Spike S2 hat gezeigt, dass `/usage` im Print-Modus keine Werte liefert und das `setup-token`
+   denselben Zähler über das `rate_limit_event` liefert. Für S2 lag eine Anmeldung unter
+   `/opt/aio-spikes/geheim/claude-voll` in `aio-dev`; sie wird nicht mehr gebraucht.
 3. Das Token **nicht** in eine Shell-Profildatei schreiben. Laut Doku wird `CLAUDE_CODE_OAUTH_TOKEN`
    in jeder neuen Sitzung gelesen, solange es dort steht.
 
@@ -266,6 +266,9 @@ S2b und S2c dürfen Sie Claude **nicht** nutzen, sonst sind die Messungen wertlo
 | S2d | Grundkosten pro Lauf | Minimaler Lauf mit Office-ähnlichem Aufbau (System-Prompt, Verfassung, MCP-Server mit den 8 Werkzeugen als Attrappe), Prompt „Antworte mit OK“. Ausgewertet: `usage` (Input, Cache-Erstellung, Cache-Lesen, Output) und `total_cost_usd`, je Modell, je 3 Läufe. | Kein Go/No-Go; der Wert geht in Bündelung und Weckbudget ein |
 | S2e | Kommt `rate_limit_event` im `stream-json`? | Mitlesen aller Ereignistypen in den Läufen aus S2c. | Dokumentiert; Grundlage für die Pause bei `allowed_warning` |
 
+**Ergebnis (21.11.2026, `spikes/ergebnisse/S2.md`):** S2a über das `rate_limit_event` Go,
+`/usage` ohne Werte, S2c nicht messbar. Umgesetzt in plan.md E53 und E54 (Review 25).
+
 **Folge bei No-Go (S2a oder S2c):** Fallback aus Kap. 6 (Wochenbudget in USD, Pause bei
 `allowed_warning`), E3 gilt dann nur als Näherung. Das melde ich Ihnen ausdrücklich.
 
@@ -322,7 +325,7 @@ AK = Abnahmekriterium aus Kap. 7.4. Jedes Paket = ein Branch, ein PR.
 | **P11** | AIO | Startinhalte | Startbücher (Handbuch, Git-Workflow, Kostenregeln, Office-API), Persona-Texte der 4 Agenten | P05 | S | – |
 | **P12** | AIO | Lauf-Image | Dockerfile, CLI gepinnt, Auto-Updater aus, Startprozess mit harter Lease (E42), Bundle-Erzeugung am Laufende | P01, S1 | S | 8, 10 |
 | **S03** | SUP | Admission (ohne Kontingent) | Notaus-Zustand, Weckbudget, Statik und Speicher, Richtlinie für Lauftyp, Modell und Rechte, Schutzschalter (E11) | S02 | M | 5, 7 |
-| **S04** | SUP | Kontingent | `/usage`-Abfrage oder Fallback (nach S2), Kalibrierung, Reservierung, Tages-Zielkurve, 55 % / 70 %, Selbstkorrektur, Meldung | S03, S2 | L | 6 |
+| **S04** | SUP | Kontingent | Messläufe mit Zähler aus dem `rate_limit_event` (E53) oder Fallback, Kalibrierung im Betrieb (E54), Reservierung, Tages-Zielkurve, 55 % / 70 %, Selbstkorrektur, Meldung | S03, S2 | L | 6 |
 | **S05** | SUP | Container-Manager | CLI-Aufruf bauen (Kap. 5.7), Managed Settings, Netz je Lauf, Limits, `tmpfs`, Log-Limits, zwei Tokens (E40), Rohprotokolle mit Obergrenze, Stop-Kaskade, Abgleich nach Neustart (E42), höchstens ein Lauf je Agent in der Admission (CEO-Entscheidung im Review von P06) | S03, P12, S1 | L | 5, 8, 10 |
 | **S06** | SUP | Egress-Proxy | Allowlist, TLS-Terminierung für Anthropic (falls S1b Go), Registry-Cache nur lesend, DNS nur über Proxy | S1 | L | 8 |
 | **S07** | SUP | Supervisor-Gateway im Laufnetz | Prüfung des Supervisor-Tokens und der Absenderadresse; MCP-Werkzeuge `submit_bundle`, `open_pr`, `request_merge` (siehe 5.1) | S05 | M | 1, 8 |
