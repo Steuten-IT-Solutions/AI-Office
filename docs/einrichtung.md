@@ -351,7 +351,8 @@ faktisch root; Zugriff bekommt später nur der Nutzer `aio-sup` (E25).
 
 ## Teil 5 – Branch-Schutz für `AI-Office`
 
-Erst nach Teil 3, weil S1e klärt, ob die App unter „Restrict who can push“ stehen muss.
+Erst nach Teil 3. S1e hat geklärt, dass die App unter „Restrict who can push“ stehen muss, damit
+sie mergen kann (plan.md E52). Sie kommt erst mit der Zielstufe (5.3) in die Liste.
 
 **Zwei Stufen (E48):** Solange die PRs unter Ihrem Konto eröffnet werden, können Sie sie nicht
 approven: „Pull request authors cannot approve their own pull requests“
@@ -404,8 +405,8 @@ Regel aus 5.2 bearbeiten und ergänzen:
   - **Dismiss stale pull request approvals when new commits are pushed**
   - **Require review from Code Owners**
   - **Require approval of the most recent reviewable push**
-- **Restrict who can push to matching branches:** die App zusätzlich nur, wenn der Bericht von S1e
-  zeigt, dass sie dort stehen muss
+- **Restrict who can push to matching branches:** die App `aio-supervisor` zusätzlich eintragen.
+  Ohne diesen Eintrag lehnt GitHub ihren Merge mit HTTP 405 ab (S1e, plan.md E52).
 - **Save changes**
 
 **Folge:** Danach kann niemand mehr ohne Ihr Approve nach `main` mergen. Das ist so gewollt (E26).

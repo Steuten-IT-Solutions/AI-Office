@@ -143,13 +143,14 @@ Nach Kap. 5.9. Pfad: Repo → **Settings**.
    - Require branches to be up to date before merging
    - Do not allow bypassing the above settings
    - Allow force pushes: **aus**; Allow deletions: **aus**
-   - „Restrict who can push to matching branches“: nur die App. **[Annahme: Ob die App dafür in
-     dieser Liste stehen muss, damit ihr Merge per API gelingt, prüft S1.]**
+   - „Restrict who can push to matching branches“: nur die App. Sie muss in dieser Liste stehen,
+     sonst lehnt GitHub ihren Merge per API mit HTTP 405 ab (S1e, E52).
 3. `CODEOWNERS` kommt per PR (Paket P01).
 4. Die Schritte 2 und 3 erst nach dem Merge von P01 aktivieren. Sonst kann P01 selbst nicht
    gemergt werden. Bis dahin merged nur der CEO.
 5. **Übergang (E48):** Bis zum Merge-Gate (S09) ohne die drei Punkte zu Approvals, Code Owners und
-   letztem Push, weil der CEO PRs unter seinem eigenen Konto nicht approven kann. Schritte in
+   letztem Push, weil der CEO PRs unter seinem eigenen Konto nicht approven kann. Auch die App
+   kommt erst mit S09 in die Liste unter „Restrict who can push“ (E52). Schritte in
    [`einrichtung.md`](einrichtung.md) Teil 5.
 
 ### 1.5 Claude: `setup-token` und voller Login ⚠
@@ -326,7 +327,7 @@ AK = Abnahmekriterium aus Kap. 7.4. Jedes Paket = ein Branch, ein PR.
 | **S06** | SUP | Egress-Proxy | Allowlist, TLS-Terminierung für Anthropic (falls S1b Go), Registry-Cache nur lesend, DNS nur über Proxy | S1 | L | 8 |
 | **S07** | SUP | Supervisor-Gateway im Laufnetz | Prüfung des Supervisor-Tokens und der Absenderadresse; MCP-Werkzeuge `submit_bundle`, `open_pr`, `request_merge` (siehe 5.1) | S05 | M | 1, 8 |
 | **S08** | SUP | Git-Gate | Bundle-Import in Bare-Repo ohne Hooks und Konfiguration, Ref-Prüfung, vergebene Branch-Namen, Commit-Identität, Secret-Scan, Ausgangsfilter (Länge, Muster, Fingerabdrücke), Push und PR über die App | S07, GitHub App | L | 1, 8 |
-| **S09** | SUP | Merge-Gate | Polling, CEO-Approve auf Head-SHA, `main` ist Vorfahre, CI nur bei unveränderten Workflows, Merge, Tag; Workflow-PRs gesperrt; Wartungspfad `ceo/*` | S08 | M | 1, 2 |
+| **S09** | SUP | Merge-Gate | Polling mit ETag (E51), CEO-Approve auf Head-SHA, `main` ist Vorfahre, CI nur bei unveränderten Workflows, Merge, Tag; Workflow-PRs gesperrt; Wartungspfad `ceo/*` | S08 | M | 1, 2 |
 | **S10** | SUP | Build + Deployer | Build-Container mit `--ignore-scripts`, Artefakt mit Prüfsumme zum SHA, Sicherung, Stop, Migration, Start, Beobachtung, Rollback, Revert-PR, Merge-Sperre, Unterscheidung Umgebungs- / Release-Fehler | S09 | L | 1, 3, 4 |
 | **S11** | SUP | Health-Check + Negativtests | Checks aus Kap. 4.5 Nr. 8, Negativtests aus Kap. 5.13, Sandbox-Tests | S05, S08, S10 | M | 3, 4, 8 |
 | **S12** | SUP | Konsole + CLI `aioffice` | Eigener Hostname, TOTP, Cookie `__Host-`, CSRF + `Origin`, `frame-ancestors 'none'`, Notaus in 3 Stufen, Freigaben, „Auslieferung anhalten“ | S03 | M | 5 |
