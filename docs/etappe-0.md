@@ -328,7 +328,7 @@ AK = Abnahmekriterium aus Kap. 7.4. Jedes Paket = ein Branch, ein PR.
 | **S04** | SUP | Kontingent | Messläufe mit Zähler aus dem `rate_limit_event` (E53) oder Fallback, Kalibrierung im Betrieb (E54), Reservierung, Tages-Zielkurve, 55 % / 70 %, Selbstkorrektur, Meldung | S03, S2 | L | 6 |
 | **S05** | SUP | Container-Manager | CLI-Aufruf bauen (Kap. 5.7), Managed Settings, Netz je Lauf, Limits, `tmpfs`, Log-Limits, zwei Tokens (E40), Rohprotokolle mit Obergrenze, Stop-Kaskade, Abgleich nach Neustart (E42), höchstens ein Lauf je Agent in der Admission (CEO-Entscheidung im Review von P06) | S03, P12, S1 | L | 5, 8, 10 |
 | **S06** | SUP | Egress-Proxy | Allowlist, TLS-Terminierung für Anthropic (falls S1b Go), Registry-Cache nur lesend, DNS nur über Proxy | S1 | L | 8 |
-| **S07** | SUP | Supervisor-Gateway im Laufnetz | Prüfung des Supervisor-Tokens und der Absenderadresse; MCP-Werkzeuge `submit_bundle`, `open_pr`, `request_merge` (siehe 5.1) | S05 | M | 1, 8 |
+| **S07** | SUP | Supervisor-Gateway im Laufnetz | Prüfung des Supervisor-Tokens und der Absenderadresse; MCP-Werkzeuge `submit_bundle` (mit Titel und Text des PR) und `request_merge` (E55) | S05 | M | 1, 8 |
 | **S08** | SUP | Git-Gate | Bundle-Import in Bare-Repo ohne Hooks und Konfiguration, Ref-Prüfung, vergebene Branch-Namen, Commit-Identität, Secret-Scan, Ausgangsfilter (Länge, Muster, Fingerabdrücke), Push und PR über die App | S07, GitHub App | L | 1, 8 |
 | **S09** | SUP | Merge-Gate | Polling mit ETag (E51), CEO-Approve auf Head-SHA, `main` ist Vorfahre, CI nur bei unveränderten Workflows, Merge, Tag; Workflow-PRs gesperrt; Wartungspfad `ceo/*` | S08 | M | 1, 2 |
 | **S10** | SUP | Build + Deployer | Build-Container mit `--ignore-scripts`, Artefakt mit Prüfsumme zum SHA, Sicherung, Stop, Migration, Start, Beobachtung, Rollback, Revert-PR, Merge-Sperre, Unterscheidung Umgebungs- / Release-Fehler | S09 | L | 1, 3, 4 |
@@ -408,6 +408,8 @@ eigenen PR vor.
    Supervisor-Gateway. Die drei Werkzeuge gehören zum Gateway (Paket S07). `open_pr` und
    `submit_bundle` lassen sich zusammenlegen, weil der Supervisor den PR nach dem Push ohnehin
    selbst öffnet (Kap. 4.5).
+   **Entschieden am 21.11.2026 (E55):** Zwei Werkzeuge im Gateway, `submit_bundle` mit Titel und
+   Text des PR sowie `request_merge` (S07).
 2. **Managed Settings des Lauf-Containers:** Kap. 5.7 legt sie ins Image, das Image ändern Agenten
    per PR. Vorschlag: Der Supervisor bindet die Datei schreibgeschützt aus seinem eigenen Repo ein.
    Dann kann ein Image-PR die Rechte der Läufe nicht verändern.
