@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -17,10 +17,13 @@ const CLI = join(import.meta.dirname, "test-cli.ts");
 
 let ausgabe: string;
 let log: string[];
+let richtlinie: string;
 
 beforeEach(() => {
   ausgabe = mkdtempSync(join(tmpdir(), "aio-lauf-start-"));
   log = [];
+  richtlinie = join(mkdtempSync(join(tmpdir(), "aio-lauf-richtlinie-")), "managed-settings.json");
+  writeFileSync(richtlinie, '{"disableAllHooks":true}\n');
 });
 
 function env(teil: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -41,6 +44,7 @@ function lauf(argv: string[], umgebung = env()): Promise<number> {
     stopp: new AbortController().signal,
     stdio: "pipe",
     log: (zeile) => log.push(zeile),
+    managedSettings: richtlinie,
   });
 }
 
@@ -73,6 +77,13 @@ describe("starte", () => {
   it("startet bei ungültiger Konfiguration nichts", async () => {
     expect(await lauf([process.execPath, CLI], env({ AIO_LEASE_SEKUNDEN: "" }))).toBe(EXIT_KONFIG);
     expect(log[0]).toContain("AIO_LEASE_SEKUNDEN fehlt");
+    expect(() => ergebnis()).toThrow();
+  });
+
+  it("startet ohne lesbare Managed Settings nichts", async () => {
+    richtlinie = join(ausgabe, "fehlt.json");
+    expect(await lauf([process.execPath, CLI, "exit", "0"])).toBe(EXIT_KONFIG);
+    expect(log[0]).toContain("nicht lesbar (ENOENT)");
     expect(() => ergebnis()).toThrow();
   });
 

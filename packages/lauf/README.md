@@ -5,8 +5,8 @@ und 5.7, E27, E28, E42; Paket P12 in [`etappe-0.md`](../../docs/etappe-0.md) Kap
 Container startet nur der Supervisor (E25, Paket S05). Dieses Paket legt fest, **was im Image
 steckt** und **wie ein Lauf darin endet**.
 
-**Kritischer Pfad** (plan.md Kap. 4.5 Nr. 3): `image/Dockerfile`, `image/managed-settings.json`
-und der Startprozess unter `src/`.
+**Kritischer Pfad** (plan.md Kap. 4.5 Nr. 3): `image/Dockerfile` und der Startprozess unter
+`src/`.
 
 ## Inhalt des Images
 
@@ -17,23 +17,38 @@ und der Startprozess unter `src/`.
 | Auto-Updater | aus über `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` (laut [Doku](https://code.claude.com/docs/en/env-vars) „auto-updates, telemetry, error reporting …“); zusätzlich kann das Binary im schreibgeschützten Root-Dateisystem nichts ersetzen | plan.md Kap. 5.10 |
 | Hintergrundaufgaben | aus über `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | E32 |
 | Bash-Sandbox | **aus**; sie startet im gehärteten Container nicht, der CEO hat R5 am 19.11.2026 akzeptiert | `spikes/ergebnisse/S1a.md` |
-| Managed Settings | `/etc/claude-code/managed-settings.json`, root, 0644: Sandbox aus, `bypassPermissions` gesperrt, `disableAllHooks`, `allowManagedHooksOnly` | plan.md Kap. 5.7, [Doku](https://code.claude.com/docs/en/managed-settings) |
+| Managed Settings | **nicht im Image**; nur der leere Einhängepunkt `/etc/claude-code` (siehe unten) | E50, plan.md Kap. 5.7 |
 | pnpm | 10.34.8 über Corepack im Image abgelegt, lädt im Lauf nichts nach | `package.json` (`packageManager`), E29 |
 | Werkzeuge | `git`, `ripgrep`, `tini`; kein `curl`, kein `bubblewrap` | – |
 | Nutzer | `agent`, UID/GID 10001 | wie in den Spikes |
 
-Bewusst **nicht** im Image: Token, CA des Proxys, MCP-Konfiguration, CLI-Aufruf. Das alles setzt
-der Supervisor je Lauf (S05, S06).
+Bewusst **nicht** im Image: Token, CA des Proxys, MCP-Konfiguration, CLI-Aufruf und Managed
+Settings. Das alles setzt der Supervisor je Lauf (S05, S06).
 
-`allowManagedPermissionRulesOnly` steht nicht in den Managed Settings: Laut Doku ignoriert das CLI
-damit `--allowedTools`, also genau die Werkzeugliste je Lauftyp, die der Supervisor setzt.
+### Managed Settings (E50)
+
+Die Datei liegt im Supervisor-Repo, das die Agenten nicht ändern können. Der Container-Manager
+(S05) bindet das **ganze Verzeichnis** `/etc/claude-code` schreibgeschützt ein, nicht nur die
+Datei: Laut [Doku](https://code.claude.com/docs/en/managed-settings) führt das CLI
+`managed-settings.json` mit jeder `*.json` aus `managed-settings.d/` zusammen. Die Einbindung des
+Verzeichnisses verdeckt alles, was ein Image dort ablegt.
+
+Der Startprozess prüft vor dem Start des CLI, dass `/etc/claude-code/managed-settings.json` lesbar
+ist und ein nicht leeres JSON-Objekt enthält (`src/richtlinie.ts`), sonst Exit 125. Grund: Darf
+das Betriebssystem die Datei nicht lesen, startet das CLI laut Doku „without that source's
+policies“ und meldet das bei `-p` nur auf stderr. Den Inhalt prüft der Startprozess nicht, ihn legt
+allein der Supervisor fest.
+
+Das Image bleibt trotzdem ein kritischer Pfad: Ein PR auf das Image könnte etwa das CLI oder den
+Startprozess austauschen.
 
 ## Startprozess
 
 `tini` ist PID 1 und startet `node /opt/aio-lauf/start.ts <CLI-Aufruf>`. Node 24 führt die
 TypeScript-Dateien direkt aus (Type Stripping), so wie in den Spikes.
 
-1. Konfiguration prüfen (unten). Ist sie ungültig, startet nichts (Exit 125).
+1. Konfiguration (unten) und Managed Settings (oben) prüfen. Ist etwas ungültig, startet nichts
+   (Exit 125).
 2. CLI in eigener Prozessgruppe starten; stdin, stdout (`stream-json`) und stderr gehen
    unverändert durch.
 3. **Harte Lease (E42):** Nach `AIO_LEASE_SEKUNDEN` bekommt das CLI SIGINT, nach je
@@ -86,12 +101,15 @@ Variablen mit Präfix `AIO_` gibt der Startprozess nicht an das CLI weiter.
 ```bash
 docker build -f packages/lauf/image/Dockerfile -t aio-lauf packages/lauf
 docker run --rm --network none --cap-drop ALL --read-only \
+  --mount type=bind,src=/pfad/zu/claude-code,dst=/etc/claude-code,readonly \
   --tmpfs /aio/ausgabe:uid=10001,gid=10001 \
   -e AIO_LAUF_ID=probe -e AIO_LEASE_SEKUNDEN=30 aio-lauf claude --version
 ```
 
-Der Kontext ist `packages/lauf`; `.dockerignore` lässt nur den Startprozess (ohne Tests) und die
-Managed Settings hinein. Das CLI braucht ein beschreibbares `/tmp` (sonst `EROFS` beim Start) und
+`/pfad/zu/claude-code` ist ein Verzeichnis mit `managed-settings.json` (für `agent` lesbar). Ohne
+die Einbindung endet der Container mit 125.
+
+Der Kontext ist `packages/lauf`; `.dockerignore` lässt nur den Startprozess (ohne Tests) hinein. Das CLI braucht ein beschreibbares `/tmp` (sonst `EROFS` beim Start) und
 ein beschreibbares `CLAUDE_CONFIG_DIR` (`/home/agent/.claude`), beide als `tmpfs` (plan.md
 Kap. 4.7).
 

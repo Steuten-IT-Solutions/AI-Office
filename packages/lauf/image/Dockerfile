@@ -49,10 +49,10 @@ RUN corepack enable pnpm \
 
 RUN useradd --uid 10001 --user-group --create-home --shell /bin/bash agent
 
-# Managed Settings gehören root und sind nicht beschreibbar (plan.md Kap. 5.7). Offener Vorschlag
-# aus docs/etappe-0.md Kap. 5 Nr. 2: der Supervisor bindet die Datei aus seinem Repo ein.
+# Managed Settings liegen nicht im Image (E50, plan.md Kap. 5.7): Der Supervisor bindet das ganze
+# Verzeichnis /etc/claude-code schreibgeschützt aus seinem Repo ein. Das leere Verzeichnis ist nur
+# der Einhängepunkt; ohne Einbindung startet der Startprozess nichts (src/richtlinie.ts).
 RUN install -d -m 0755 /etc/claude-code
-COPY --chown=root:root --chmod=0644 image/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --chown=root:root src/ /opt/aio-lauf/
 RUN chmod 0755 /opt/aio-lauf && chmod 0644 /opt/aio-lauf/*
 

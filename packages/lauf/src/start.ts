@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { erzeugeBundle, type BundleErgebnis } from "./bundle.ts";
 import { KonfigFehler, leseKonfig, type LaufKonfig } from "./konfig.ts";
 import { fuehreAus, StartFehler, type LaufErgebnis } from "./lease.ts";
+import { MANAGED_SETTINGS, pruefeManagedSettings } from "./richtlinie.ts";
 
 /**
  * Startprozess des Lauf-Containers (P12): Lease, Stop-Kaskade, Bundle, Ergebnisdatei.
@@ -10,7 +11,7 @@ import { fuehreAus, StartFehler, type LaufErgebnis } from "./lease.ts";
  * Aufruf im Image: `tini -- node /opt/aio-lauf/start.ts claude -p ...`. Die Ausgabe des CLI
  * (`stream-json`) geht unverändert nach stdout, der Startprozess selbst schreibt nur nach stderr
  * und in `ergebnis.json`. Exit-Codes: der des CLI, 124 nach Ablauf der Lease (wie `timeout`),
- * 125 bei ungültiger Konfiguration, 126 wenn das CLI nicht startet.
+ * 125 bei ungültiger Konfiguration oder fehlenden Managed Settings, 126 wenn das CLI nicht startet.
  */
 
 export const ERGEBNIS_DATEI = "ergebnis.json";
@@ -63,6 +64,8 @@ export interface StartOptionen {
   stopp: AbortSignal;
   stdio?: "inherit" | "pipe";
   log?: (zeile: string) => void;
+  /** Pfad der Managed Settings; nur Tests weichen vom Ort im Container ab. */
+  managedSettings?: string;
 }
 
 /** Führt einen Lauf vollständig aus und liefert den Exit-Code des Containers. */
@@ -71,6 +74,7 @@ export async function starte(optionen: StartOptionen): Promise<number> {
   let konfig: LaufKonfig;
   try {
     konfig = leseKonfig(optionen.env, optionen.argv);
+    pruefeManagedSettings(optionen.managedSettings ?? MANAGED_SETTINGS);
   } catch (fehler) {
     if (fehler instanceof KonfigFehler) {
       log(`aio-lauf: Konfiguration ungültig: ${fehler.message}`);

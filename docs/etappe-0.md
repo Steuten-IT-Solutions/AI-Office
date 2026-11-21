@@ -407,6 +407,8 @@ eigenen PR vor.
 2. **Managed Settings des Lauf-Containers:** Kap. 5.7 legt sie ins Image, das Image ändern Agenten
    per PR. Vorschlag: Der Supervisor bindet die Datei schreibgeschützt aus seinem eigenen Repo ein.
    Dann kann ein Image-PR die Rechte der Läufe nicht verändern.
+   **Entschieden am 21.11.2026 (E50):** Der Supervisor bindet das ganze Verzeichnis
+   `/etc/claude-code` schreibgeschützt ein (S05), das Image enthält die Datei nicht mehr.
 3. **Interne Hostnamen:** `.internal` statt `.intern` (siehe 1.1), TLS über eine eigene CA ergänzen.
 4. **VPN (für den späteren Server):** Tailscale als Beispiel streichen oder auf die Lizenzgrenze
    hinweisen: Der kostenlose Tarif ist laut Anbieter „only suitable for non-commercial use“
