@@ -18,6 +18,7 @@ import { MergeStatusFollower } from "./git/merge-follower.ts";
 import { GitOutcomeFollower } from "./git/outcome-follower.ts";
 import {
   SupervisorClient,
+  supervisorCheckRunAccess,
   supervisorEscalationGate,
   supervisorGitAccess,
   supervisorProfileAccess,
@@ -27,6 +28,7 @@ import {
 import { ProfileSync } from "./ipc/profile-sync.ts";
 import { errorText, type Logger } from "./log.ts";
 import { Planner } from "./planner/planner.ts";
+import { CheckRunFollower } from "./runs/check-run.ts";
 import { RunFollower } from "./runs/run-follower.ts";
 import { OfficeTakt, type TaktIntervals } from "./takt.ts";
 import { OFFICE_VERSION } from "./version.ts";
@@ -136,6 +138,11 @@ export async function startOffice(
     cleanup.push(() => client.close());
     const git = supervisorGitAccess(client);
     const tokens = new RunTokens();
+    const runAccess = supervisorRunAccess(client);
+    const head = new HeadReporter({
+      store,
+      access: { reportHead: (params) => client.call("office.reportHead", params) },
+    });
     const fingerprints = new FingerprintReporter({ office, access: git });
     const planner = new Planner({
       office,
@@ -147,13 +154,18 @@ export async function startOffice(
       parts: {
         profiles: new ProfileSync({ office, access: supervisorProfileAccess(client) }),
         planner,
-        runs: new RunFollower({ office, access: supervisorRunAccess(client), tokens }),
+        runs: new RunFollower({ office, access: runAccess, tokens }),
         gitOutcomes: new GitOutcomeFollower({ office, access: git }),
         merges: new MergeStatusFollower({ office, access: git }),
         fingerprints,
-        head: new HeadReporter({
+        head,
+        // Prüflauf des Health-Checks (S11b): eigene Ereignisse, dieselben Wege wie jeder Lauf.
+        checkRuns: new CheckRunFollower({
           store,
-          access: { reportHead: (params) => client.call("office.reportHead", params) },
+          access: supervisorCheckRunAccess(client),
+          runs: runAccess,
+          tokens,
+          head,
         }),
         tokens,
       },

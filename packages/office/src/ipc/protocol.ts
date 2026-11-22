@@ -1,7 +1,8 @@
 /*
  * KOPIE von `packages/supervisor/src/ipc/protocol.ts` aus Steuten-IT-Solutions/ai-office-supervisor,
- * Stand b1ad718 (S09). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
- * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kam in S09 `git.merge_status` hinzu.
+ * Stand S11b. Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
+ * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S11b `checkRun.next`, `checkRun.request`
+ * und `checkRun.report` hinzu.
  *
  * Die Prüfungen hier dienen im Office nur dem Komfort (E22): Fehler fallen auf, bevor eine
  * Anfrage den Socket erreicht. Maßgeblich ist die Prüfung im Supervisor.
@@ -35,6 +36,13 @@ import { z } from "zod";
  *
  * Ergänzt in S09: `git.merge_status` (Stand des Merge-Antrags zum PR eines Laufs). Ebenfalls nur
  * hinzugefügt.
+ *
+ * Ergänzt in S11b (CEO-Entscheidung vom 22.11.2026, „Prüflauf über die echte Kette“):
+ * `checkRun.next`, `checkRun.request` und `checkRun.report`. Der Health-Check bestellt einen
+ * Prüflauf; das Office holt den Auftrag ab, fordert den Lauf an, begleitet ihn mit `run.token` und
+ * `run.output` und meldet, was es gesehen hat. Ebenfalls nur hinzugefügt; ein Office ohne diese
+ * Methoden spricht v1 weiter wie bisher. Sie sind keine Prüfung im Sinne von E22: Ein Prüflauf
+ * hat ein festes Fake-CLI und keinen Prompt des Office.
  *
  * Die Methoden folgen der abschließenden Liste in Kap. 4.6. Git-Übergabe, PR und Merge-Antrag
  * fehlen bewusst: Sie kommen nach E40 direkt aus dem Container über das Supervisor-Gateway (S07),
@@ -329,6 +337,50 @@ const fingerprintsAddResult = z.strictObject({
   total: z.int().min(0),
 });
 
+/** Wie die Auswertung des Office einen Lauf abschloss (`RunOutcome.exit` im Office, P04). */
+export const CHECK_RUN_EXITS = ["completed", "error", "no_result", "aborted"] as const;
+
+/**
+ * Offener Prüflauf (S11b). `none`: nichts zu tun. `ordered`: Der Health-Check wartet darauf,
+ * dass das Office ihn mit `checkRun.request` anfordert. Die Lauf-ID vergibt der Supervisor.
+ */
+const checkRunNextResult = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("none") }),
+  z.strictObject({ state: z.literal("ordered"), runId: id }),
+]);
+
+/**
+ * Bestellten Prüflauf anfordern (S11b). Danach ist er ein Lauf wie jeder andere: `run.token`
+ * startet den Container, `run.output` liefert das Rohprotokoll. Agent, Lauftyp und Befehl legt der
+ * Supervisor fest; der Lauf zählt nicht für Admission und Kontingent.
+ */
+const checkRunRequestResult = z.discriminatedUnion("decision", [
+  z.strictObject({ decision: z.literal("admitted"), runId: id }),
+  z.strictObject({ decision: z.literal("rejected"), reason: text(MAX_REASON_CHARS) }),
+]);
+
+/**
+ * Was das Office beim Prüflauf gesehen hat (S11b, plan.md Kap. 4.5 Nr. 8). Nicht
+ * vertrauenswürdig: Der Health-Check sucht Release-Fehler, keine Täuschung. `finishedSeq` ist die
+ * Nummer des Ereignisses, mit dem das Office den Prüflauf festgehalten hat; danach soll ein Kopf
+ * mindestens dieser Nummer gemeldet sein (`office.reportHead`).
+ */
+const checkRunReportParams = z.strictObject({
+  runId: id,
+  exit: z.enum(CHECK_RUN_EXITS),
+  /** Zeilen, die der Parser des Office nicht lesen konnte. */
+  invalidLines: z.int().min(0),
+  migration: z.strictObject({
+    databaseVersion: z.int().min(0),
+    codeVersion: z.int().min(0),
+    /** Angewandte Expand-Migrationen, die der Code nicht kennt (E24). */
+    unknownExpand: uniqueList(z.int().min(1), 1000),
+  }),
+  finishedSeq: z.int().min(1),
+});
+
+const checkRunReportResult = z.strictObject({ recorded: z.boolean() });
+
 export const METHODS = {
   "run.request": { params: runRequestParams, result: runRequestResult },
   "profile.check": { params: profileCheckParams, result: verdict },
@@ -340,6 +392,9 @@ export const METHODS = {
   "git.status": { params: runIdParams, result: gitStatusResult },
   "fingerprints.add": { params: fingerprintsAddParams, result: fingerprintsAddResult },
   "git.merge_status": { params: runIdParams, result: gitMergeStatusResult },
+  "checkRun.next": { params: z.strictObject({}), result: checkRunNextResult },
+  "checkRun.request": { params: runIdParams, result: checkRunRequestResult },
+  "checkRun.report": { params: checkRunReportParams, result: checkRunReportResult },
 } as const;
 
 export type IpcMethod = keyof typeof METHODS;
