@@ -229,6 +229,7 @@ export {
   SupervisorClient,
   supervisorEscalationGate,
   supervisorGitAccess,
+  supervisorProfileAccess,
   supervisorRunAccess,
   supervisorRunRequester,
   type SupervisorClientOptions,
@@ -356,6 +357,14 @@ export {
   type RunningOffice,
   type StartOptions,
 } from "./office-process.ts";
+export {
+  ProfileSync,
+  profileParams,
+  workplacesParams,
+  type ProfileAccess,
+  type ProfileSyncResult,
+  type SyncRejection,
+} from "./ipc/profile-sync.ts";
 export { PasswordAborted, passwordCommand } from "./password-command.ts";
 export {
   DEFAULT_TAKT_INTERVALS,

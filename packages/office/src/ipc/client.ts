@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { EscalationGate } from "../api/tools.ts";
 import type { FingerprintAccess } from "../git/fingerprints.ts";
 import type { MergeAccess } from "../git/merge-follower.ts";
+import type { ProfileAccess } from "./profile-sync.ts";
 import type { GitAccess } from "../git/outcome-follower.ts";
 import type { RunRequester } from "../planner/planner.ts";
 import type { RunAccess } from "../runs/run-follower.ts";
@@ -427,6 +428,21 @@ export function supervisorGitAccess(
     },
     addFingerprints(params) {
       return client.call("fingerprints.add", params);
+    },
+  };
+}
+
+/**
+ * Anmeldung von Räumen und Profilen (`ProfileSync`). Beide Aufrufe sind wiederholbar: Derselbe
+ * Inhalt wird ohne neuen Eintrag noch einmal freigegeben.
+ */
+export function supervisorProfileAccess(client: SupervisorClient): ProfileAccess {
+  return {
+    changeWorkplaces(params) {
+      return client.call("workplaces.change", params);
+    },
+    checkProfile(params) {
+      return client.call("profile.check", params);
     },
   };
 }

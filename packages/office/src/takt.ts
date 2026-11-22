@@ -1,6 +1,7 @@
 import type { RunTokens } from "./api/run-tokens.ts";
 import type { HeadReporter } from "./events/head-reporter.ts";
 import type { FingerprintReporter } from "./git/fingerprints.ts";
+import type { ProfileSync } from "./ipc/profile-sync.ts";
 import type { MergeStatusFollower } from "./git/merge-follower.ts";
 import type { GitOutcomeFollower } from "./git/outcome-follower.ts";
 import { errorText, type Logger } from "./log.ts";
@@ -15,6 +16,7 @@ import type { RunFollower } from "./runs/run-follower.ts";
  *
  * | Teil | Aufgabe | Abstand |
  * |---|---|---|
+ * | `profiles` | Räume und Profile beim Supervisor anmelden (S03) | 60 s |
  * | `planner` | Weckregeln anwenden, Läufe beantragen (P06) | 10 s |
  * | `runs` | Token abholen, Ausgabe lesen, Läufe abschließen (S05) | 2 s |
  * | `gitOutcomes` | Stand der Übergabe beim Git-Gate (S08) | 15 s |
@@ -32,6 +34,8 @@ import type { RunFollower } from "./runs/run-follower.ts";
  *   keinen neueren Stand.
  *
  * Teile stoßen einander an, statt auf ihren Abstand zu warten:
+ * - Der Planer läuft zum ersten Mal nach dem ersten Abgleich der Profile. Ohne freigegebenes
+ *   Profil lehnt die Admission jeden Lauf ab, und der Planer wartete dann `retryMinutes`.
  * - Hat der Planer einen Lauf zugelassen, folgt sofort `runs`, damit das Token rechtzeitig
  *   abgeholt wird.
  * - Ist ein Lauf beendet, folgen `planner` (der Agent ist frei, seine Nachrichten wecken andere),
@@ -44,6 +48,7 @@ import type { RunFollower } from "./runs/run-follower.ts";
  */
 
 export const TAKT_JOBS = [
+  "profiles",
   "planner",
   "runs",
   "gitOutcomes",
@@ -56,6 +61,7 @@ export type TaktJob = (typeof TAKT_JOBS)[number];
 export type TaktIntervals = Record<TaktJob, number>;
 
 export const DEFAULT_TAKT_INTERVALS: Readonly<TaktIntervals> = Object.freeze({
+  profiles: 60_000,
   planner: 10_000,
   runs: 2_000,
   gitOutcomes: 15_000,
@@ -66,6 +72,7 @@ export const DEFAULT_TAKT_INTERVALS: Readonly<TaktIntervals> = Object.freeze({
 
 /** Die Teile, die der Takt aufruft. Im Betrieb die Klassen aus P06, S05, S08, S09 und E38. */
 export interface TaktParts {
+  profiles: Pick<ProfileSync, "sync">;
   planner: Pick<Planner, "tick">;
   runs: Pick<RunFollower, "poll">;
   gitOutcomes: Pick<GitOutcomeFollower, "poll">;
@@ -104,6 +111,7 @@ export class OfficeTakt {
   private readonly slots: Record<TaktJob, Slot>;
   private started = false;
   private stopped = false;
+  private plannerStarted = false;
 
   constructor(options: TaktOptions) {
     const intervals = { ...DEFAULT_TAKT_INTERVALS, ...options.intervals };
@@ -124,6 +132,7 @@ export class OfficeTakt {
       problem: null,
     });
     this.slots = {
+      profiles: slot(),
       planner: slot(),
       runs: slot(),
       gitOutcomes: slot(),
@@ -140,13 +149,16 @@ export class OfficeTakt {
     }
     this.started = true;
     for (const job of TAKT_JOBS) {
-      this.fire(job);
+      if (job !== "planner") {
+        this.fire(job);
+      }
     }
   }
 
   /** Lässt einen Teil so bald wie möglich laufen, z. B. nach einer Nachricht des CEO. */
   kick(job: TaktJob): void {
-    if (!this.started || this.stopped) {
+    // Vor dem ersten Abgleich der Profile nicht: Der erste Durchlauf des Planers folgt ohnehin.
+    if (!this.started || this.stopped || (job === "planner" && !this.plannerStarted)) {
       return;
     }
     this.fire(job);
@@ -227,6 +239,8 @@ export class OfficeTakt {
 
   private async step(job: TaktJob, problems: Problems): Promise<void> {
     switch (job) {
+      case "profiles":
+        return this.profiles(problems);
       case "planner":
         return this.planner(problems);
       case "runs":
@@ -239,6 +253,27 @@ export class OfficeTakt {
         return this.fingerprints(problems);
       case "head":
         return this.head();
+    }
+  }
+
+  private async profiles(problems: Problems): Promise<void> {
+    try {
+      const result = await this.parts.profiles.sync();
+      for (const item of result.approved) {
+        this.log.info("Beim Supervisor freigegeben", { kind: item.kind, id: item.id });
+      }
+      for (const item of result.rejected) {
+        problems.push(`${item.kind} ${item.id} abgelehnt: ${item.reason}`);
+      }
+      for (const item of result.failed) {
+        problems.push(`${item.kind} ${item.id}: ${item.error}`);
+      }
+    } finally {
+      // Erster Durchlauf des Planers erst nach dem ersten Abgleich, auch wenn er scheiterte.
+      if (!this.plannerStarted) {
+        this.plannerStarted = true;
+        this.fire("planner");
+      }
     }
   }
 

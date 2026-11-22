@@ -75,6 +75,9 @@ function defaultAnswer(req: Request): Answer {
   switch (req.method) {
     case "office.reportHead":
       return { result: { recorded: true, auditSeq: received.length } };
+    case "workplaces.change":
+    case "profile.check":
+      return { result: { allowed: true } };
     case "run.request":
       return { result: { decision: "admitted", runId: RUN } };
     case "run.token":
@@ -241,6 +244,16 @@ describe("startOffice", () => {
     // Antrag, Token, Ausgabe, Abschluss.
     await until(() => office.state.run(RUN) !== undefined, "run.finished");
     const methods = received.map((r) => r.method);
+    // Räume und Profile sind angemeldet, bevor der erste Lauf beantragt wird (S03).
+    const profiles = received.filter((r) => r.method === "profile.check");
+    expect(profiles.map((r) => r.params["agentId"]).sort()).toEqual(
+      office.state
+        .agents()
+        .map((a) => a.id)
+        .sort(),
+    );
+    expect(methods.lastIndexOf("workplaces.change")).toBeLessThan(methods.indexOf("profile.check"));
+    expect(methods.lastIndexOf("profile.check")).toBeLessThan(methods.indexOf("run.request"));
     expect(methods.indexOf("run.request")).toBeLessThan(methods.indexOf("run.token"));
     expect(methods.indexOf("run.token")).toBeLessThan(methods.indexOf("run.output"));
     const req = received.find((r) => r.method === "run.request");

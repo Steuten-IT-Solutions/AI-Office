@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunRecord, RunStart } from "./domain/office-state.ts";
 import type { HeadReport } from "./events/head-reporter.ts";
 import type { FingerprintReport } from "./git/fingerprints.ts";
+import type { ProfileSyncResult } from "./ipc/profile-sync.ts";
 import type { MergeFollowResult } from "./git/merge-follower.ts";
 import type { GitOutcomeResult } from "./git/outcome-follower.ts";
 import type { LogFields, Logger } from "./log.ts";
@@ -80,6 +81,7 @@ interface Recorded {
 let calls: TaktJob[];
 let logs: Recorded[];
 let results: {
+  profiles: () => Promise<ProfileSyncResult>;
   planner: () => Promise<TickResult>;
   runs: () => Promise<FollowResult>;
   gitOutcomes: () => Promise<GitOutcomeResult>;
@@ -107,6 +109,7 @@ function parts(): TaktParts {
       return fn()();
     };
   return {
+    profiles: { sync: track("profiles", () => results.profiles) },
     planner: { tick: track("planner", () => results.planner) },
     runs: { poll: track("runs", () => results.runs) },
     gitOutcomes: { poll: track("gitOutcomes", () => results.gitOutcomes) },
@@ -138,6 +141,7 @@ beforeEach(() => {
   logs = [];
   pruned = [];
   results = {
+    profiles: () => Promise.resolve({ approved: [], rejected: [], failed: [] }),
     planner: () => Promise.resolve(tick()),
     runs: () => Promise.resolve(follow()),
     gitOutcomes: () => Promise.resolve(outcomes()),
@@ -368,6 +372,53 @@ describe("OfficeTakt", () => {
     t.start();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(calls).toEqual([]);
+  });
+
+  it("startet den Planer erst nach dem ersten Abgleich der Profile, auch wenn er scheitert", async () => {
+    let release: () => void = () => undefined;
+    results.profiles = () =>
+      new Promise((_resolve, reject) => {
+        release = () => {
+          reject(new Error("Socket weg"));
+        };
+      });
+    const t = create();
+    t.start();
+    await vi.advanceTimersByTimeAsync(0);
+    t.kick("planner");
+    await vi.advanceTimersByTimeAsync(DEFAULT_TAKT_INTERVALS.planner * 2);
+    expect(count("planner")).toBe(0);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(count("planner")).toBe(1);
+    expect(logs).toContainEqual({
+      level: "warn",
+      message: "Takt: Problem",
+      fields: { job: "profiles", problem: "Socket weg" },
+    });
+  });
+
+  it("meldet abgelehnte und zurückgestellte Profile als Problem", async () => {
+    results.profiles = () =>
+      Promise.resolve({
+        approved: [{ kind: "raum", id: "buero-coo" }],
+        rejected: [{ kind: "profil", id: "deniz-kaya", reason: "Modell nicht erlaubt" }],
+        failed: [
+          { kind: "profil", id: "lea-brandt", error: "Vorgesetzter deniz-kaya nicht freigegeben" },
+        ],
+      });
+    const t = create();
+    t.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(logs).toContainEqual({
+      level: "info",
+      message: "Beim Supervisor freigegeben",
+      fields: { kind: "raum", id: "buero-coo" },
+    });
+    expect(logs.find((l) => l.fields["job"] === "profiles")?.fields["problem"]).toBe(
+      "profil deniz-kaya abgelehnt: Modell nicht erlaubt; " +
+        "profil lea-brandt: Vorgesetzter deniz-kaya nicht freigegeben",
+    );
   });
 
   it("nimmt Anstöße erst nach dem Start an und prüft die Abstände", async () => {

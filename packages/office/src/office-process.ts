@@ -20,9 +20,11 @@ import {
   SupervisorClient,
   supervisorEscalationGate,
   supervisorGitAccess,
+  supervisorProfileAccess,
   supervisorRunAccess,
   supervisorRunRequester,
 } from "./ipc/client.ts";
+import { ProfileSync } from "./ipc/profile-sync.ts";
 import { errorText, type Logger } from "./log.ts";
 import { Planner } from "./planner/planner.ts";
 import { RunFollower } from "./runs/run-follower.ts";
@@ -143,6 +145,7 @@ export async function startOffice(
     });
     const takt = new OfficeTakt({
       parts: {
+        profiles: new ProfileSync({ office, access: supervisorProfileAccess(client) }),
         planner,
         runs: new RunFollower({ office, access: supervisorRunAccess(client), tokens }),
         gitOutcomes: new GitOutcomeFollower({ office, access: git }),
