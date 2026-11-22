@@ -7,7 +7,6 @@ import type { MergeFollowResult } from "./git/merge-follower.ts";
 import type { GitOutcomeResult } from "./git/outcome-follower.ts";
 import type { LogFields, Logger } from "./log.ts";
 import type { Plan, TickResult } from "./planner/planner.ts";
-import type { CheckRunStep } from "./runs/check-run.ts";
 import type { FollowResult } from "./runs/run-follower.ts";
 import {
   DEFAULT_TAKT_INTERVALS,
@@ -65,13 +64,6 @@ const fingerprintReport = (extra: Partial<FingerprintReport> = {}): FingerprintR
   ...extra,
 });
 const headReport = (): HeadReport => ({ reported: null, auditSeq: null });
-const checkStep = (extra: Partial<CheckRunStep> = {}): CheckRunStep => ({
-  started: null,
-  reported: null,
-  rejected: null,
-  unavailable: false,
-  ...extra,
-});
 
 const START = { runId: "r-0000000000000001", agentId: "deniz-kaya" } as RunStart;
 const RECORD = {
@@ -96,8 +88,6 @@ let results: {
   merges: () => Promise<MergeFollowResult>;
   fingerprints: () => Promise<FingerprintReport>;
   head: () => Promise<HeadReport>;
-  checkRuns: () => Promise<CheckRunStep>;
-  checkRunPoll: () => Promise<CheckRunStep>;
 };
 let pruned: Date[];
 let takt: OfficeTakt | undefined;
@@ -126,11 +116,6 @@ function parts(): TaktParts {
     merges: { poll: track("merges", () => results.merges) },
     fingerprints: { report: track("fingerprints", () => results.fingerprints) },
     head: { report: track("head", () => results.head) },
-    // `poll` läuft im Takt `runs` mit und zählt nicht als eigener Teil.
-    checkRuns: {
-      fetch: track("checkRuns", () => results.checkRuns),
-      poll: () => results.checkRunPoll(),
-    },
     tokens: {
       prune(now) {
         pruned.push(now ?? new Date(0));
@@ -163,8 +148,6 @@ beforeEach(() => {
     merges: () => Promise.resolve(merges()),
     fingerprints: () => Promise.resolve(fingerprintReport()),
     head: () => Promise.resolve(headReport()),
-    checkRuns: () => Promise.resolve(checkStep()),
-    checkRunPoll: () => Promise.resolve(checkStep()),
   };
 });
 
@@ -234,50 +217,6 @@ describe("OfficeTakt", () => {
     expect(logs.find((l) => l.message === "Lauf zugelassen")?.fields).toMatchObject({
       runId: START.runId,
     });
-  });
-
-  it("begleitet einen angeforderten Prüflauf sofort im Takt der Läufe (S11b)", async () => {
-    const t = create();
-    t.start();
-    await vi.advanceTimersByTimeAsync(0);
-    calls = [];
-    let polls = 0;
-    results.checkRunPoll = () => {
-      polls += 1;
-      return Promise.resolve(
-        checkStep(
-          polls === 2
-            ? { reported: { runId: START.runId, exit: "completed", recorded: true } }
-            : {},
-        ),
-      );
-    };
-    results.checkRuns = () => Promise.resolve(checkStep({ started: START.runId }));
-    t.kick("checkRuns");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(calls).toEqual(["checkRuns", "runs"]);
-    expect(logs.map((l) => l.message)).toContain("Prüflauf angefordert");
-    await vi.advanceTimersByTimeAsync(DEFAULT_TAKT_INTERVALS.runs);
-    expect(logs.find((l) => l.message === "Prüflauf gemeldet")?.fields).toMatchObject({
-      runId: START.runId,
-      exit: "completed",
-    });
-
-    // Ein Fehler beim Prüflauf hält die Läufe der Agenten nicht auf.
-    calls = [];
-    results.checkRunPoll = () => Promise.reject(new Error("Socket weg"));
-    results.checkRuns = () => Promise.resolve(checkStep({ rejected: "Notaus (pause) ist aktiv" }));
-    t.kick("runs");
-    t.kick("checkRuns");
-    await vi.advanceTimersByTimeAsync(0);
-    expect([...calls].sort()).toEqual(["checkRuns", "runs"]);
-    const problems = logs.filter((l) => l.message === "Takt: Problem").map((l) => l.fields);
-    expect(problems).toEqual(
-      expect.arrayContaining([
-        { job: "runs", problem: "Prüflauf: Socket weg" },
-        { job: "checkRuns", problem: "Prüflauf abgelehnt: Notaus (pause) ist aktiv" },
-      ]),
-    );
   });
 
   it("stößt nach einem beendeten Lauf Planer, Git-Gate und Fingerabdrücke an", async () => {

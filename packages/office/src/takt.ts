@@ -1,5 +1,4 @@
 import type { RunTokens } from "./api/run-tokens.ts";
-import type { CheckRunFollower, CheckRunStep } from "./runs/check-run.ts";
 import type { HeadReporter } from "./events/head-reporter.ts";
 import type { FingerprintReporter } from "./git/fingerprints.ts";
 import type { ProfileSync } from "./ipc/profile-sync.ts";
@@ -11,7 +10,7 @@ import type { RunFollower } from "./runs/run-follower.ts";
 
 /**
  * Takt des Office: ruft Planer, Begleiter und Melder regelmäßig auf (Office-Seite von S05, S08,
- * S09, S11b und E38). Jeder Teil hat seine eigene Schleife mit eigenem Abstand. Ein Teil läuft nie
+ * S09 und E38). Jeder Teil hat seine eigene Schleife mit eigenem Abstand. Ein Teil läuft nie
  * zweimal gleichzeitig; der nächste Durchlauf beginnt erst, wenn der letzte fertig ist, plus den
  * Abstand. Ein Fehler in einem Teil hält die anderen nicht auf.
  *
@@ -24,7 +23,6 @@ import type { RunFollower } from "./runs/run-follower.ts";
  * | `merges` | Stand des Merge-Antrags beim Merge-Gate (S09) | 60 s |
  * | `fingerprints` | Fingerabdrücke für den Ausgangsfilter (S08) | 30 s |
  * | `head` | Kopf der Hash-Kette an den Supervisor (E38) | 60 s |
- * | `checkRuns` | Prüflauf des Health-Checks abholen und anfordern (S11b) | 30 s |
  *
  * Alle Abstände sind [Annahme], gewählt nach diesen Grenzen:
  * - `runs`: Der Supervisor beendet einen Lauf ungestartet, wenn das Office das Token nicht
@@ -34,14 +32,12 @@ import type { RunFollower } from "./runs/run-follower.ts";
  *   Planer sofort an, Nachrichten der Agenten warten höchstens einen Abstand.
  * - `merges`: Der Supervisor fragt GitHub selbst nur alle 60 s ab (E51). Öfter zu fragen, brächte
  *   keinen neueren Stand.
- * - `checkRuns`: Der Health-Check wartet 90 s auf die Anforderung; jede Abfrage steht als
- *   `ipc.call` im Audit-Log des Supervisors, öfter als nötig soll sie nicht kommen.
  *
  * Teile stoßen einander an, statt auf ihren Abstand zu warten:
  * - Der Planer läuft zum ersten Mal nach dem ersten Abgleich der Profile. Ohne freigegebenes
  *   Profil lehnt die Admission jeden Lauf ab, und der Planer wartete dann `retryMinutes`.
  * - Hat der Planer einen Lauf zugelassen, folgt sofort `runs`, damit das Token rechtzeitig
- *   abgeholt wird. Ebenso nach einem angeforderten Prüflauf; `runs` begleitet auch ihn.
+ *   abgeholt wird.
  * - Ist ein Lauf beendet, folgen `planner` (der Agent ist frei, seine Nachrichten wecken andere),
  *   `gitOutcomes` und `fingerprints`.
  * - Ist eine Übergabe endgültig, folgen `fingerprints` (zurückgestellte Texte des Laufs) und
@@ -59,7 +55,6 @@ export const TAKT_JOBS = [
   "merges",
   "fingerprints",
   "head",
-  "checkRuns",
 ] as const;
 export type TaktJob = (typeof TAKT_JOBS)[number];
 
@@ -73,7 +68,6 @@ export const DEFAULT_TAKT_INTERVALS: Readonly<TaktIntervals> = Object.freeze({
   merges: 60_000,
   fingerprints: 30_000,
   head: 60_000,
-  checkRuns: 30_000,
 });
 
 /** Die Teile, die der Takt aufruft. Im Betrieb die Klassen aus P06, S05, S08, S09 und E38. */
@@ -85,8 +79,6 @@ export interface TaktParts {
   merges: Pick<MergeStatusFollower, "poll">;
   fingerprints: Pick<FingerprintReporter, "report">;
   head: Pick<HeadReporter, "report">;
-  /** Prüfläufe des Health-Checks (S11b). */
-  checkRuns: Pick<CheckRunFollower, "fetch" | "poll">;
   /** Abgelaufene Office-Tokens entfernt der Takt bei jedem Durchlauf von `runs`. */
   tokens: Pick<RunTokens, "prune">;
 }
@@ -147,7 +139,6 @@ export class OfficeTakt {
       merges: slot(),
       fingerprints: slot(),
       head: slot(),
-      checkRuns: slot(),
     };
   }
 
@@ -262,8 +253,6 @@ export class OfficeTakt {
         return this.fingerprints(problems);
       case "head":
         return this.head();
-      case "checkRuns":
-        return this.checkRuns(problems);
     }
   }
 
@@ -318,12 +307,6 @@ export class OfficeTakt {
 
   private async runs(problems: Problems): Promise<void> {
     this.parts.tokens.prune(this.now());
-    // Ein Fehler beim Prüflauf soll die Läufe der Agenten nicht aufhalten und umgekehrt.
-    try {
-      this.logCheckRun(await this.parts.checkRuns.poll());
-    } catch (error) {
-      problems.push(`Prüflauf: ${errorText(error)}`);
-    }
     const result = await this.parts.runs.poll();
     for (const runId of result.registered) {
       this.log.info("Office-Token angemeldet", { runId });
@@ -344,26 +327,6 @@ export class OfficeTakt {
       this.kick("planner");
       this.kick("gitOutcomes");
       this.kick("fingerprints");
-    }
-  }
-
-  private async checkRuns(problems: Problems): Promise<void> {
-    const step = await this.parts.checkRuns.fetch();
-    this.logCheckRun(step);
-    if (step.rejected !== null) {
-      problems.push(`Prüflauf abgelehnt: ${step.rejected}`);
-    }
-    if (step.started !== null) {
-      this.kick("runs");
-    }
-  }
-
-  private logCheckRun(step: CheckRunStep): void {
-    if (step.started !== null) {
-      this.log.info("Prüflauf angefordert", { runId: step.started });
-    }
-    if (step.reported !== null) {
-      this.log.info("Prüflauf gemeldet", { ...step.reported });
     }
   }
 

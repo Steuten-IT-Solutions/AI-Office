@@ -7,7 +7,6 @@ import type { MergeAccess } from "../git/merge-follower.ts";
 import type { ProfileAccess } from "./profile-sync.ts";
 import type { GitAccess } from "../git/outcome-follower.ts";
 import type { RunRequester } from "../planner/planner.ts";
-import type { CheckRunAccess } from "../runs/check-run.ts";
 import type { RunAccess } from "../runs/run-follower.ts";
 import {
   ERROR_CODES,
@@ -444,24 +443,6 @@ export function supervisorProfileAccess(client: SupervisorClient): ProfileAccess
     },
     checkProfile(params) {
       return client.call("profile.check", params);
-    },
-  };
-}
-
-/**
- * Prüfläufe des Health-Checks über den Supervisor (S11b). `checkRun.next` und `checkRun.report`
- * sind wiederholbar; `checkRun.request` nimmt der Supervisor je Auftrag nur einmal an.
- */
-export function supervisorCheckRunAccess(client: SupervisorClient): CheckRunAccess {
-  return {
-    next() {
-      return client.call("checkRun.next", {});
-    },
-    request(runId) {
-      return client.call("checkRun.request", { runId });
-    },
-    report(params) {
-      return client.call("checkRun.report", params);
     },
   };
 }
