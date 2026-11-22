@@ -178,6 +178,51 @@ export const GIT_OUTCOME_STATES = ["none", "pr_opened", "rejected", "failed", "u
 /** Wie `MAX_REASON_CHARS` im IPC-Protokoll (P02). */
 export const MAX_GIT_REASON_CHARS = 2_000;
 
+/**
+ * Stand des Merge-Antrags zum PR eines Werkbank-Laufs im Merge-Gate (S09), wie ihn der Supervisor
+ * mit `git.merge_status` meldet. `runId` des Ereignisses ist der Lauf, aus dessen Übergabe der PR
+ * stammt (sein `git.outcome` ist `pr_opened`), nicht der Lauf, der den Merge beantragt hat.
+ * Handelnder ist `system`.
+ *
+ * Anders als `git.outcome` hält das Office hier jeden neuen Stand fest, auch Zwischenstände: Ein
+ * PR mit roten Checks oder Konflikt bleibt im Gate offen, und der nächste Lauf muss das sehen.
+ * „Kein Antrag“ (`none`) schreibt das Office nicht; das ist der Ausgangszustand.
+ *
+ * - `waiting`: beantragt; `waitingFor` nennt, worauf das Gate wartet.
+ * - `merged`: vom Supervisor gemergt; `tag` ist das Release-Tag, sobald es gesetzt ist.
+ * - `closed`: ohne das Gate geschlossen, mit `mergeSha`, wenn dabei jemand anders gemergt hat.
+ * - `blocked`: endgültig gesperrt, z. B. weil der PR `.github/` ändert.
+ *
+ * `merged`, `closed` und `blocked` sind endgültig.
+ */
+export interface GitMerge {
+  state: (typeof GIT_MERGE_STATES)[number];
+  pr: number;
+  /** Nur bei `waiting`. */
+  waitingFor: (typeof GIT_MERGE_WAITING)[number] | null;
+  /** Pflicht bei `closed` und `blocked`, bei `waiting` optional, bei `merged` nie. */
+  reason: string | null;
+  /** Pflicht bei `merged`, bei `closed` optional. */
+  mergeSha: string | null;
+  /** Nur bei `merged`. */
+  tag: string | null;
+}
+
+export const GIT_MERGE_STATES = ["waiting", "merged", "closed", "blocked"] as const;
+/** Endgültige Stände; danach fragt das Office nicht mehr. */
+export const GIT_MERGE_FINAL_STATES: readonly GitMerge["state"][] = ["merged", "closed", "blocked"];
+/** Wie `MERGE_WAITING` im IPC-Protokoll (S09). */
+export const GIT_MERGE_WAITING = [
+  "pending",
+  "approval",
+  "checks",
+  "checks_failed",
+  "update",
+  "conflict",
+  "hold",
+  "github",
+] as const;
+
 /** Ereignis-IDs sind UUIDs (siehe `EventStore.append`). */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -428,6 +473,53 @@ export function parseGitOutcome(payload: unknown): Parsed<GitOutcome> {
   return parsed(r, value);
 }
 
+const RELEASE_TAG_PATTERN = /^release-[0-9]{8}-[0-9]{6}-[0-9a-f]{7}$/;
+
+export function parseGitMerge(payload: unknown): Parsed<GitMerge> {
+  const r = new Reader(payload).only("state", "pr", "waitingFor", "reason", "mergeSha", "tag");
+  const state = r.oneOf("state", GIT_MERGE_STATES);
+  const value: GitMerge = {
+    state,
+    pr: r.integer("pr", 1, COUNT_MAX),
+    waitingFor:
+      r.raw("waitingFor") === null || r.raw("waitingFor") === undefined
+        ? null
+        : r.oneOf("waitingFor", GIT_MERGE_WAITING),
+    reason: r.optionalString("reason"),
+    mergeSha: r.optionalString("mergeSha"),
+    tag: r.optionalString("tag"),
+  };
+  if ((state === "waiting") !== (value.waitingFor !== null)) {
+    r.issues.push("waitingFor: genau bei waiting anzugeben");
+  }
+  if (state === "closed" || state === "blocked") {
+    if (value.reason === null) {
+      r.issues.push("reason: Grund erwartet");
+    }
+  } else if (state === "merged" && value.reason !== null) {
+    r.issues.push("reason gibt es bei merged nicht");
+  }
+  if (value.reason !== null && value.reason.length > MAX_GIT_REASON_CHARS) {
+    r.issues.push(`reason: höchstens ${String(MAX_GIT_REASON_CHARS)} Zeichen`);
+  }
+  if (state === "merged" && value.mergeSha === null) {
+    r.issues.push("mergeSha: Commit-Hash erwartet");
+  } else if (state !== "merged" && state !== "closed" && value.mergeSha !== null) {
+    r.issues.push("mergeSha gibt es nur bei merged und closed");
+  }
+  if (value.mergeSha !== null && !GIT_COMMIT_PATTERN.test(value.mergeSha)) {
+    r.issues.push("mergeSha: Commit-Hash mit 40 Hex-Zeichen erwartet");
+  }
+  if (value.tag !== null) {
+    if (state !== "merged") {
+      r.issues.push("tag gibt es nur bei merged");
+    } else if (!RELEASE_TAG_PATTERN.test(value.tag)) {
+      r.issues.push("tag: release-JJJJMMTT-hhmmss-<7 Hex-Zeichen> erwartet");
+    }
+  }
+  return parsed(r, value);
+}
+
 function isHttpsUrl(text: string): boolean {
   if (text.length > MAX_URL_CHARS) {
     return false;
@@ -466,6 +558,7 @@ export const RUN_STARTED = eventType("run.started", parseRunStarted);
 export const ESCALATION_RAISED = eventType("escalation.raised", parseEscalationRaised);
 export const ESCALATION_ANSWERED = eventType("escalation.answered", parseEscalationAnswered);
 export const GIT_OUTCOME = eventType("git.outcome", parseGitOutcome);
+export const GIT_MERGE = eventType("git.merge", parseGitMerge);
 
 export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   AGENT_HIRED,
@@ -481,4 +574,5 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   ESCALATION_ANSWERED,
   RUN_STARTED,
   GIT_OUTCOME,
+  GIT_MERGE,
 ];

@@ -9,6 +9,7 @@ import {
   AGENT_PROFILE_CHANGED,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
+  GIT_MERGE,
   GIT_OUTCOME,
   MESSAGE_SENT,
   RUN_FINISHED,
@@ -19,6 +20,7 @@ import {
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
   parseEscalationRaised,
+  parseGitMerge,
   parseGitOutcome,
   parseMessageSent,
   parseRunFinished,
@@ -29,6 +31,7 @@ import {
   parseTaskHandover,
   parseTaskStatusChanged,
   MAX_TEXT_CHARS,
+  type GitMerge,
   type GitOutcome,
   type RunFinished,
   type RunStarted,
@@ -36,6 +39,7 @@ import {
 import type { Escalation, Message, MessageKind } from "./message.ts";
 import {
   OfficeState,
+  type GitMergeRecord,
   type GitOutcomeRecord,
   type RunRecord,
   type RunStart,
@@ -418,6 +422,22 @@ export class Office {
     const payload = valid("Git-Übergabe", parseGitOutcome(input));
     this.commit(GIT_OUTCOME, "system", payload, { runId, idempotencyKey: `${runId}:git` });
     return this.state.gitOutcome(runId) as GitOutcomeRecord;
+  }
+
+  /**
+   * Hält einen neuen Stand des Merge-Antrags zum PR aus der Übergabe von `runId` fest (S09).
+   * Handelnder ist `system`. Der Schlüssel `<Lauf-ID>:merge:<n>` zählt die Stände des Laufs; ein
+   * unveränderter Stand wird abgelehnt, nicht doppelt geschrieben.
+   */
+  recordGitMerge(runId: string, input: GitMerge): GitMergeRecord {
+    const payload = valid("Merge-Stand", parseGitMerge(input));
+    this.sync();
+    const n = this.state.gitMerges(runId).length + 1;
+    this.commit(GIT_MERGE, "system", payload, {
+      runId,
+      idempotencyKey: `${runId}:merge:${String(n)}`,
+    });
+    return this.state.gitMerge(runId) as GitMergeRecord;
   }
 
   /**

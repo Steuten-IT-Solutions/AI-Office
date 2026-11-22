@@ -1,8 +1,7 @@
 /*
  * KOPIE von `packages/supervisor/src/ipc/protocol.ts` aus Steuten-IT-Solutions/ai-office-supervisor,
- * Stand e24f278 (S08). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
- * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S08 `git.status` und `fingerprints.add`
- * hinzu.
+ * Stand b1ad718 (S09). Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
+ * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kam in S09 `git.merge_status` hinzu.
  *
  * Die Prüfungen hier dienen im Office nur dem Komfort (E22): Fehler fallen auf, bevor eine
  * Anfrage den Socket erreicht. Maßgeblich ist die Prüfung im Supervisor.
@@ -33,6 +32,9 @@ import { z } from "zod";
  * Ergänzt in S08 (CEO-Entscheidung vom 21.11.2026): `git.status` (was das Git-Gate aus der
  * Übergabe eines Laufs gemacht hat) und `fingerprints.add` (Fingerabdrücke aus CEO-Chat und
  * Gedächtnis für den Ausgangsfilter, E33). Ebenfalls nur hinzugefügt.
+ *
+ * Ergänzt in S09: `git.merge_status` (Stand des Merge-Antrags zum PR eines Laufs). Ebenfalls nur
+ * hinzugefügt.
  *
  * Die Methoden folgen der abschließenden Liste in Kap. 4.6. Git-Übergabe, PR und Merge-Antrag
  * fehlen bewusst: Sie kommen nach E40 direkt aus dem Container über das Supervisor-Gateway (S07),
@@ -254,6 +256,57 @@ const gitStatusResult = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("failed"), reason: text(MAX_REASON_CHARS) }),
 ]);
 
+/** Wartegründe des Merge-Gates (S09); gleiche Liste wie `WAITING_REASONS` im Supervisor. */
+export const MERGE_WAITING = [
+  "pending",
+  "approval",
+  "checks",
+  "checks_failed",
+  "update",
+  "conflict",
+  "hold",
+  "github",
+] as const;
+
+/**
+ * Stand des Merge-Antrags zum PR aus der Übergabe eines Laufs (S09, Kap. 4.5 Nr. 4). Das Office
+ * fragt mit der Lauf-ID, deren `git.status` `pr_opened` war, und gibt den Stand dem Agenten weiter.
+ */
+const gitMergeStatusResult = z.discriminatedUnion("state", [
+  /** Für diesen PR gibt es keinen Merge-Antrag. */
+  z.strictObject({ state: z.literal("none") }),
+  /** Beantragt; `waitingFor` nennt, worauf das Gate wartet. */
+  z.strictObject({
+    state: z.literal("waiting"),
+    pr: z.int().min(1),
+    waitingFor: z.enum(MERGE_WAITING),
+    reason: text(MAX_REASON_CHARS).nullable(),
+  }),
+  /** Vom Supervisor gemergt; `tag` fehlt, solange das Release-Tag noch nicht gesetzt ist. */
+  z.strictObject({
+    state: z.literal("merged"),
+    pr: z.int().min(1),
+    mergeSha: z.string().regex(COMMIT_PATTERN),
+    tag: z
+      .string()
+      .regex(/^release-[0-9]{8}-[0-9]{6}-[0-9a-f]{7}$/)
+      .nullable(),
+  }),
+  /** Ohne das Gate geschlossen oder gemergt (dann mit `mergeSha`). */
+  z.strictObject({
+    state: z.literal("closed"),
+    pr: z.int().min(1),
+    reason: text(MAX_REASON_CHARS),
+    mergeSha: z.string().regex(COMMIT_PATTERN).nullable(),
+  }),
+  /** Endgültig gesperrt, z. B. weil der PR `.github/` ändert. */
+  z.strictObject({
+    state: z.literal("blocked"),
+    pr: z.int().min(1),
+    reason: text(MAX_REASON_CHARS),
+  }),
+]);
+
 /** Höchstzahl Fingerabdrücke je Aufruf. 5.000 × 67 Bytes bleiben unter `MAX_FRAME_BYTES`. */
 export const MAX_FINGERPRINTS_PER_CALL = 5_000;
 export const FINGERPRINT_SOURCES = ["ceo_chat", "memory"] as const;
@@ -286,6 +339,7 @@ export const METHODS = {
   "run.output": { params: runOutputParams, result: runOutputResult },
   "git.status": { params: runIdParams, result: gitStatusResult },
   "fingerprints.add": { params: fingerprintsAddParams, result: fingerprintsAddResult },
+  "git.merge_status": { params: runIdParams, result: gitMergeStatusResult },
 } as const;
 
 export type IpcMethod = keyof typeof METHODS;

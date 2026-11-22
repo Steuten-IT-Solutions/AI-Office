@@ -9,6 +9,8 @@ import {
   DOMAIN_EVENT_TYPES,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
+  GIT_MERGE,
+  GIT_MERGE_FINAL_STATES,
   GIT_OUTCOME,
   MESSAGE_SENT,
   RUN_FINISHED,
@@ -20,6 +22,7 @@ import {
   TASK_STATUS_CHANGED,
   type EscalationAnswered,
   type EscalationRaised,
+  type GitMerge,
   type GitOutcome,
   type MessageSent,
   type RunFinished,
@@ -108,6 +111,22 @@ export interface GitOutcomeRecord extends GitOutcome {
   occurredAt: string;
 }
 
+/** Ein Stand des Merge-Antrags zum PR eines Werkbank-Laufs (S09). */
+export interface GitMergeRecord extends GitMerge {
+  /** Lauf, aus dessen Übergabe der PR stammt. */
+  runId: string;
+  taskId: string | null;
+  seq: number;
+  occurredAt: string;
+}
+
+/**
+ * Höchstzahl festgehaltener Merge-Stände je PR. Ein Antrag durchläuft normalerweise wenige Stände;
+ * die Grenze hält ein hin- und herspringendes Gate davon ab, das Protokoll zu füllen. Danach nimmt
+ * das Office nur noch einen endgültigen Stand an.
+ */
+export const MAX_GIT_MERGE_EVENTS_PER_RUN = 50;
+
 /** Eine Übergabenotiz mit ihrer Aufgabe, auch frühere (für die Fingerabdrücke, S08). */
 export interface HandoverRecord extends TaskHandoverNote {
   taskId: string;
@@ -158,6 +177,8 @@ export class OfficeState {
   private readonly inboxRead = new Map<string, number>();
   private readonly handoverList: HandoverRecord[] = [];
   private readonly gitOutcomeById = new Map<string, GitOutcomeRecord>();
+  /** Je Lauf mit PR: alle Merge-Stände in Reihenfolge des Protokolls. */
+  private readonly gitMergesByRun = new Map<string, GitMergeRecord[]>();
 
   constructor(building: Building) {
     this.building = building;
@@ -258,6 +279,35 @@ export class OfficeState {
       }
     }
     return latest;
+  }
+
+  /**
+   * Letzter festgehaltener Stand der Übergabe zu dieser Aufgabe mit geöffnetem PR (S09). Anders
+   * als `latestGitOutcome` überspringt er Läufe ohne PR, etwa den Lauf, der nur den Merge
+   * beantragt hat.
+   */
+  latestOpenedPr(taskId: string): GitOutcomeRecord | undefined {
+    let latest: GitOutcomeRecord | undefined;
+    for (const outcome of this.gitOutcomeById.values()) {
+      if (
+        outcome.taskId === taskId &&
+        outcome.state === "pr_opened" &&
+        (latest === undefined || outcome.seq > latest.seq)
+      ) {
+        latest = outcome;
+      }
+    }
+    return latest;
+  }
+
+  /** Letzter Merge-Stand zum PR aus der Übergabe dieses Laufs, sonst `undefined` (S09). */
+  gitMerge(runId: string): GitMergeRecord | undefined {
+    return this.gitMergesByRun.get(runId)?.at(-1);
+  }
+
+  /** Alle Merge-Stände zum PR aus der Übergabe dieses Laufs. */
+  gitMerges(runId: string): readonly GitMergeRecord[] {
+    return this.gitMergesByRun.get(runId) ?? [];
   }
 
   /** Nachricht, Eskalation oder Zuweisung mit dieser Ereignis-ID. */
@@ -382,6 +432,8 @@ export class OfficeState {
         return this.checkEscalationAnswered(actor, payload as EscalationAnswered);
       case GIT_OUTCOME.type:
         return this.checkGitOutcome(actor, runId);
+      case GIT_MERGE.type:
+        return this.checkGitMerge(actor, payload as GitMerge, runId);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -543,6 +595,19 @@ export class OfficeState {
           seq: event.seq,
           occurredAt: event.occurredAt,
         });
+        return;
+      }
+      case GIT_MERGE.type: {
+        const runId = event.runId as string;
+        const list = this.gitMergesByRun.get(runId) ?? [];
+        list.push({
+          ...(payload as GitMerge),
+          runId,
+          taskId: (this.runById.get(runId) as RunRecord).taskId,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+        });
+        this.gitMergesByRun.set(runId, list);
         return;
       }
       case RUN_STARTED.type: {
@@ -766,6 +831,41 @@ export class OfficeState {
   }
 
   /**
+   * Merge-Stände schreibt nur das System, und nur zu einem Lauf, dessen Übergabe einen PR geöffnet
+   * hat (S09). Jeder Stand muss neu sein; nach einem endgültigen kommt keiner mehr.
+   */
+  private checkGitMerge(actor: string, payload: GitMerge, runId: string | null): string | null {
+    if (actor !== "system") {
+      return "Den Merge-Stand schreibt nur das System";
+    }
+    if (runId === null) {
+      return "Ereignis gehört zu keinem Lauf";
+    }
+    const outcome = this.gitOutcomeById.get(runId);
+    if (outcome?.state !== "pr_opened") {
+      return `Die Übergabe von ${runId} hat keinen PR geöffnet`;
+    }
+    if (payload.pr !== outcome.pr) {
+      return `PR #${String(payload.pr)} stammt nicht aus der Übergabe von ${runId} (PR #${String(outcome.pr)})`;
+    }
+    const list = this.gitMergesByRun.get(runId) ?? [];
+    const last = list.at(-1);
+    if (last !== undefined && GIT_MERGE_FINAL_STATES.includes(last.state)) {
+      return `Merge-Stand von PR #${String(payload.pr)} ist schon endgültig (${last.state})`;
+    }
+    if (last !== undefined && sameGitMerge(last, payload)) {
+      return `Merge-Stand von PR #${String(payload.pr)} ist unverändert`;
+    }
+    if (
+      list.length >= MAX_GIT_MERGE_EVENTS_PER_RUN - 1 &&
+      !GIT_MERGE_FINAL_STATES.includes(payload.state)
+    ) {
+      return `Zu PR #${String(payload.pr)} nimmt das Office nur noch einen endgültigen Merge-Stand an`;
+    }
+    return null;
+  }
+
+  /**
    * Den Start eines Laufs schreibt nur der Planer (`system`), einmal je Lauf und vor dessen Ende.
    * Jeder Auslöser muss an den Agenten gerichtet sein, sonst stimmte die Ursachenkette nicht.
    */
@@ -889,4 +989,19 @@ export class OfficeState {
     }
     return null;
   }
+}
+
+/**
+ * Gleicher Merge-Stand? Bei `waitingFor: github` zählt der Grund nicht: Er ist die Fehlermeldung
+ * eines GitHub-Aufrufs und wechselt, ohne dass sich für den Agenten etwas ändert.
+ */
+export function sameGitMerge(a: GitMerge, b: GitMerge): boolean {
+  return (
+    a.state === b.state &&
+    a.pr === b.pr &&
+    a.waitingFor === b.waitingFor &&
+    (a.waitingFor === "github" || a.reason === b.reason) &&
+    a.mergeSha === b.mergeSha &&
+    a.tag === b.tag
+  );
 }
