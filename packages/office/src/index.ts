@@ -331,3 +331,37 @@ export {
   type PullRequestView,
   type QuotaView,
 } from "./gateway/views.ts";
+
+export {
+  CONFIG_ENV,
+  ConfigError,
+  DEFAULT_OFFICE_CONFIG,
+  LISTEN_ADDRESS,
+  configFromEnv,
+  type OfficeConfig,
+} from "./config.ts";
+export { HeadReporter, type HeadAccess, type HeadReport } from "./events/head-reporter.ts";
+export {
+  consoleLogger,
+  errorText,
+  isLogLevel,
+  type LogFields,
+  type LogLevel,
+  type Logger,
+} from "./log.ts";
+export {
+  DEFAULT_CLOSE_TIMEOUT_MS,
+  readConstitution,
+  startOffice,
+  type RunningOffice,
+  type StartOptions,
+} from "./office-process.ts";
+export { PasswordAborted, passwordCommand } from "./password-command.ts";
+export {
+  DEFAULT_TAKT_INTERVALS,
+  OfficeTakt,
+  TAKT_JOBS,
+  type TaktIntervals,
+  type TaktJob,
+  type TaktParts,
+} from "./takt.ts";
