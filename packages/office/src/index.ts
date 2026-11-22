@@ -74,6 +74,10 @@ export {
   AGENT_PROFILE_CHANGED,
   DOMAIN_EVENT_TYPES,
   ESCALATION_RAISED,
+  GIT_MERGE,
+  GIT_MERGE_FINAL_STATES,
+  GIT_MERGE_STATES,
+  GIT_MERGE_WAITING,
   GIT_OUTCOME,
   GIT_OUTCOME_STATES,
   MAX_HANDOVER_CHARS,
@@ -94,6 +98,7 @@ export {
   type AgentHired,
   type AgentProfileChanged,
   type EscalationRaised,
+  type GitMerge,
   type GitOutcome,
   type MessageSent,
   type RunFinished,
@@ -122,6 +127,9 @@ export {
 export {
   OfficeState,
   domainRegistry,
+  MAX_GIT_MERGE_EVENTS_PER_RUN,
+  sameGitMerge,
+  type GitMergeRecord,
   type GitOutcomeRecord,
   type HandoverRecord,
   type PendingEvent,
@@ -266,6 +274,13 @@ export {
   type GitAccess,
   type GitOutcomeResult,
 } from "./git/outcome-follower.ts";
+export {
+  MERGE_FOLLOW_DAYS,
+  MergeStatusFollower,
+  mergeFromStatus,
+  type MergeAccess,
+  type MergeFollowResult,
+} from "./git/merge-follower.ts";
 
 export {
   API_PREFIX,

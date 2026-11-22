@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildContext } from "../domain/context.ts";
-import type { GitOutcome, RunFinished } from "../domain/events.ts";
+import type { GitMerge, GitOutcome, RunFinished } from "../domain/events.ts";
 import { DomainError, Office } from "../domain/office.ts";
+import { MAX_GIT_MERGE_EVENTS_PER_RUN } from "../domain/office-state.ts";
 import { loadStartBooks, loadStartPersonas } from "../domain/start-content.ts";
 import { loadStartData, seedStartAgents } from "../domain/start-data.ts";
 import { EventStore } from "../events/event-store.ts";
@@ -17,6 +18,7 @@ import {
   fingerprintsOf,
   type FingerprintAccess,
 } from "./fingerprints.ts";
+import { MergeStatusFollower, type MergeAccess } from "./merge-follower.ts";
 import { GitOutcomeFollower, type GitAccess } from "./outcome-follower.ts";
 
 const CTO = "jonas-albrecht";
@@ -322,6 +324,260 @@ describe("Kontext des nächsten Laufs", () => {
     finishRun(RUN_B, taskId);
     office.recordGitOutcome(RUN_B, { ...OPENED, branch: `agent/${RUN_B}` });
     expect(prompt(taskId)).toContain(`PR #42 ist offen: ${OPENED.url as string}`);
+  });
+
+  it("zeigt den Merge-Stand des letzten PR, auch nach einem Lauf ohne Übergabe", () => {
+    const taskId = werkbankTask();
+    expect(prompt(taskId)).not.toContain("## Merge-Stand");
+
+    startRun(RUN_A, taskId);
+    finishRun(RUN_A, taskId);
+    office.recordGitOutcome(RUN_A, OPENED);
+    expect(prompt(taskId)).toContain(
+      `## Merge-Stand\n\nPR #42 aus Lauf \`${RUN_A}\`: Kein Merge-Antrag bekannt.`,
+    );
+
+    // Lauf B beantragt nur den Merge und übergibt nichts.
+    startRun(RUN_B, taskId);
+    finishRun(RUN_B, taskId);
+    office.recordGitOutcome(RUN_B, {
+      state: "none",
+      branch: null,
+      head: null,
+      pr: null,
+      url: null,
+      reason: null,
+    });
+    office.recordGitMerge(RUN_A, {
+      ...WAITING,
+      waitingFor: "checks_failed",
+      reason: "Pflicht-Checks nicht grün: check",
+    });
+    const failed = prompt(taskId);
+    expect(failed).toContain("Der Lauf hat nichts übergeben.");
+    expect(failed).toContain(
+      "wartet im Merge-Gate auf grüne Pflicht-Checks, sie sind fehlgeschlagen. Grund:\n\n> Pflicht-Checks nicht grün: check",
+    );
+    expect(failed).toContain("Ein neuer Stand kommt aus einem neuen Lauf mit neuem PR.");
+
+    office.recordGitMerge(RUN_A, MERGED);
+    expect(prompt(taskId)).toContain(
+      `vom Supervisor gemergt als \`${MERGE_SHA}\`, Release-Tag \`${MERGED.tag as string}\`.`,
+    );
+  });
+
+  it("zeigt Sperre und Schließen mit Grund", () => {
+    const taskId = openedPr();
+    office.recordGitMerge(RUN_A, {
+      state: "closed",
+      pr: 42,
+      waitingFor: null,
+      reason: "Der PR wurde ohne Merge geschlossen",
+      mergeSha: null,
+      tag: null,
+    });
+    expect(prompt(taskId)).toContain(
+      "ohne Merge geschlossen. Grund:\n\n> Der PR wurde ohne Merge geschlossen",
+    );
+  });
+});
+
+const MERGE_SHA = "fedcba9876543210fedcba9876543210fedcba98";
+const WAITING: GitMerge = {
+  state: "waiting",
+  pr: 42,
+  waitingFor: "approval",
+  reason: "Kein Approve des CEO",
+  mergeSha: null,
+  tag: null,
+};
+const MERGED: GitMerge = {
+  state: "merged",
+  pr: 42,
+  waitingFor: null,
+  reason: null,
+  mergeSha: MERGE_SHA,
+  tag: "release-20261121-203410-fedcba9",
+};
+
+class FakeMerge implements MergeAccess {
+  readonly answers = new Map<string, IpcResult<"git.merge_status">>();
+  readonly calls: string[] = [];
+  fail: Error | null = null;
+
+  mergeStatus(runId: string): Promise<IpcResult<"git.merge_status">> {
+    this.calls.push(runId);
+    if (this.fail !== null) {
+      return Promise.reject(this.fail);
+    }
+    return Promise.resolve(this.answers.get(runId) ?? { state: "none" });
+  }
+}
+
+/** Werkbank-Lauf A mit offenem PR #42 zu einer neuen Aufgabe. */
+function openedPr(): string {
+  const taskId = werkbankTask();
+  startRun(RUN_A, taskId);
+  finishRun(RUN_A, taskId);
+  office.recordGitOutcome(RUN_A, OPENED);
+  return taskId;
+}
+
+describe("git.merge", () => {
+  it("hält neue Stände zum PR einer Übergabe fest, nach einem endgültigen keinen mehr", () => {
+    const taskId = werkbankTask();
+    startRun(RUN_A, taskId);
+    finishRun(RUN_A, taskId);
+    expect(() => office.recordGitMerge(RUN_A, WAITING)).toThrow(/keinen PR geöffnet/);
+    office.recordGitOutcome(RUN_A, OPENED);
+    expect(() => office.recordGitMerge(RUN_A, { ...WAITING, pr: 43 })).toThrow(
+      /stammt nicht aus der Übergabe/,
+    );
+
+    const first = office.recordGitMerge(RUN_A, WAITING);
+    expect(first).toMatchObject({ ...WAITING, runId: RUN_A, taskId });
+    expect(() => office.recordGitMerge(RUN_A, WAITING)).toThrow(/unverändert/);
+    // Ein anderer Grund bei gleichem Wartegrund ist ein neuer Stand (z. B. Änderungen verlangt).
+    office.recordGitMerge(RUN_A, { ...WAITING, reason: "Der CEO hat Änderungen verlangt" });
+    office.recordGitMerge(RUN_A, MERGED);
+    expect(office.state.gitMerges(RUN_A).map((m) => m.state)).toEqual([
+      "waiting",
+      "waiting",
+      "merged",
+    ]);
+    expect(office.state.gitMerge(RUN_A)).toMatchObject(MERGED);
+    expect(() => office.recordGitMerge(RUN_A, WAITING)).toThrow(/schon endgültig/);
+  });
+
+  it("prüft die Felder je Stand", () => {
+    openedPr();
+    const base = { pr: 42, waitingFor: null, reason: null, mergeSha: null, tag: null };
+    expect(() => office.recordGitMerge(RUN_A, { ...WAITING, waitingFor: null })).toThrow(
+      /waitingFor/,
+    );
+    expect(() => office.recordGitMerge(RUN_A, { ...MERGED, mergeSha: null })).toThrow(/mergeSha/);
+    expect(() => office.recordGitMerge(RUN_A, { ...MERGED, tag: "v1.0" })).toThrow(/tag/);
+    expect(() => office.recordGitMerge(RUN_A, { ...base, state: "blocked" })).toThrow(/reason/);
+    expect(() =>
+      office.recordGitMerge(RUN_A, { ...base, state: "blocked", reason: "x", mergeSha: MERGE_SHA }),
+    ).toThrow(/nur bei merged und closed/);
+    expect(() => office.recordGitMerge(RUN_A, { ...WAITING, tag: MERGED.tag })).toThrow(
+      /nur bei merged/,
+    );
+  });
+
+  it("schreibt nur das System", () => {
+    openedPr();
+    // `recordGitMerge` schreibt immer als `system`; der Prüfer lehnt andere Handelnde ab.
+    expect(
+      office.state.check({ type: "git.merge", actor: CTO, payload: WAITING, runId: RUN_A }),
+    ).toMatch(/nur das System/);
+  });
+
+  it("nimmt nach der Höchstzahl nur noch einen endgültigen Stand an", () => {
+    openedPr();
+    for (let i = 0; i < MAX_GIT_MERGE_EVENTS_PER_RUN - 1; i += 1) {
+      office.recordGitMerge(RUN_A, { ...WAITING, reason: `Stand ${String(i)}` });
+    }
+    expect(() => office.recordGitMerge(RUN_A, { ...WAITING, reason: "noch einer" })).toThrow(
+      /nur noch einen endgültigen/,
+    );
+    expect(office.recordGitMerge(RUN_A, MERGED).state).toBe("merged");
+  });
+});
+
+describe("MergeStatusFollower", () => {
+  it("fragt nur PRs aus Übergaben und schreibt nur neue Stände", async () => {
+    const merge = new FakeMerge();
+    const follower = new MergeStatusFollower({ office, access: merge });
+    const taskId = werkbankTask();
+    startRun(RUN_A, taskId);
+    finishRun(RUN_A, taskId);
+
+    // Noch kein git.outcome: keine Frage.
+    expect(await follower.poll()).toEqual({
+      recorded: [],
+      open: [],
+      failed: [],
+      unavailable: false,
+    });
+    expect(merge.calls).toEqual([]);
+
+    office.recordGitOutcome(RUN_A, OPENED);
+    expect((await follower.poll()).open).toEqual([{ runId: RUN_A, state: "none" }]);
+    expect(office.state.gitMerge(RUN_A)).toBeUndefined();
+
+    merge.answers.set(RUN_A, {
+      state: "waiting",
+      pr: 42,
+      waitingFor: "github",
+      reason: "fetch failed",
+    });
+    expect((await follower.poll()).recorded.map((r) => r.waitingFor)).toEqual(["github"]);
+    // Andere Fehlermeldung von GitHub: kein neuer Stand.
+    merge.answers.set(RUN_A, {
+      state: "waiting",
+      pr: 42,
+      waitingFor: "github",
+      reason: "HTTP 502",
+    });
+    expect((await follower.poll()).open).toEqual([{ runId: RUN_A, state: "waiting" }]);
+
+    merge.answers.set(RUN_A, {
+      state: "merged",
+      pr: 42,
+      mergeSha: MERGE_SHA,
+      tag: MERGED.tag,
+    });
+    expect((await follower.poll()).recorded.map((r) => r.state)).toEqual(["merged"]);
+    expect(office.state.gitMerges(RUN_A)).toHaveLength(2);
+
+    // Danach wird nicht mehr gefragt.
+    merge.calls.length = 0;
+    await follower.poll();
+    expect(merge.calls).toEqual([]);
+  });
+
+  it("hält Sperre und Schließen mit Grund fest", async () => {
+    const merge = new FakeMerge();
+    openedPr();
+    merge.answers.set(RUN_A, { state: "blocked", pr: 42, reason: "Der PR ändert .github/" });
+    await new MergeStatusFollower({ office, access: merge }).poll();
+    expect(office.state.gitMerge(RUN_A)).toMatchObject({
+      state: "blocked",
+      reason: "Der PR ändert .github/",
+      mergeSha: null,
+    });
+  });
+
+  it("verfolgt PRs nur bis zur Frist", async () => {
+    const merge = new FakeMerge();
+    openedPr();
+    await new MergeStatusFollower({ office, access: merge, followDays: 0 }).poll();
+    // Übergabe und Uhr stehen auf demselben Zeitpunkt: noch in der Frist.
+    expect(merge.calls).toEqual([RUN_A]);
+    merge.calls.length = 0;
+    await new MergeStatusFollower({ office, access: merge, followDays: -1 }).poll();
+    expect(merge.calls).toEqual([]);
+  });
+
+  it("bricht ohne Merge-Gate ab und meldet Fehler je Lauf", async () => {
+    const merge = new FakeMerge();
+    const follower = new MergeStatusFollower({ office, access: merge });
+    openedPr();
+
+    merge.fail = new IpcCallError(
+      "git.merge_status",
+      { code: "not_available", message: "kein Merge-Gate" },
+      true,
+    );
+    expect((await follower.poll()).unavailable).toBe(true);
+
+    merge.fail = new IpcTransportError("Verbindung abgebrochen", true);
+    const result = await follower.poll();
+    expect(result.unavailable).toBe(false);
+    expect(result.failed).toEqual([{ runId: RUN_A, error: "Verbindung abgebrochen" }]);
+    expect(office.state.gitMerge(RUN_A)).toBeUndefined();
   });
 });
 

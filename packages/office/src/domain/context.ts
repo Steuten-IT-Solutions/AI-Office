@@ -1,5 +1,6 @@
 import type { RunType } from "../llm/runner.ts";
 import { CEO_ID, allowedRunTypes, type AgentProfile } from "./agent.ts";
+import type { GitMerge } from "./events.ts";
 import type { Escalation, Message } from "./message.ts";
 import { DomainError } from "./office.ts";
 import type { OfficeState } from "./office-state.ts";
@@ -325,6 +326,10 @@ function taskSection(state: OfficeState, task: Task, options: { withHandover: bo
     );
     if (task.runType === "werkbank") {
       parts.push(gitOutcomeSection(state, task));
+      const merge = mergeSection(state, task);
+      if (merge !== null) {
+        parts.push(merge);
+      }
     }
   }
   return parts.join("\n\n");
@@ -353,6 +358,55 @@ function gitOutcomeSection(state: OfficeState, task: Task): string {
       return `${title}\n\n${run}: Die Übergabe ist technisch gescheitert, nichts gepusht. Grund:\n\n${quote(outcome.reason as string)}`;
     case "unknown":
       return `${title}\n\n${run}: Der Supervisor kennt den Lauf nicht mehr; der Stand ist unbekannt.`;
+  }
+}
+
+/** Worauf das Merge-Gate wartet (S09), als Satzende nach „wartet im Merge-Gate auf“. */
+const MERGE_WAITING_TEXT: Record<NonNullable<GitMerge["waitingFor"]>, string> = {
+  pending: "die erste Prüfung",
+  approval: "das Approve des CEO auf dem aktuellen Stand",
+  checks: "die Pflicht-Checks, sie laufen noch",
+  checks_failed: "grüne Pflicht-Checks, sie sind fehlgeschlagen",
+  update: "das Einmischen von main; danach braucht es ein neues Approve des CEO",
+  conflict: "einen neuen Stand, main lässt sich nicht konfliktfrei einmischen",
+  hold: "das Ende von Notaus oder Schutzschalter",
+  github: "GitHub, der letzte Aufruf ist gescheitert",
+};
+
+/**
+ * Stand des Merge-Antrags zum letzten PR dieser Aufgabe (S09, Kap. 4.5 Nr. 4). Bezogen auf den
+ * letzten Lauf mit geöffnetem PR, nicht auf die letzte Übergabe: Der Lauf, der den Merge
+ * beantragt, übergibt meist nichts. `null`, solange die Aufgabe keinen PR hat.
+ */
+function mergeSection(state: OfficeState, task: Task): string | null {
+  const opened = state.latestOpenedPr(task.id);
+  if (opened === undefined) {
+    return null;
+  }
+  const title = "## Merge-Stand";
+  const pr = `PR #${String(opened.pr)} aus Lauf \`${opened.runId}\``;
+  const merge = state.gitMerge(opened.runId);
+  if (merge === undefined) {
+    return `${title}\n\n${pr}: Kein Merge-Antrag bekannt. Beantragt wird mit \`request_merge\`.`;
+  }
+  const at = `festgehalten ${merge.occurredAt}`;
+  const because = (reason: string | null): string =>
+    reason === null ? "" : ` Grund:\n\n${quote(reason)}`;
+  switch (merge.state) {
+    case "waiting": {
+      const waitingFor = merge.waitingFor as NonNullable<GitMerge["waitingFor"]>;
+      const hint =
+        waitingFor === "checks_failed" || waitingFor === "conflict"
+          ? "\n\nDein Branch gilt nur für einen Lauf. Ein neuer Stand kommt aus einem neuen Lauf mit neuem PR."
+          : "";
+      return `${title}\n\n${pr}, ${at}: wartet im Merge-Gate auf ${MERGE_WAITING_TEXT[waitingFor]}.${because(merge.reason)}${hint}`;
+    }
+    case "merged":
+      return `${title}\n\n${pr}, ${at}: vom Supervisor gemergt als \`${merge.mergeSha as string}\`${merge.tag === null ? "" : `, Release-Tag \`${merge.tag}\``}.`;
+    case "closed":
+      return `${title}\n\n${pr}, ${at}: ${merge.mergeSha === null ? "ohne Merge geschlossen" : `außerhalb des Merge-Gates gemergt als \`${merge.mergeSha}\``}.${because(merge.reason)}`;
+    case "blocked":
+      return `${title}\n\n${pr}, ${at}: im Merge-Gate endgültig gesperrt, er wird nicht gemergt.${because(merge.reason)}`;
   }
 }
 
