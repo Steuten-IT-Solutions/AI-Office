@@ -291,6 +291,11 @@ für Supervisor, Office, Proxy und Betriebssystem, 20 GB Platte. **No-Go** nur, 
 2 gleichzeitige Werkbank-Läufe möglich sind; dann die Parallelität entsprechend begrenzen und den späteren Server größer
 dimensionieren.
 
+**Ergebnis (22.11.2026, `spikes/ergebnisse/S3.md`):** Statik 4, begrenzt durch die CPU (RAM 8,
+Platte 225), kein No-Go. Ein Werkbank-Durchgang braucht 34–38 s und höchstens 1,34 GiB RAM; bei 4
+gleichzeitigen Läufen dauert er das 1,29-Fache. Umgesetzt in plan.md E57 (Review 28) und im
+Supervisor (PR #26, pnpm-Speicher im Arbeitsbereich).
+
 ### 3.4 Reihenfolge und Abhängigkeiten
 
 1. S1c, S1d, S1e (brauchen nur GitHub) → sofort nach Freigabe des Test-Repos.
