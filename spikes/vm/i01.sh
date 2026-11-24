@@ -85,6 +85,7 @@ notiz() { # AK, Text
 info() { echo; echo "== $(date +%H:%M:%S) $*"; }
 fehler() {
   echo "FEHLER: $*"
+  ergebnisse+=("| – | Abbruch: $* | – | – | FEHLER |")
   gruen=nein
   bericht
   exit 1
