@@ -261,12 +261,12 @@ if teil konfig; then
       gitGate: c.gitGate ? Object.keys(c.gitGate) : null,
       notification: c.notification ? Object.keys(c.notification) : null,
     };
-    console.log(JSON.stringify(out, null, 2));' "$KONFIG"
+    console.log(JSON.stringify(out, null, 2));' "$KONFIG" || true
   aio status --json | /usr/bin/node -e '
     let s=""; process.stdin.on("data",(c)=>(s+=c)).on("end",()=>{ const d=JSON.parse(s);
     console.log(JSON.stringify({emergency:d.emergency, breaker:d.breaker, delivery:d.delivery,
       deploy:{current:d.deploy?.current?.sha, previous:d.deploy?.previous?.sha, mergeLock:d.deploy?.mergeLock, waiting:d.deploy?.waiting},
-      quota:d.quota, profiles:(d.profiles??[]).map((p)=>p.agentId ?? p), activeRuns:d.activeRuns}, null, 2)); });'
+      quota:d.quota, profiles:d.profiles, rooms:d.rooms, activeRuns:d.activeRuns}, null, 2)); });' || true
   df -h / | sed 1d
   if [ -z "$(/usr/bin/node -e 'const c=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(c.notification?"ja":"")' "$KONFIG")" ]; then
     notiz "6, 7" "Keine Benachrichtigung konfiguriert: Meldungen gehen nur ins Audit-Log, keine E-Mail"
