@@ -1,4 +1,4 @@
-# Spikes S1a, S1b, S1f, S1g, S2 und S3 in der VM `aio-dev`
+# Spikes S1a, S1b, S1f, S1g und S2 in der VM `aio-dev`
 
 Plan: [`docs/etappe-0.md`](../../docs/etappe-0.md) Kap. 3.1 und 3.2, Hintergrund in
 [`docs/plan.md`](../../docs/plan.md) Kap. 4.7, 5.7 und 6. Die Skripte laufen nur in der VM
@@ -143,35 +143,3 @@ Berichte zeigen deshalb auch, ob er mit der echten Ausgabe des gepinnten CLI zur
 - Die MCP-Attrappe beantwortet `initialize` und `server/discover`; welchen Weg das CLI über stdio
   nimmt, protokolliert sie auf stderr.
 - Dauer und Kosten in der Tabelle oben sind Schätzungen.
-
-## S3 – Statik (`s3.sh`, `s3/`)
-
-Plan: [`docs/etappe-0.md`](../../docs/etappe-0.md) Kap. 3.3. **Zweck:** messen, wie viel RAM, CPU und
-Platte ein Lauf braucht, und daraus die Statik ableiten (wie viele Läufe gleichzeitig laufen
-dürfen, Admission `maxWorkplaces`) sowie die Größe des späteren Servers.
-
-Anders als S1 und S2 braucht S3 weder das Spike-Image noch `/opt/aio-spikes/repo`. Es nutzt die
-Bausteine des installierten Supervisors (`/opt/aio-supervisor/current`): `createArgs` und
-`prepArgs` (Härtung, Limits und Mounts eines echten Werkbank-Laufs), `claudeArgs`, den
-Egress-Proxy mit Registry-Cache und `aio-arbeitsbereich` (eigenes ext4 je Lauf). Die Messung läuft
-neben dem Supervisor: eigene Netze `10.214.0.0/16`, eigene Arbeitsbereiche und eigener
-Registry-Cache unter `/opt/aio-spikes/s3`, Container `s3-r-…` ohne das Label `aio.lauf`. Sie
-ändert nichts am Betrieb.
-
-```bash
-sudo bash s3.sh                       # startet als systemd-Unit aio-s3 im Hintergrund
-tail -f /opt/aio-spikes/s3/s3.log     # Fortschritt
-sudo systemctl stop aio-s3            # Abbruch, räumt auf
-```
-
-| Teil | Messung |
-|---|---|
-| S3a | Grundlast des Lauf-Containers (Startprozess mit `sleep`) und 3 kurze `haiku`-Läufe mit dem CLI-Aufruf eines Werkbank-Laufs (ein Bash-Aufruf). RAM-Spitze aus `memory.peak`, nicht freigebbarer Anteil (anon + shmem + kernel aus `memory.stat`), CPU-Zeit, Zeit bis `system/init` und bis zum Ergebnis |
-| S3b | Werkbank ohne LLM: Klon im Wegwerf-Container, `pnpm install --frozen-lockfile --ignore-scripts` über den Registry-Cache, Typecheck, Lint, Format, Tests. Einmal kalt (leerer Cache), einmal warm. Je Schritt Dauer, RAM, Kerne, Drosselung durch `--cpus`. Dazu, wohin `pnpm` ohne Angabe seinen Speicher legt (Zusatzschritt `install-standard` im warmen Durchgang) |
-| S3c | 2, 4, 6 und 8 Werkbank-Läufe gleichzeitig (warm). Dauer, RAM je Lauf, am Host CPU, iowait, steal, PSI und Swap. Eine Runde entfällt, wenn RAM oder Platte dafür nicht reichen |
-| S3d | Größen von Images, Registry-Cache, Rohprotokollen, Releases, Sicherungen, Docker-Logs; Office-DB echt und synthetisch (20.000 Ereignisse über `EventStore`) |
-
-Statik = min(⌊(RAM − 3 GiB) / RAM-Spitze je Lauf⌋, ⌊(Platte frei − 20 GB) / Platte je Lauf⌋,
-CPU-Grenze). CPU-Grenze **[Vorschlag]**: größtes n, bei dem der Median der Dauer höchstens das
-1,5-Fache des Einzellaufs ist. Bericht: `/opt/aio-spikes/berichte/S3-bericht.md` und
-`S3-messwerte.json`, beide ohne Geheimnisse.

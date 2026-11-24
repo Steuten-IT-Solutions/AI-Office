@@ -1,6 +1,6 @@
 # AI-Office – Architektur- und Umsetzungsplan
 
-> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E57 am 23.11.2026).
+> **Status:** Version 1.4 – **zur Freigabe durch den CEO**. Überarbeitet nach dem unabhängigen Review (Reviews 6 und 7) und zehn Copilot-Runden in PR #1 (Reviews 8, 10–18). In der letzten Runde fand Copilot keine Befunde mehr. Alle Entscheidungen sind vom CEO bestätigt (zuletzt E56 am 21.11.2026).
 > **Grundlage:** [`docs/planungs-prompt.md`](planungs-prompt.md).
 > **Konvention:** Aussagen mit Quelle sind verifiziert (Stand der Abfrage: 25.10.2026). Aussagen mit
 > **[Annahme]** sind nicht verifiziert und müssen vor der Umsetzung geprüft werden.
@@ -67,7 +67,6 @@
 | E54 | **Faktor „USD → Prozentpunkte“ im Betrieb kalibrieren:** S04 lernt den Faktor je Modell und Fenster laufend aus dem Hauptbuch (Σ `total_cost_usd`) und den Messläufen, über Zeiträume, in denen der Zähler um mehrere Prozentpunkte steigt. Bis genug Daten da sind, gilt ein konservativer Startwert: Woche **4,4 Prozentpunkte je USD** als oberer Wert. Wie bisher reserviert die Admission mit dem oberen Wert und dem Zuschlag (Kap. 6). | CEO-Entscheidung nach Spike S2 (21.11.2026): S2c war nicht messbar. Ganz S2 kostete laut CLI etwa 0,23 USD, der Wochenzähler blieb bei 8 %. Bei ganzen Prozentpunkten ergibt das keinen Faktor; ein Block müsste mehrere Punkte verbrauchen, und das passte nicht in die freigegebenen 5 Punkte. Der Startwert ist die obere Schranke daraus: weniger als 1 Punkt für 0,23 USD, also unter 1 / 0,23 ≈ 4,35 Punkte je USD, aufgerundet. **[Annahme]**: Die Kostenschätzung des CLI (Fakt 6) ist für diese Schranke genau genug. Für das 5-Stunden-Fenster gibt S2 keine verwertbare Schranke; dort gilt bis zur Kalibrierung nur die Pause ab 70 %. | Review 25 |
 | E55 | **Supervisor-Gateway mit zwei Werkzeugen:** `submit_bundle` und `request_merge` gehören zum Supervisor-Gateway (E40), nicht zur Office-API. `open_pr` entfällt: `submit_bundle` nimmt Titel und Text des PR mit, und der Supervisor öffnet den PR nach dem Push selbst (Kap. 4.5 Nr. 1). Das Bundle entsteht weiter am Ende des Laufs (Kap. 5.7); `submit_bundle` meldet es nur zur Übergabe an, ohne Anmeldung gibt es keinen Push. Das Gateway bekommen nur Werkbank-Läufe. | CEO-Entscheidung beim Bau von S07 (21.11.2026, `etappe-0.md` Kap. 5 Nr. 1). Ein eigenes `open_pr` könnte im Lauf nur dasselbe vormerken, denn Push und PR folgen erst nach dem Laufende. | Review 26 |
 | E56 | **Feste Doku-Kopie für die Werkbank:** Bis zu den Büchern (Etappe 4) bekommen Werkbank-Läufe eine feste Kopie offizieller Doku schreibgeschützt auf `/doku`: Node.js (gleiche Version wie im Lauf-Image), TypeScript (Handbuch und Referenz) und MDN (JavaScript, Web-APIs, HTTP, CSS, HTML), nur Markdown. Die Stände (Commit-IDs) stehen im Supervisor-Repo (`host/aio-doku.sh`); wer das Skript als root ausführt, gibt genau diese Stände als `extern-geprüft` frei (E33). Büro und Recherche bekommen die Kopie nicht. | CEO-Entscheidung vom 21.11.2026 nach der Prüfung des Wissenszugangs: Ohne Netz fehlt den Agenten aktuelle Referenz-Doku. Eine feste Kopie öffnet keinen Weg nach außen, anders als ein Doku-Proxy oder WebSearch. Der Inhalt ist geprüft, weil der CEO die Stände freigibt und Git beim Auschecken prüft, dass er zur Commit-ID passt. | Supervisor-PR #19 |
-| E57 | **Statik 4 aus Spike S3:** Auf 8 vCPU und 16 GB RAM laufen höchstens 4 Werkbank-Läufe gleichzeitig; die Grenze setzt die CPU. Der Startwert `maxWorkplaces` 4 bleibt. Das Limit je Werkbank-Lauf bleibt bei 4 GiB RAM und 2 CPUs, obwohl 4 × 4 GiB mehr ist als der RAM der VM. Im Werkbank-Lauf legt pnpm seinen Speicher in den Arbeitsbereich (`npm_config_store_dir=/work/.pnpm-store`). Der spätere Server braucht für dieselbe Statik etwa 8 vCPU dieser Klasse, 16 GB RAM und ≥ 80 GB SSD. Nach größeren Änderungen am Repo wird die Statik neu gemessen (`spikes/vm/s3.sh`). | CEO-Entscheidung nach Spike S3 (22.11.2026, `spikes/ergebnisse/S3.md`): Ein Werkbank-Durchgang von AI-Office (Klon, install, Typecheck, Lint, Format, Tests) brauchte 34–38 s und höchstens 1,34 GiB RAM. Bei 4 gleichzeitigen Läufen stieg die Dauer auf das 1,29-Fache, bei 6 auf das 1,76-Fache; RAM ließe 8 Läufe zu, Platte 225. Die Grenze „Dauer höchstens 1,5 × Einzellauf“ für die CPU ist ein Vorschlag aus dem Bericht; mit 2 × wäre die Statik 6. Beim RAM-Limit von 4 GiB bleibt es nach Entscheidung des CEO; gemessen braucht ein Lauf etwa ein Drittel davon, die Summe der Limits ist also eine Überbuchung, kein gemessener Engpass. Ohne Angabe legte pnpm den Speicher in das tmpfs `/home/agent`, das zum RAM des Containers zählt (Supervisor-PR #26, in `aio-dev` geprüft). Mit 4 vCPU wäre die Statik etwa 2 **[Annahme: aus der CPU-Auslastung gerechnet, nicht gemessen]**. | Review 28 |
 
 ---
 
@@ -257,7 +256,7 @@ flowchart TB
 | Webinterface | Vite + PixiJS, isometrische Pixel-Art ab Etappe 2, WebSocket. Strikte CSP | E17, E19, Kap. 5.11 |
 | Zugriff | VPN (z. B. Tailscale oder WireGuard) + Login. Für die Supervisor-Konsole zusätzlich ein zweiter Faktor (TOTP oder Passkey) | Kein öffentlicher Zugang |
 | Prozesse | systemd mit Watchdog für den Supervisor. Der Supervisor startet das Office. | Wiederanlauf, Erkennung von Absturzschleifen |
-| Server | Ubuntu LTS, 8 vCPU, 16 GB RAM, ≥ 80 GB SSD (Spike S3, E57) | Inferenz läuft extern, die Last kommt von Builds und Tests. Mit 4 vCPU wäre die Statik etwa 2 statt 4. |
+| Server | Ubuntu LTS, 4 vCPU, 8–16 GB RAM, ≥ 80 GB SSD **[Annahme: in Spike S3 messen]** | Inferenz läuft extern, die Last kommt von Builds und Tests. |
 
 ---
 
@@ -502,7 +501,7 @@ Alle anderen Aufrufe sind reine Daten im Office.
 | Größe | Arbeitsplätze = mögliche gleichzeitige Läufe (E4) |
 | Ausstattung | Werkzeugrechte: Rechner = Lauftyp `recherche`, Werkbank = Bash/Build mit Arbeitskopie, Whiteboard = gemeinsames Dokument, Regal = Bücher |
 | Miete | Interne Budgeteinheit. Die echte Bremse ist das Kontingent (Kap. 6). |
-| Statik | Höchstzahl der Arbeitsplätze aus RAM, CPU und Speicher. Gemessen in Spike S3: 4 auf 8 vCPU und 16 GB RAM, begrenzt durch die CPU (E57) |
+| Statik | Höchstzahl der Arbeitsplätze aus RAM, CPU und Speicher **[Annahme: in Spike S3 messen]** |
 
 - Umbauten beantragen die Agenten abstrakt. Eine deterministische Layout-Engine platziert die Räume.
 - **Verkleinern bzw. Abriss:** nur für leere Räume. Laufende Läufe enden regulär, Zuordnungen werden vorher verlegt.
@@ -558,7 +557,7 @@ claude -p --output-format stream-json --verbose --model <m> --max-turns <n> --ma
   - Registries nur über einen lesenden Cache. Er leitet nur an **fest eingestellte** offizielle Upstreams weiter, nur Pfade im Muster „Paketname/Version bzw. Tarball“ und ohne Query-Strings.
     Restkanal: Bei einem Cache-Miss sieht der Betreiber der Registry den angefragten Paketnamen. Ein Angreifer sieht diese Anfragen nicht, solange er die Registry nicht selbst betreibt. Ich halte den Kanal daher für vernachlässigbar und akzeptiere ihn ausdrücklich (R6).
   - DNS nur über den Proxy
-- **Speicher:** Arbeitsbereich mit Größenlimit **[Annahme: 5 GB]**. Freier Speicher auf dem Host ist ein Admission-Kriterium. **Protokolle begrenzt:** Docker-Logs mit festem Größenlimit je Container (`--log-opt max-size` und `max-file`). Rohprotokolle im Supervisor mit Obergrenze je Lauf **[Annahme: 50 MB]**, darüber wird abgeschnitten und vermerkt. So kann auch ein laufender Container die Platte nicht über stdout/stderr füllen. Aufbewahrung: Rohprotokolle 90 Tage, Arbeitsbereiche löscht der Supervisor nach Laufende. Den pnpm-Speicher legt der Werkbank-Lauf in den Arbeitsbereich (`npm_config_store_dir=/work/.pnpm-store`); sonst läge er im tmpfs `/home/agent` und zählte zum RAM (E57).
+- **Speicher:** Arbeitsbereich mit Größenlimit **[Annahme: 5 GB]**. Freier Speicher auf dem Host ist ein Admission-Kriterium. **Protokolle begrenzt:** Docker-Logs mit festem Größenlimit je Container (`--log-opt max-size` und `max-file`). Rohprotokolle im Supervisor mit Obergrenze je Lauf **[Annahme: 50 MB]**, darüber wird abgeschnitten und vermerkt. So kann auch ein laufender Container die Platte nicht über stdout/stderr füllen. Aufbewahrung: Rohprotokolle 90 Tage, Arbeitsbereiche löscht der Supervisor nach Laufende.
 - **Zeitgrenze:** erst SIGINT, dann SIGTERM, dann Kill. Zusätzlich setzt eine **harte Lease** im Startprozess des Containers eine Wanduhr-Grenze, die auch ohne Supervisor greift (E42).
 - **Idempotenz:** Jeder Aufruf der Office-API trägt Lauf-ID und Sequenznummer.
 
@@ -1049,7 +1048,3 @@ Kap. 7.3 führte `submit_bundle`, `open_pr` und `request_merge` in der Office-AP
 ### Review 27 – Selbstkorrektur des Kontingents beim Bau von S04 (22.11.2026)
 
 E43 und Abnahmekriterium 6 (Kap. 7.4) sprachen von einer sinkenden Schwelle. Kap. 6 lässt dagegen bei einem Prognosefehler des Büros Zuschlag und Faktor steigen und die Schwelle unverändert, damit die eigene Nutzung des CEO nichts verstellt. Beim Bau von S04 (Supervisor-PR #23) hat der CEO Kap. 6 bestätigt. E43 und Abnahmekriterium 6 sind angeglichen.
-
-### Review 28 – Entscheidung des CEO zu Spike S3 (22.–23.11.2026)
-
-Spike S3 lief am 22.11.2026 in `aio-dev` (`spikes/ergebnisse/S3.md`, Skripte aus PR #46). Ergebnis: Statik 4, begrenzt durch die CPU; RAM und Platte wären keine Grenze. Der Bericht machte fünf Vorschläge. `maxWorkplaces` bleibt 4, das brauchte keine Änderung. Einzeln entschieden hat der CEO: Das RAM-Limit je Werkbank-Lauf bleibt bei 4 GiB (Vorschlag 3 GiB abgelehnt); der pnpm-Speicher liegt im Arbeitsbereich (Supervisor-PR #26); das Ergebnis kommt in den Plan. Aufgenommen als E57 und in Kap. 3.4, 5.6 und 5.7 sowie in `etappe-0.md` (3.3).
