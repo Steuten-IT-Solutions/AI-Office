@@ -8,17 +8,18 @@
 # Umgebung oder Ausgabe. Danach startet es den Supervisor neu und schickt eine Testmail.
 # Scheitert der Neustart, stellt es die Konfiguration wieder her. Kein LLM-Aufruf.
 #
-# Server: IONOS (smtp.ionos.de, Port 465, SSL/TLS, Benutzername = volle Adresse), siehe
+# Server: Standard IONOS (smtp.ionos.de, Port 465, SSL/TLS, Benutzername = volle Adresse), siehe
 # https://www.ionos.de/hilfe/e-mail/allgemeine-themen/serverinformationen-fuer-imap-pop3-und-smtp/
+# Ein anderer Anbieter als drittes (und viertes) Argument, z. B. `mail.gmx.net 465`. Port 465
+# heißt SSL/TLS, Port 587 STARTTLS. Benutzername ist immer die Absenderadresse.
 #
-# Aufruf:      sudo bash i01-mail-einrichten.sh ABSENDER EMPFAENGER
+# Aufruf:      sudo bash i01-mail-einrichten.sh ABSENDER EMPFAENGER [SERVER [PORT]]
 # Rückgängig:  sudo bash i01-mail-einrichten.sh zurueck
 set -euo pipefail
 
 KONFIG=/etc/aio/supervisor.json
 SICHER=/etc/aio/supervisor.json.vor-i01-mail
 PASSWORT=/etc/aio/secrets/smtp-passwort
-HOST=smtp.ionos.de
 
 [ "$(id -u)" = 0 ] || {
   echo "Bitte mit sudo starten"
@@ -51,6 +52,20 @@ fi
 
 VON=${1:?Absenderadresse fehlt}
 AN=${2:?Empfängeradresse fehlt}
+HOST=${3:-smtp.ionos.de}
+PORT=${4:-465}
+case "$PORT" in
+  465) SICHERHEIT=tls ;;
+  587) SICHERHEIT=starttls ;;
+  *)
+    echo "Port 465 (SSL/TLS) oder 587 (STARTTLS) erwartet"
+    exit 1
+    ;;
+esac
+[[ $HOST =~ ^[a-z0-9.-]+\.[a-z]+$ ]] || {
+  echo "Kein Servername: $HOST"
+  exit 1
+}
 for a in "$VON" "$AN"; do
   [[ $a =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || {
     echo "Keine E-Mail-Adresse: $a"
@@ -84,18 +99,18 @@ echo "== Sicherung: $SICHER"
 umask 022
 /usr/bin/node -e '
   const fs = require("node:fs");
-  const [path, from, to, host] = process.argv.slice(1);
+  const [path, from, to, host, port, security] = process.argv.slice(1);
   const c = JSON.parse(fs.readFileSync(path, "utf8"));
   const old = c.notification ?? {};
   c.notification = {
     ...old,
     to,
     from,
-    smtp: { host, port: 465, security: "tls", username: from },
+    smtp: { host, port: Number(port), security, username: from },
   };
   fs.writeFileSync(path, JSON.stringify(c, null, 2) + "\n");
   console.log(JSON.stringify({ notification: { ...c.notification } }));
-' "$KONFIG" "$VON" "$AN" "$HOST"
+' "$KONFIG" "$VON" "$AN" "$HOST" "$PORT" "$SICHERHEIT"
 
 echo "== Supervisor neu starten"
 if ! neu_starten; then
