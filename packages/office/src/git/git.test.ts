@@ -449,6 +449,23 @@ describe("git.merge", () => {
     expect(() => office.recordGitMerge(RUN_A, WAITING)).toThrow(/schon endgültig/);
   });
 
+  it("ein Merge erledigt die Aufgabe des Laufs, andere Stände nicht (E66)", () => {
+    const taskId = werkbankTask();
+    startRun(RUN_A, taskId);
+    finishRun(RUN_A, taskId);
+    office.recordGitOutcome(RUN_A, OPENED);
+    office.recordGitMerge(RUN_A, WAITING);
+    expect(office.state.task(taskId)?.status).toBe("offen");
+    office.recordGitMerge(RUN_A, MERGED);
+    expect(office.state.task(taskId)?.status).toBe("erledigt");
+    const change = store
+      .read({ afterSeq: 0, limit: 10_000 })
+      .filter((e) => e.type === "task.status_changed");
+    expect(change).toHaveLength(1);
+    expect(change[0]).toMatchObject({ actor: "system", runId: RUN_A });
+    expect(JSON.stringify(change[0]?.payload)).toContain(`PR #${String(OPENED.pr)} gemergt`);
+  });
+
   it("prüft die Felder je Stand", () => {
     openedPr();
     const base = { pr: 42, waitingFor: null, reason: null, mergeSha: null, tag: null };

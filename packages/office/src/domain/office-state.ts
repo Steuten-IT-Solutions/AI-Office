@@ -93,7 +93,8 @@ export interface RunStart extends RunStarted {
  */
 export interface WakeItem {
   id: string;
-  kind: "message" | "escalation" | "assignment";
+  /** `outcome`: abgelehnte oder gescheiterte Übergabe ins Repo, weckt den Agenten (E63). */
+  kind: "message" | "escalation" | "assignment" | "outcome";
   seq: number;
   occurredAt: string;
   fromId: string;
@@ -104,7 +105,11 @@ export interface WakeItem {
 
 /** Endgültiger Stand der Git-Übergabe eines Werkbank-Laufs (S08). */
 export interface GitOutcomeRecord extends GitOutcome {
+  /** ID des Ereignisses `git.outcome`, als Auslöser eines Laufs (E63). */
+  eventId: string;
   runId: string;
+  /** Agent des Laufs. */
+  agentId: string;
   /** Aufgabe des Laufs aus `run.finished`. */
   taskId: string | null;
   seq: number;
@@ -177,6 +182,8 @@ export class OfficeState {
   private readonly inboxRead = new Map<string, number>();
   private readonly handoverList: HandoverRecord[] = [];
   private readonly gitOutcomeById = new Map<string, GitOutcomeRecord>();
+  /** Ereignis-ID von `git.outcome` → Lauf-ID. */
+  private readonly gitOutcomeRunByEventId = new Map<string, string>();
   /** Je Lauf mit PR: alle Merge-Stände in Reihenfolge des Protokolls. */
   private readonly gitMergesByRun = new Map<string, GitMergeRecord[]>();
 
@@ -270,6 +277,11 @@ export class OfficeState {
     return this.gitOutcomeById.get(runId);
   }
 
+  /** Endgültige Stände aller Git-Übergaben, in der Reihenfolge des Protokolls. */
+  gitOutcomes(): GitOutcomeRecord[] {
+    return [...this.gitOutcomeById.values()].sort((a, b) => a.seq - b.seq);
+  }
+
   /** Letzter endgültiger Stand der Git-Übergabe eines Laufs zu dieser Aufgabe. */
   latestGitOutcome(taskId: string): GitOutcomeRecord | undefined {
     let latest: GitOutcomeRecord | undefined;
@@ -310,7 +322,7 @@ export class OfficeState {
     return this.gitMergesByRun.get(runId) ?? [];
   }
 
-  /** Nachricht, Eskalation oder Zuweisung mit dieser Ereignis-ID. */
+  /** Nachricht, Eskalation, Zuweisung oder Ergebnis einer Übergabe mit dieser Ereignis-ID. */
   wakeItem(id: string): WakeItem | undefined {
     const message = this.messageById.get(id);
     if (message !== undefined) {
@@ -336,6 +348,20 @@ export class OfficeState {
         toId: escalation.toId,
         runId: escalation.runId,
         taskId: escalation.taskId,
+      };
+    }
+    const outcomeRun = this.gitOutcomeRunByEventId.get(id);
+    if (outcomeRun !== undefined) {
+      const outcome = this.gitOutcomeById.get(outcomeRun) as GitOutcomeRecord;
+      return {
+        id,
+        kind: "outcome",
+        seq: outcome.seq,
+        occurredAt: outcome.occurredAt,
+        fromId: "system",
+        toId: outcome.agentId,
+        runId: outcome.runId,
+        taskId: outcome.taskId,
       };
     }
     return this.assignmentById.get(id);
@@ -588,10 +614,14 @@ export class OfficeState {
       }
       case GIT_OUTCOME.type: {
         const runId = event.runId as string;
+        const run = this.runById.get(runId) as RunRecord;
+        this.gitOutcomeRunByEventId.set(event.id, runId);
         this.gitOutcomeById.set(runId, {
           ...(payload as GitOutcome),
+          eventId: event.id,
           runId,
-          taskId: (this.runById.get(runId) as RunRecord).taskId,
+          agentId: run.agentId,
+          taskId: run.taskId,
           seq: event.seq,
           occurredAt: event.occurredAt,
         });
@@ -739,8 +769,9 @@ export class OfficeState {
     return this.checkAssignee(p.assigneeId, task.runType);
   }
 
+  /** Agenten, CEO und das System (Merge erledigt die Aufgabe, E66) dürfen den Status ändern. */
   private checkStatusChanged(actor: string, p: TaskStatusChanged): string | null {
-    if (!this.isParticipant(actor)) {
+    if (actor !== "system" && !this.isParticipant(actor)) {
       return `Handelnder ${actor} ist unbekannt`;
     }
     const task = this.taskById.get(p.taskId);
@@ -907,7 +938,7 @@ export class OfficeState {
     for (const id of p.triggerIds) {
       const item = this.wakeItem(id);
       if (item === undefined) {
-        return `Auslöser ${id} ist keine Nachricht, Eskalation oder Zuweisung`;
+        return `Auslöser ${id} ist keine Nachricht, Eskalation, Zuweisung oder Übergabe`;
       }
       if (item.toId !== p.agentId) {
         return `Auslöser ${id} ist nicht an ${p.agentId} gerichtet`;

@@ -511,6 +511,50 @@ describe("Auswertung eines Laufs", () => {
     expect(buildContext(input(COO, task.id)).prompt).toContain("Keine neuen Nachrichten.");
   });
 
+  it("macht den Schlusstext zur Antwort an den CEO, wenn der Agent ihm nicht schrieb (E62)", async () => {
+    const task = cooTask();
+    const asked = office.sendMessage("ceo", {
+      toId: COO,
+      kind: "frage",
+      text: "Wie weit bist du?",
+    });
+    const runInfo = info("lauf-a", task.id);
+    await evaluate("buero-erfolg", runInfo);
+    const answers = office.state.messages({ toId: "ceo" });
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({
+      fromId: COO,
+      kind: "info",
+      text: "Ich übernehme die Anforderung und lege eine Aufgabe für den CTO an.",
+      taskId: task.id,
+      replyToId: asked.id,
+      runId: "lauf-a",
+    });
+    // Eine wiederholte Auswertung schreibt keine zweite Antwort.
+    await evaluate("buero-erfolg", runInfo);
+    expect(office.state.messages({ toId: "ceo" })).toHaveLength(1);
+  });
+
+  it("antwortet nicht automatisch, wenn der Agent dem CEO selbst schrieb oder nichts gefragt war (E62)", async () => {
+    office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: "Mach das" });
+    const runInfo = info("lauf-s", null);
+    office.sendMessage(COO, { toId: "ceo", kind: "info", text: "Erledigt." }, { runId: "lauf-s" });
+    await evaluate("buero-erfolg", runInfo);
+    expect(office.state.messages({ toId: "ceo" }).map((m) => m.text)).toEqual(["Erledigt."]);
+
+    // Nur eine Info des CEO oder eine Nachricht eines Agenten: keine Antwort an den CEO.
+    office.sendMessage("ceo", { toId: COO, kind: "info", text: "Zur Kenntnis" });
+    office.sendMessage(CFO, { toId: COO, kind: "frage", text: "Budget?" });
+    await evaluate("buero-erfolg", info("lauf-i", null));
+    expect(office.state.messages({ toId: "ceo" })).toHaveLength(1);
+  });
+
+  it("antwortet nach einem Absturz nicht, die Nachricht des CEO bleibt ungelesen (E62)", async () => {
+    office.sendMessage("ceo", { toId: COO, kind: "auftrag", text: "Schritt 2" });
+    await evaluate("abgestuerzt", info("lauf-c", null));
+    expect(office.state.messages({ toId: "ceo" })).toEqual([]);
+  });
+
   it("zählt Werkzeugaufrufe und lässt eine eigene Übergabenotiz stehen", async () => {
     const task = office.createTask("ceo", {
       title: "Tests",

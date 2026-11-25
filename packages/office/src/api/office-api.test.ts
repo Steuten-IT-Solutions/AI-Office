@@ -228,6 +228,7 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
       "handover",
       "escalate",
       "read_messages",
+      "set_task_status",
     ]);
     for (const x of tools) {
       expect(x.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
@@ -502,6 +503,38 @@ describe("Werkzeuge", () => {
       isError: true,
       text: "Dieser Lauf hat keine Aufgabe. Gib `taskId` an.",
     });
+  });
+
+  it("set_task_status setzt den Status eigener Aufgaben, mit Notiz beim Abschluss (E66)", async () => {
+    const task = office.createTask("ceo", {
+      title: "Bericht",
+      description: "Monatsbericht",
+      runType: "buero",
+      assigneeId: CFO,
+    });
+    const t = token(CFO);
+    expect(await tool(t, "set_task_status", { taskId: task.id, status: "erledigt" })).toMatchObject(
+      {
+        isError: true,
+        text: "Bei `erledigt` bitte mit `note` sagen, warum.",
+      },
+    );
+    expect(
+      await tool(token(CTO), "set_task_status", { taskId: task.id, status: "blockiert" }),
+    ).toMatchObject({
+      isError: true,
+      text: "Den Status setzt nur, wer die Aufgabe bearbeitet oder angelegt hat.",
+    });
+    const done = await tool(t, "set_task_status", {
+      taskId: task.id,
+      status: "erledigt",
+      note: "Bericht verschickt",
+    });
+    expect(done).toMatchObject({ isError: false, data: { taskId: task.id, status: "erledigt" } });
+    expect(office.state.task(task.id)?.status).toBe("erledigt");
+    // Wieder öffnen zählt als Wiedereröffnung (Schutzschalter, Kap. 4.3).
+    await tool(t, "set_task_status", { taskId: task.id, status: "offen" });
+    expect(office.state.task(task.id)).toMatchObject({ status: "offen", reopenCount: 1 });
   });
 
   it("read_messages liest den eigenen Verlauf seitenweise, neueste zuerst (E61)", async () => {

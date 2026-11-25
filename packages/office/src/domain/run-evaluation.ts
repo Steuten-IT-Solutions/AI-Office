@@ -1,6 +1,8 @@
 import type { RunOutcome, RunType } from "../llm/runner.ts";
 import type { RunEvent } from "../llm/stream-json.ts";
-import { MAX_HANDOVER_CHARS, MAX_THOUGHT_CHARS } from "./events.ts";
+import { CEO_ID } from "./agent.ts";
+import { MAX_HANDOVER_CHARS, MAX_TEXT_CHARS, MAX_THOUGHT_CHARS } from "./events.ts";
+import { mayWake } from "./message.ts";
 import { DomainError, type Office } from "./office.ts";
 import type { RunRecord } from "./office-state.ts";
 import { truncateText } from "./validation.ts";
@@ -13,7 +15,10 @@ import { truncateText } from "./validation.ts";
  *   des Laufs (`task.handover` mit `auto`, Kap. 5.2).
  * - Zuletzt `run.finished` mit Kosten fürs Hauptbuch (Kap. 6) und dem Postfach-Zeiger.
  *
- * Sprechblasen entstehen nicht hier, sondern über die Office-API (`send_message`, P08).
+ * Sprechblasen entstehen sonst über die Office-API (`send_message`, P08). Eine Ausnahme ist die
+ * **Antwort an den CEO (E62):** Lag im Postfach des Laufs eine neue Nachricht des CEO und hat
+ * der Agent dem CEO im Lauf nichts geschrieben, wird der Schlusstext seine Antwort im Chat. Sonst
+ * stünde sie nur als Gedankenblase in der Zeitleiste, und der CEO bekäme keine Rückmeldung.
  * Denkblöcke (`thinking`) werden nicht übernommen: Sie sind nicht für Dritte formuliert und
  * vergrößern das Protokoll. [Annahme]
  *
@@ -93,6 +98,10 @@ export class RunEvaluation {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    if (outcome.exit === "completed") {
+      this.answerCeo(outcome);
+    }
+
     const task = taskId === null ? undefined : this.office.state.task(taskId);
     if (task !== undefined && task.handover?.runId !== runId) {
       this.office.writeHandover("system", task.id, this.autoHandover(outcome, toolCalls), {
@@ -122,6 +131,47 @@ export class RunEvaluation {
         inboxUpToSeq: this.info.inboxUpToSeq,
       },
       { runId, idempotencyKey: `${runId}:finished` },
+    );
+  }
+
+  /**
+   * Antwort an den CEO aus dem Schlusstext (E62). Nur nach einem abgeschlossenen Lauf, denn nur
+   * dann gilt das Postfach als gelesen. Maßgeblich sind die Nachrichten des CEO, die der Lauf neu
+   * im Postfach hatte (nach dem bisherigen Lesezeiger bis `inboxUpToSeq`); eine `info` zählt
+   * nicht, sie weckt auch niemanden (E32). Hat der Agent dem CEO im Lauf selbst geschrieben,
+   * bleibt es dabei. Die Antwort ist eine `info` mit Bezug auf die letzte dieser Nachrichten.
+   */
+  private answerCeo(outcome: RunOutcome): void {
+    const { runId, agentId, taskId, inboxUpToSeq } = this.info;
+    const state = this.office.state;
+    const since = state.inboxReadSeq(agentId);
+    const fromCeo = state
+      .messages({ toId: agentId, afterSeq: since })
+      .filter((m) => m.fromId === CEO_ID && m.seq <= inboxUpToSeq && mayWake(m.kind));
+    const asked = fromCeo.at(-1);
+    if (asked === undefined) {
+      return;
+    }
+    const answered = state
+      .messages({ toId: CEO_ID, afterSeq: since })
+      .some((m) => m.fromId === agentId && m.runId === runId);
+    if (answered) {
+      return;
+    }
+    const answer = (outcome.finalText ?? "").trim() || (this.lastText ?? "");
+    if (answer === "") {
+      return;
+    }
+    this.office.sendMessage(
+      agentId,
+      {
+        toId: CEO_ID,
+        kind: "info",
+        text: truncateText(answer, MAX_TEXT_CHARS),
+        taskId: asked.taskId ?? taskId,
+        replyToId: asked.id,
+      },
+      { runId, idempotencyKey: `${runId}:antwort-ceo` },
     );
   }
 

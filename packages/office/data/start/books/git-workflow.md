@@ -16,8 +16,9 @@ Gilt für Läufe vom Typ `werkbank`. Nur sie haben eine Arbeitskopie und Bash.
    vergeben hat (`agent/…`). Einen anderen Branch nimmt er nicht an.
 2. Du hast kein GitHub-Token und pushst nie selbst. Am Ende des Laufs geht dein Stand als
    `git bundle` an den Supervisor. Er prüft Branch, Secrets und Texte, pusht und öffnet den PR.
-   Was daraus wurde (PR-Nummer oder Ablehnung mit Grund), steht im nächsten Lauf zur Aufgabe
-   unter „Letzte Übergabe ins Repo“.
+   Was daraus wurde (PR-Nummer oder Ablehnung mit Grund), steht in jedem deiner nächsten Läufe
+   unter „Deine letzten Übergaben“, im Lauf zur Aufgabe unter „Letzte Übergabe ins Repo“. Eine
+   Ablehnung weckt dich zur Aufgabe (E63): Behebe den Grund oder melde, warum nicht.
 3. Die CI läuft ohne Secrets und ohne echtes LLM. Tests nutzen den Fake-Runner.
 4. Gemergt wird nur, wenn der CEO genau den aktuellen Stand freigegeben hat und der Branch das
    aktuelle `main` enthält. Nach jeder Änderung muss der CEO erneut freigeben. Jeder PR aus
@@ -44,5 +45,7 @@ Gilt für Läufe vom Typ `werkbank`. Nur sie haben eine Arbeitskopie und Bash.
 - `.github/` ändern. Workflows ändert nur der CEO.
 - Secrets, Laufzeitdaten, CEO-Chat oder Gedächtnis ins Repo schreiben. Das Repo ist öffentlich,
   und dein Branch ist es schon vor dem Review. Der Supervisor lehnt jede Übergabe ab, die acht
-  Wörter am Stück aus CEO-Chat oder früheren Übergabenotizen enthält. Schreib PR-Texte in eigenen Worten.
+  Wörter am Stück aus CEO-Chat oder früheren Übergabenotizen enthält. Schreib Commit-Nachrichten,
+  PR-Texte und Dateiinhalte in eigenen Worten, auch wenn der CEO einen Wortlaut vorgibt (E64), und
+  sag ihm, dass du umformuliert hast. Genauen Wortlaut setzt nur der CEO selbst über `ceo/*`.
 - Force-Push oder Verlauf umschreiben.

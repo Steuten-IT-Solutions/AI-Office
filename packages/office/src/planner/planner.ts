@@ -293,6 +293,9 @@ function newCodeTasks(state: OfficeState): Task[] {
  * - Zuweisungen offener Aufgaben (nicht blockiert), nach denen noch kein Lauf des Agenten zu
  *   dieser Aufgabe vollständig (`completed`) endete. Endet ein Lauf mit Fehler, weckt die
  *   Zuweisung erneut (Kap. 5.14: „Aufgabe neu eingeplant“).
+ * - Eine abgelehnte oder gescheiterte Übergabe ins Repo, wenn sie die letzte zur Aufgabe ist
+ *   (E63). Sie weckt den Agenten des Laufs einmal zu dieser Aufgabe. Ihr Lauf ist ihre Ursache;
+ *   scheitert die Übergabe immer wieder, erkennt der Planer den Zyklus wie bei Nachrichten.
  */
 function pendingItems(
   state: OfficeState,
@@ -338,7 +341,34 @@ function pendingItems(
       items.push(state.wakeItem(assignment.eventId) as WakeItem);
     }
   }
+  for (const task of state.tasks()) {
+    const outcome = state.latestGitOutcome(task.id);
+    if (
+      outcome === undefined ||
+      (outcome.state !== "rejected" && outcome.state !== "failed") ||
+      outcome.agentId !== agent.id ||
+      task.status === "blockiert" ||
+      !workable(state, agent, task, prHeld)
+    ) {
+      continue;
+    }
+    const done = runs.some(
+      (r) =>
+        r.agentId === agent.id &&
+        r.taskId === task.id &&
+        r.exit === "completed" &&
+        (state.runStart(r.runId)?.triggerIds.includes(outcome.eventId) ?? false),
+    );
+    if (!done) {
+      items.push(state.wakeItem(outcome.eventId) as WakeItem);
+    }
+  }
   return items.sort((a, b) => a.seq - b.seq);
+}
+
+/** Auslöser, die an einer Aufgabe hängen statt im Postfach stehen: Zuweisung und Übergabe (E63). */
+function taskBound(item: WakeItem): boolean {
+  return item.kind === "assignment" || item.kind === "outcome";
 }
 
 /**
@@ -353,7 +383,7 @@ function messageTask(
   item: WakeItem,
   prHeld: ReadonlySet<string>,
 ): string | null {
-  if (item.kind === "assignment" || item.taskId === null) {
+  if (taskBound(item) || item.taskId === null) {
     return null;
   }
   const task = state.task(item.taskId);
@@ -374,7 +404,7 @@ function chooseTask(
   items: readonly WakeItem[],
   prHeld: ReadonlySet<string>,
 ): string | null {
-  const assignment = items.find((i) => i.kind === "assignment");
+  const assignment = items.find(taskBound);
   if (assignment !== undefined) {
     return assignment.taskId;
   }
@@ -396,14 +426,12 @@ function capTriggers(
   items: readonly WakeItem[],
   taskId: string | null,
 ): { triggerIds: string[]; inboxCutoffSeq: number | null } {
-  // Zuweisungen anderer Aufgaben bearbeitet dieser Lauf nicht; sie bleiben für spätere Läufe.
-  const chosen = items.find((i) => i.kind === "assignment" && i.taskId === taskId);
-  const inbox = items.filter((i) => i.kind !== "assignment");
-  const room = chosen === undefined ? MAX_RUN_TRIGGERS : MAX_RUN_TRIGGERS - 1;
-  const kept = inbox.slice(0, room);
-  if (chosen !== undefined) {
-    kept.push(chosen);
-  }
+  // Zuweisungen und Übergaben anderer Aufgaben bearbeitet dieser Lauf nicht; sie bleiben für
+  // spätere Läufe.
+  const chosen = items.filter((i) => taskBound(i) && i.taskId === taskId);
+  const inbox = items.filter((i) => !taskBound(i));
+  const room = Math.max(MAX_RUN_TRIGGERS - chosen.length, 0);
+  const kept = [...inbox.slice(0, room), ...chosen];
   return {
     triggerIds: kept.sort((a, b) => a.seq - b.seq).map((i) => i.id),
     inboxCutoffSeq: inbox[room]?.seq ?? null,
@@ -528,7 +556,7 @@ export function plan(input: PlanInput): Plan {
       taskId,
       triggerIds: capped.triggerIds.filter((id) => {
         const item = state.wakeItem(id) as WakeItem;
-        return item.kind === "assignment" || item.seq < cutoff;
+        return taskBound(item) || item.seq < cutoff;
       }),
       inboxCutoffSeq: Number.isFinite(cutoff) ? cutoff : null,
     });
@@ -737,7 +765,7 @@ export class Planner {
         ? built
         : { ...built, inboxUpToSeq: before - 1 };
     const delivered = (built: RunContext) =>
-      pending.filter((i) => i.kind === "assignment" || i.seq <= built.inboxUpToSeq);
+      pending.filter((i) => taskBound(i) || i.seq <= built.inboxUpToSeq);
     let taskId = wake.taskId;
     let context: RunContext;
     let items: WakeItem[];
@@ -749,14 +777,14 @@ export class Planner {
       // Aufgabe, und der Zeiger endet vor der Antwort: Sie bleibt ungelesen und weckt einen
       // späteren Lauf mit der Aufgabe, auch wenn sie in den kleineren Kontext gepasst hätte.
       if (taskId !== null && !items.some((i) => i.taskId === taskId)) {
-        const answer = pending.find((i) => i.kind !== "assignment" && i.taskId === taskId);
+        const answer = pending.find((i) => !taskBound(i) && i.taskId === taskId);
         const before = Math.min(wake.inboxCutoffSeq ?? Infinity, answer?.seq ?? Infinity);
         taskId = null;
         context = limit(
           this.context(office.state, agentId, null),
           Number.isFinite(before) ? before : null,
         );
-        items = delivered(context).filter((i) => i.kind !== "assignment");
+        items = delivered(context).filter((i) => !taskBound(i));
       }
     } catch (error) {
       retryLater(this.config.retryMinutes);

@@ -45,7 +45,7 @@ import {
   type RunStart,
   type Thought,
 } from "./office-state.ts";
-import type { Task, TaskStatus } from "./task.ts";
+import { CLOSED_STATUSES, type Task, type TaskStatus } from "./task.ts";
 import { ValidationError, truncateText, type Parsed } from "./validation.ts";
 
 /**
@@ -433,11 +433,42 @@ export class Office {
     const payload = valid("Merge-Stand", parseGitMerge(input));
     this.sync();
     const n = this.state.gitMerges(runId).length + 1;
-    this.commit(GIT_MERGE, "system", payload, {
-      runId,
-      idempotencyKey: `${runId}:merge:${String(n)}`,
+    this.atomically(() => {
+      this.commit(GIT_MERGE, "system", payload, {
+        runId,
+        idempotencyKey: `${runId}:merge:${String(n)}`,
+      });
+      this.closeMergedTask(runId, payload);
     });
     return this.state.gitMerge(runId) as GitMergeRecord;
+  }
+
+  /**
+   * Ein Merge erledigt die Aufgabe des Laufs (E66), auch ein Merge außerhalb des Merge-Gates. Eine
+   * schon abgeschlossene Aufgabe bleibt, wie sie ist. Schreibt das System, in derselben
+   * Transaktion wie den Merge-Stand.
+   */
+  private closeMergedTask(runId: string, merge: GitMerge): void {
+    if (merge.mergeSha === null || (merge.state !== "merged" && merge.state !== "closed")) {
+      return;
+    }
+    const taskId = this.state.run(runId)?.taskId ?? null;
+    const task = taskId === null ? undefined : this.state.task(taskId);
+    if (task === undefined || CLOSED_STATUSES.includes(task.status)) {
+      return;
+    }
+    const payload = valid(
+      "Statuswechsel",
+      parseTaskStatusChanged({
+        taskId: task.id,
+        status: "erledigt",
+        note: `PR #${String(merge.pr)} gemergt als ${merge.mergeSha}.`,
+      }),
+    );
+    this.commit(TASK_STATUS_CHANGED, "system", payload, {
+      runId,
+      idempotencyKey: `${runId}:merge:erledigt`,
+    });
   }
 
   /**

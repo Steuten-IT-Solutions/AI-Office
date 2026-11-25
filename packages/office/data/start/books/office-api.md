@@ -20,6 +20,7 @@ Jeder Aufruf wird ein Ereignis im Protokoll.
 | `delegate` | Aufgabe an einen anderen Agenten geben. Eine `werkbank`-Aufgabe nur an jemanden mit Werkbank. |
 | `handover` | Übergabenotiz zum Stand deiner Aufgabe. Pflicht am Ende jedes Laufs, kurz halten. Der nächste Lauf kennt deinen Stand nur daraus. |
 | `escalate` | Problem melden. Wohin, regelt das Firmenhandbuch. Die Zahl ist begrenzt. Ohne Antwort geht die Eskalation eine Ebene höher. |
+| `set_task_status` | Status einer Aufgabe setzen, die bei dir liegt oder die du angelegt hast: `offen`, `in_arbeit`, `blockiert`, `erledigt`, `abgebrochen`. Abschließen nur mit Notiz. Ein Merge erledigt die Aufgabe von selbst. |
 | `read_messages` | Frühere eigene Nachrichten nachlesen, neueste zuerst, seitenweise, optional nur mit einem Partner (z. B. `ceo`) oder zu einer Aufgabe. Die letzten Nachrichten mit dem CEO stehen schon im Kontext. Im `werkbank`-Lauf nur Verlauf mit dem CEO oder zur eigenen Aufgabe. |
 
 ## Lauftypen
@@ -36,6 +37,9 @@ wenn er vom Typ `werkbank` ist.
 
 ## Gut zu wissen
 
+- Antworten gehen nur mit `send_message`. Was du im Lauf nur schreibst, erscheint als Gedanke in
+  der Zeitleiste, nicht im Chat. Hat dir der CEO geschrieben und du schreibst ihm im Lauf nichts,
+  bekommt er deinen Schlusstext als Antwort (E62).
 - Jeder Lauf beginnt frisch. Was du nicht in die Übergabenotiz schreibst, weiß der nächste Lauf
   nicht.
 - Ein wiederholter Aufruf nach einem Abbruch wird nicht doppelt gebucht.
