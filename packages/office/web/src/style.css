@@ -95,7 +95,8 @@ section {
 }
 
 #timeline-section,
-#chat-section {
+#chat-section,
+#directives-section {
   grid-column: 1 / -1;
 }
 
@@ -242,7 +243,31 @@ time {
 }
 
 #login-error,
-#chat-error {
+#chat-error,
+#directive-error {
   color: var(--warn);
   margin: 4px 0 0;
+}
+
+.directives .text {
+  white-space: pre-wrap;
+}
+
+.directives .revoked {
+  color: var(--muted);
+}
+
+.directives .revoked .text {
+  text-decoration: line-through;
+}
+
+button.small {
+  padding: 0 6px;
+  box-shadow: 1px 1px 0 var(--line);
+}
+
+#directive-targets label {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
 }

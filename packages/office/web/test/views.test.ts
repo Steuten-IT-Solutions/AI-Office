@@ -15,6 +15,7 @@ import {
   renderChatMessage,
   renderConsoleLink,
   renderCosts,
+  renderDirective,
   renderPullRequests,
   renderTimelineItem,
   type OfficeStateView,
@@ -259,6 +260,50 @@ describe("Ansichten (AK 9: Agententext nur als Text)", () => {
     expectOnlyText(doc);
   });
 
+  it("Weisung mit Empfängern, Zeit und Knopf zum Zurücknehmen (E68)", () => {
+    const doc = new FakeDocument();
+    const revoked: string[] = [];
+    const directive = {
+      id: "w-1",
+      text: HOSTILE,
+      agentIds: ["deniz-kaya", "jonas-albrecht"],
+      occurredAt: "2026-11-25T20:00:00Z",
+      revokedAt: null,
+    };
+    const el = fake(
+      renderDirective(doc.asDocument, directive, lookup, (id) => {
+        revoked.push(id);
+      }),
+    );
+    expect(el.getAttribute("data-state")).toBe("active");
+    expect(el.textContent).toContain(`Für ${HOSTILE}, jonas-albrecht · seit `);
+    expect(el.findAll("div")[1]?.textContent).toBe(HOSTILE);
+    const button = el.findAll("button")[0];
+    expect(button?.textContent).toBe("Zurücknehmen");
+    expect(button?.type).toBe("button");
+    button?.click();
+    expect(revoked).toEqual(["w-1"]);
+    // Nur Text und ein Knopf, kein Markup aus dem Text der Weisung.
+    expect(doc.created.filter((tag) => !["div", "li", "time", "button"].includes(tag))).toEqual([]);
+    for (const [name, value] of doc.attributeLog) {
+      expect(name).not.toMatch(/^on|^style$|^href$|^src$/i);
+      expect(value).not.toContain("<");
+    }
+
+    const old = fake(
+      renderDirective(
+        new FakeDocument().asDocument,
+        { ...directive, agentIds: null, revokedAt: "2026-11-25T21:00:00Z" },
+        lookup,
+        () => undefined,
+      ),
+    );
+    expect(old.getAttribute("data-state")).toBe("revoked");
+    expect(old.textContent).toContain("Für alle Agenten · seit ");
+    expect(old.textContent).toContain(" · zurückgenommen ");
+    expect(old.findAll("button")).toEqual([]);
+  });
+
   it("Kosten und Kontingent", () => {
     const doc = new FakeDocument();
     const el = fake(renderCosts(doc.asDocument, STATE));
@@ -269,7 +314,7 @@ describe("Ansichten (AK 9: Agententext nur als Text)", () => {
     expect(el.textContent).toContain(HOSTILE);
     expectOnlyText(doc);
     const none = fake(renderCosts(new FakeDocument().asDocument, { ...STATE, quota: null }));
-    expect(none.textContent).toContain("noch keine Messung");
+    expect(none.textContent).toContain("noch nicht angebunden");
   });
 
   it("Zeitleiste mit Agent, Zeitpunkt und Kosten des Laufs (AK 11)", () => {

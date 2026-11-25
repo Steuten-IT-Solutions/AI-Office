@@ -320,3 +320,65 @@ describe("Gebäude", () => {
     expect(parseBuilding({ id: "g", name: "G", floors: [] }).ok).toBe(false);
   });
 });
+
+describe("Weisungen des CEO (Kap. 4.4, E68)", () => {
+  it("gelten für alle oder ausgewählte Agenten, bis der CEO sie zurücknimmt", () => {
+    const all = office.issueDirective({ text: "  Kleine PRs.  ", agentIds: null });
+    const cto = office.issueDirective({ text: "Erst testen.", agentIds: [CTO] });
+
+    expect(all.text).toBe("Kleine PRs.");
+    expect(office.state.activeDirectives(CTO).map((d) => d.text)).toEqual([
+      "Kleine PRs.",
+      "Erst testen.",
+    ]);
+    expect(office.state.activeDirectives(CFO).map((d) => d.text)).toEqual(["Kleine PRs."]);
+
+    const revoked = office.revokeDirective(all.id);
+    expect(revoked.revokedSeq).toBeGreaterThan(cto.seq);
+    expect(office.state.activeDirectives(CFO)).toEqual([]);
+    expect(office.state.activeDirectives(CTO).map((d) => d.id)).toEqual([cto.id]);
+    // Zurückgenommene bleiben sichtbar, auch nach dem Neuöffnen.
+    expect(
+      reopen()
+        .state.directives()
+        .map((d) => [d.id, d.revokedSeq !== null]),
+    ).toEqual([
+      [all.id, true],
+      [cto.id, false],
+    ]);
+  });
+
+  it("prüfen Text, Empfänger und Rücknahme", () => {
+    expect(() => office.issueDirective({ text: " ", agentIds: null })).toThrow(ValidationError);
+    expect(() => office.issueDirective({ text: "x".repeat(1001), agentIds: null })).toThrow(
+      ValidationError,
+    );
+    expect(() => office.issueDirective({ text: "x", agentIds: [] })).toThrow(ValidationError);
+    expect(() => office.issueDirective({ text: "x", agentIds: [CTO, CTO] })).toThrow(
+      ValidationError,
+    );
+    expect(() => office.issueDirective({ text: "x", agentIds: ["niemand"] })).toThrow(
+      /Unbekannte Agenten: niemand/,
+    );
+    expect(() => office.issueDirective({ text: "x", agentIds: ["ceo"] })).toThrow(DomainError);
+    expect(() => office.revokeDirective("00000000-0000-4000-8000-000000000000")).toThrow(
+      /gibt es nicht/,
+    );
+    const d = office.issueDirective({ text: "x", agentIds: null });
+    office.revokeDirective(d.id);
+    expect(() => office.revokeDirective(d.id)).toThrow(/schon zurückgenommen/);
+  });
+
+  it("begrenzen die Zeichen geltender Weisungen je Agent auf 3.000", () => {
+    office.issueDirective({ text: "a".repeat(1000), agentIds: null });
+    office.issueDirective({ text: "b".repeat(1000), agentIds: [CTO] });
+    const third = office.issueDirective({ text: "c".repeat(1000), agentIds: [CTO] });
+    // Für den CFO wäre noch Platz, für den CTO nicht: Die Weisung für alle scheitert ganz.
+    expect(() => office.issueDirective({ text: "d", agentIds: null })).toThrow(
+      new RegExp(`Für ${CTO} gelten schon 3000 Zeichen`),
+    );
+    office.issueDirective({ text: "d", agentIds: [CFO] });
+    office.revokeDirective(third.id);
+    expect(office.issueDirective({ text: "e", agentIds: [CTO] }).text).toBe("e");
+  });
+});

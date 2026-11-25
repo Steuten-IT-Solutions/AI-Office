@@ -351,10 +351,13 @@ describe("Anfragen", () => {
   });
 
   it("ohne Anmeldung nur Sitzung und Anmeldung", async () => {
-    for (const path of ["/api/state", "/api/timeline", "/api/chat"]) {
+    for (const path of ["/api/state", "/api/timeline", "/api/chat", "/api/directives"]) {
       expect([path, (await call("GET", path)).status]).toEqual([path, 401]);
     }
     expect((await call("POST", "/api/chat", { body: { text: "x" } })).status).toBe(401);
+    expect(
+      (await call("POST", "/api/directives", { body: { text: "x", agentIds: null } })).status,
+    ).toBe(401);
   });
 
   it("antwortet 404 und 405 mit Allow", async () => {
@@ -794,6 +797,73 @@ function wsHeaders(extra: Record<string, string> = {}): Record<string, string> {
     ...extra,
   };
 }
+
+describe("Weisungen (Kap. 4.4, E68)", () => {
+  it("gibt, listet und nimmt Weisungen zurück, mit Grenzen und Haken", async () => {
+    let hooked = 0;
+    setup({
+      onDirective: () => {
+        hooked += 1;
+      },
+    });
+    const auth = await login();
+    const empty = await call("GET", "/api/directives", { headers: { cookie: auth.cookie } });
+    expect(empty.json).toEqual({ directives: [], maxChars: 1000, maxCharsPerAgent: 3000 });
+
+    const body = { text: "Kleine PRs.", agentIds: [CTO], clientId: "weisung-001" };
+    const first = await call("POST", "/api/directives", { body, headers: authed(auth) });
+    expect(first.status).toBe(201);
+    const issued = first.json["directive"] as { id: string; agentIds: string[]; text: string };
+    expect(issued).toMatchObject({ text: "Kleine PRs.", agentIds: [CTO], revokedAt: null });
+    // Dieselbe clientId nach einem Abbruch: keine zweite Weisung.
+    const again = await call("POST", "/api/directives", { body, headers: authed(auth) });
+    expect((again.json["directive"] as { id: string }).id).toBe(issued.id);
+    expect(office.state.directives()).toHaveLength(1);
+
+    const all = await call("POST", "/api/directives", {
+      body: { text: "Für alle.", agentIds: null },
+      headers: authed(auth),
+    });
+    expect(all.status).toBe(201);
+    const list = await call("GET", "/api/directives", { headers: { cookie: auth.cookie } });
+    expect((list.json["directives"] as { text: string }[]).map((d) => d.text)).toEqual([
+      "Für alle.",
+      "Kleine PRs.",
+    ]);
+
+    const revoke = await call("POST", "/api/directives/revoke", {
+      body: { id: issued.id },
+      headers: authed(auth),
+    });
+    expect(revoke.status).toBe(201);
+    expect((revoke.json["directive"] as { revokedAt: string | null }).revokedAt).not.toBeNull();
+    expect(office.state.activeDirectives(CTO).map((d) => d.text)).toEqual(["Für alle."]);
+    expect(hooked).toBe(4);
+  });
+
+  it("lehnt ungültige Weisungen ab und braucht das CSRF-Token", async () => {
+    const auth = await login();
+    const post = (body: unknown, headers = authed(auth)) =>
+      call("POST", "/api/directives", { body, headers });
+    expect((await post({ text: "x", agentIds: null }, { cookie: auth.cookie })).status).toBe(403);
+    expect((await post({ text: "x", agentIds: null, extra: 1 })).status).toBe(400);
+    expect((await post({ agentIds: null })).status).toBe(422);
+    expect((await post({ text: "x", agentIds: [1] })).status).toBe(422);
+    expect((await post({ text: "x".repeat(1001), agentIds: null })).status).toBe(422);
+    const unknown = await post({ text: "x", agentIds: ["niemand"] });
+    expect(unknown.status).toBe(422);
+    expect(unknown.json["error"]).toMatch(/Unbekannte Agenten/);
+    const revoke = await call("POST", "/api/directives/revoke", {
+      body: { id: "00000000-0000-4000-8000-000000000000" },
+      headers: authed(auth),
+    });
+    expect(revoke.status).toBe(422);
+    expect(
+      (await call("POST", "/api/directives/revoke", { body: {}, headers: authed(auth) })).status,
+    ).toBe(400);
+    expect(office.state.directives()).toEqual([]);
+  });
+});
 
 describe("WebSocket", () => {
   it("Handshake nach RFC 6455, dann Hinweis auf den Stand und neue Ereignisse", async () => {

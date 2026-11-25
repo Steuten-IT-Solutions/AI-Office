@@ -16,7 +16,8 @@ import type { RunRequester } from "../planner/planner.ts";
  * geht, gegen diese Abdrücke. Das Office meldet nur SHA-256-Werte, nie den Klartext.
  *
  * **Was gemeldet wird** [Vorschlag, Kap. 5.9 nennt nur „CEO-Chat und Gedächtnis“]:
- * - CEO-Chat (`ceo_chat`): jede Nachricht vom oder an den CEO und jede Eskalation an den CEO.
+ * - CEO-Chat (`ceo_chat`): jede Nachricht vom oder an den CEO, jede Eskalation an den CEO und
+ *   jede Weisung des CEO (E68).
  * - Gedächtnis (`memory`): jede Übergabenotiz (Kap. 5.2), auch frühere und automatische.
  *   Journal und Beziehungen gibt es im Office noch nicht.
  *
@@ -181,6 +182,12 @@ function collect(state: OfficeState, afterSeq: number): Text[] {
   }
   for (const e of state.escalations({ toId: CEO_ID, afterSeq })) {
     texts.push({ source: "ceo_chat", text: e.text, runId: e.runId });
+  }
+  // Weisungen sind Worte des CEO wie der Chat (E68).
+  for (const d of state.directives()) {
+    if (d.seq > afterSeq) {
+      texts.push({ source: "ceo_chat", text: d.text, runId: null });
+    }
   }
   for (const h of state.handovers({ afterSeq })) {
     texts.push({ source: "memory", text: h.note, runId: h.runId });

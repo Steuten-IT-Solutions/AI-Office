@@ -3,7 +3,7 @@ import type { RunType } from "../llm/runner.ts";
 import { MODEL_ALIASES, parseAgentProfile, type AgentProfile, type ModelAlias } from "./agent.ts";
 import { MESSAGE_KINDS, type MessageKind } from "./message.ts";
 import { TASK_STATUSES, type TaskStatus } from "./task.ts";
-import { Reader, parsed, type Parsed } from "./validation.ts";
+import { Reader, isId, parsed, type Parsed } from "./validation.ts";
 
 /**
  * Ereignistypen des Domänenmodells, alle in Version 1. Neue Felder kommen nach Expand/Contract
@@ -320,6 +320,56 @@ export function parseEscalationRaised(payload: unknown): Parsed<EscalationRaised
   });
 }
 
+/**
+ * Weisung des CEO (Kap. 4.4, E68): ein Text für alle Agenten (`agentIds: null`) oder für die
+ * genannten. Geändert wird nicht; eine Weisung wird zurückgenommen und neu geschrieben.
+ */
+export interface DirectiveIssued {
+  text: string;
+  agentIds: string[] | null;
+}
+
+export interface DirectiveRevoked {
+  directiveId: string;
+}
+
+/** Zeichen je Weisung (E68). */
+export const MAX_DIRECTIVE_CHARS = 1_000;
+/** Zeichen aller geltenden Weisungen eines Agenten zusammen (E68), etwa 1.000 Tokens. */
+export const MAX_DIRECTIVE_CHARS_PER_AGENT = 3_000;
+/** Empfänger je Weisung, wie `MAX_DIRECTIVE_AGENTS` im IPC-Protokoll (E68). */
+export const MAX_DIRECTIVE_AGENTS = 100;
+
+export function parseDirectiveIssued(payload: unknown): Parsed<DirectiveIssued> {
+  const r = new Reader(payload).only("text", "agentIds");
+  const text = r.string("text", { maxLength: MAX_DIRECTIVE_CHARS });
+  // Der Supervisor nimmt nur wohlgeformten Text ins Audit-Log (E68).
+  if (!text.isWellFormed()) {
+    r.issues.push("text: enthält ungepaarte Surrogate");
+  }
+  let agentIds: string[] | null = null;
+  if (r.raw("agentIds") !== null) {
+    agentIds = r.strings("agentIds", { min: 1 });
+    if (agentIds.length > MAX_DIRECTIVE_AGENTS) {
+      r.issues.push(`agentIds: höchstens ${String(MAX_DIRECTIVE_AGENTS)} Einträge`);
+    }
+    agentIds.forEach((id, index) => {
+      if (!isId(id)) {
+        r.issues.push(`agentIds[${String(index)}]: ID erwartet`);
+      }
+    });
+    if (new Set(agentIds).size !== agentIds.length) {
+      r.issues.push("agentIds: doppelte Einträge");
+    }
+  }
+  return parsed(r, { text, agentIds });
+}
+
+export function parseDirectiveRevoked(payload: unknown): Parsed<DirectiveRevoked> {
+  const r = new Reader(payload).only("directiveId");
+  return parsed(r, { directiveId: eventRef(r, "directiveId", false) });
+}
+
 export function parseEscalationAnswered(payload: unknown): Parsed<EscalationAnswered> {
   const r = new Reader(payload).only("escalationId", "messageId");
   return parsed(r, {
@@ -559,6 +609,8 @@ export const ESCALATION_RAISED = eventType("escalation.raised", parseEscalationR
 export const ESCALATION_ANSWERED = eventType("escalation.answered", parseEscalationAnswered);
 export const GIT_OUTCOME = eventType("git.outcome", parseGitOutcome);
 export const GIT_MERGE = eventType("git.merge", parseGitMerge);
+export const DIRECTIVE_ISSUED = eventType("directive.issued", parseDirectiveIssued);
+export const DIRECTIVE_REVOKED = eventType("directive.revoked", parseDirectiveRevoked);
 
 export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   AGENT_HIRED,
@@ -575,4 +627,6 @@ export const DOMAIN_EVENT_TYPES: readonly EventType<unknown>[] = [
   RUN_STARTED,
   GIT_OUTCOME,
   GIT_MERGE,
+  DIRECTIVE_ISSUED,
+  DIRECTIVE_REVOKED,
 ];

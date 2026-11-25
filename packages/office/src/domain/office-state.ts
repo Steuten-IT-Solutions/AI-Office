@@ -6,12 +6,15 @@ import { findRoom, type Building } from "./building.ts";
 import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
+  DIRECTIVE_ISSUED,
+  DIRECTIVE_REVOKED,
   DOMAIN_EVENT_TYPES,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
   GIT_MERGE,
   GIT_MERGE_FINAL_STATES,
   GIT_OUTCOME,
+  MAX_DIRECTIVE_CHARS_PER_AGENT,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_STARTED,
@@ -20,6 +23,8 @@ import {
   TASK_DELEGATED,
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
+  type DirectiveIssued,
+  type DirectiveRevoked,
   type EscalationAnswered,
   type EscalationRaised,
   type GitMerge,
@@ -93,7 +98,8 @@ export interface RunStart extends RunStarted {
  */
 export interface WakeItem {
   id: string;
-  kind: "message" | "escalation" | "assignment";
+  /** `outcome`: abgelehnte oder gescheiterte Übergabe ins Repo, weckt den Agenten (E63). */
+  kind: "message" | "escalation" | "assignment" | "outcome";
   seq: number;
   occurredAt: string;
   fromId: string;
@@ -102,9 +108,24 @@ export interface WakeItem {
   taskId: string | null;
 }
 
+/** Weisung des CEO (Kap. 4.4, E68). */
+export interface Directive extends DirectiveIssued {
+  /** ID des Ereignisses `directive.issued`. */
+  id: string;
+  seq: number;
+  occurredAt: string;
+  /** Zurückgenommen: Sequenznummer und Zeit von `directive.revoked`, sonst `null`. */
+  revokedSeq: number | null;
+  revokedAt: string | null;
+}
+
 /** Endgültiger Stand der Git-Übergabe eines Werkbank-Laufs (S08). */
 export interface GitOutcomeRecord extends GitOutcome {
+  /** ID des Ereignisses `git.outcome`, als Auslöser eines Laufs (E63). */
+  eventId: string;
   runId: string;
+  /** Agent des Laufs. */
+  agentId: string;
   /** Aufgabe des Laufs aus `run.finished`. */
   taskId: string | null;
   seq: number;
@@ -177,8 +198,11 @@ export class OfficeState {
   private readonly inboxRead = new Map<string, number>();
   private readonly handoverList: HandoverRecord[] = [];
   private readonly gitOutcomeById = new Map<string, GitOutcomeRecord>();
+  /** Ereignis-ID von `git.outcome` → Lauf-ID. */
+  private readonly gitOutcomeRunByEventId = new Map<string, string>();
   /** Je Lauf mit PR: alle Merge-Stände in Reihenfolge des Protokolls. */
   private readonly gitMergesByRun = new Map<string, GitMergeRecord[]>();
+  private readonly directiveById = new Map<string, Directive>();
 
   constructor(building: Building) {
     this.building = building;
@@ -270,6 +294,27 @@ export class OfficeState {
     return this.gitOutcomeById.get(runId);
   }
 
+  /** Alle Weisungen, auch zurückgenommene, älteste zuerst (E68). */
+  directives(): Directive[] {
+    return [...this.directiveById.values()].sort((a, b) => a.seq - b.seq);
+  }
+
+  directive(id: string): Directive | undefined {
+    return this.directiveById.get(id);
+  }
+
+  /** Geltende Weisungen für diesen Agenten, älteste zuerst (E68). */
+  activeDirectives(agentId: string): Directive[] {
+    return this.directives().filter(
+      (d) => d.revokedSeq === null && (d.agentIds === null || d.agentIds.includes(agentId)),
+    );
+  }
+
+  /** Endgültige Stände aller Git-Übergaben, in der Reihenfolge des Protokolls. */
+  gitOutcomes(): GitOutcomeRecord[] {
+    return [...this.gitOutcomeById.values()].sort((a, b) => a.seq - b.seq);
+  }
+
   /** Letzter endgültiger Stand der Git-Übergabe eines Laufs zu dieser Aufgabe. */
   latestGitOutcome(taskId: string): GitOutcomeRecord | undefined {
     let latest: GitOutcomeRecord | undefined;
@@ -310,7 +355,7 @@ export class OfficeState {
     return this.gitMergesByRun.get(runId) ?? [];
   }
 
-  /** Nachricht, Eskalation oder Zuweisung mit dieser Ereignis-ID. */
+  /** Nachricht, Eskalation, Zuweisung oder Ergebnis einer Übergabe mit dieser Ereignis-ID. */
   wakeItem(id: string): WakeItem | undefined {
     const message = this.messageById.get(id);
     if (message !== undefined) {
@@ -336,6 +381,20 @@ export class OfficeState {
         toId: escalation.toId,
         runId: escalation.runId,
         taskId: escalation.taskId,
+      };
+    }
+    const outcomeRun = this.gitOutcomeRunByEventId.get(id);
+    if (outcomeRun !== undefined) {
+      const outcome = this.gitOutcomeById.get(outcomeRun) as GitOutcomeRecord;
+      return {
+        id,
+        kind: "outcome",
+        seq: outcome.seq,
+        occurredAt: outcome.occurredAt,
+        fromId: "system",
+        toId: outcome.agentId,
+        runId: outcome.runId,
+        taskId: outcome.taskId,
       };
     }
     return this.assignmentById.get(id);
@@ -434,6 +493,10 @@ export class OfficeState {
         return this.checkGitOutcome(actor, runId);
       case GIT_MERGE.type:
         return this.checkGitMerge(actor, payload as GitMerge, runId);
+      case DIRECTIVE_ISSUED.type:
+        return this.checkDirectiveIssued(actor, payload as DirectiveIssued);
+      case DIRECTIVE_REVOKED.type:
+        return this.checkDirectiveRevoked(actor, payload as DirectiveRevoked);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -588,12 +651,37 @@ export class OfficeState {
       }
       case GIT_OUTCOME.type: {
         const runId = event.runId as string;
+        const run = this.runById.get(runId) as RunRecord;
+        this.gitOutcomeRunByEventId.set(event.id, runId);
         this.gitOutcomeById.set(runId, {
           ...(payload as GitOutcome),
+          eventId: event.id,
           runId,
-          taskId: (this.runById.get(runId) as RunRecord).taskId,
+          agentId: run.agentId,
+          taskId: run.taskId,
           seq: event.seq,
           occurredAt: event.occurredAt,
+        });
+        return;
+      }
+      case DIRECTIVE_ISSUED.type: {
+        this.directiveById.set(event.id, {
+          ...(payload as DirectiveIssued),
+          id: event.id,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+          revokedSeq: null,
+          revokedAt: null,
+        });
+        return;
+      }
+      case DIRECTIVE_REVOKED.type: {
+        const id = (payload as DirectiveRevoked).directiveId;
+        const directive = this.directiveById.get(id) as Directive;
+        this.directiveById.set(id, {
+          ...directive,
+          revokedSeq: event.seq,
+          revokedAt: event.occurredAt,
         });
         return;
       }
@@ -739,8 +827,9 @@ export class OfficeState {
     return this.checkAssignee(p.assigneeId, task.runType);
   }
 
+  /** Agenten, CEO und das System (Merge erledigt die Aufgabe, E66) dürfen den Status ändern. */
   private checkStatusChanged(actor: string, p: TaskStatusChanged): string | null {
-    if (!this.isParticipant(actor)) {
+    if (actor !== "system" && !this.isParticipant(actor)) {
       return `Handelnder ${actor} ist unbekannt`;
     }
     const task = this.taskById.get(p.taskId);
@@ -831,6 +920,43 @@ export class OfficeState {
   }
 
   /**
+   * Weisungen schreibt nur der CEO (Kap. 4.4). Empfänger müssen Agenten sein, und kein Agent darf
+   * mehr als `MAX_DIRECTIVE_CHARS_PER_AGENT` Zeichen geltender Weisungen haben: Weisungen werden
+   * im Firmenhandbuch nie gekürzt (E68).
+   */
+  private checkDirectiveIssued(actor: string, p: DirectiveIssued): string | null {
+    if (actor !== CEO_ID) {
+      return "Weisungen gibt nur der CEO";
+    }
+    const unknown = (p.agentIds ?? []).filter((id) => !this.profiles.has(id));
+    if (unknown.length > 0) {
+      return `Unbekannte Agenten: ${unknown.join(", ")}`;
+    }
+    const targets = p.agentIds ?? [...this.profiles.keys()];
+    for (const agentId of targets) {
+      const used = this.activeDirectives(agentId).reduce((sum, d) => sum + d.text.length, 0);
+      if (used + p.text.length > MAX_DIRECTIVE_CHARS_PER_AGENT) {
+        return `Für ${agentId} gelten schon ${String(used)} Zeichen Weisungen; zusammen höchstens ${String(MAX_DIRECTIVE_CHARS_PER_AGENT)}. Bitte zusammenfassen oder eine zurücknehmen.`;
+      }
+    }
+    return null;
+  }
+
+  private checkDirectiveRevoked(actor: string, p: DirectiveRevoked): string | null {
+    if (actor !== CEO_ID) {
+      return "Weisungen nimmt nur der CEO zurück";
+    }
+    const directive = this.directiveById.get(p.directiveId);
+    if (directive === undefined) {
+      return `Weisung ${p.directiveId} gibt es nicht`;
+    }
+    if (directive.revokedSeq !== null) {
+      return `Weisung ${p.directiveId} ist schon zurückgenommen`;
+    }
+    return null;
+  }
+
+  /**
    * Merge-Stände schreibt nur das System, und nur zu einem Lauf, dessen Übergabe einen PR geöffnet
    * hat (S09). Jeder Stand muss neu sein; nach einem endgültigen kommt keiner mehr.
    */
@@ -907,7 +1033,7 @@ export class OfficeState {
     for (const id of p.triggerIds) {
       const item = this.wakeItem(id);
       if (item === undefined) {
-        return `Auslöser ${id} ist keine Nachricht, Eskalation oder Zuweisung`;
+        return `Auslöser ${id} ist keine Nachricht, Eskalation, Zuweisung oder Übergabe`;
       }
       if (item.toId !== p.agentId) {
         return `Auslöser ${id} ist nicht an ${p.agentId} gerichtet`;

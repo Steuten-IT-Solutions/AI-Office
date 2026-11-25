@@ -51,6 +51,21 @@
           <ol id="chat-log" class="chat"></ol>
         </section>
 
+        <section id="directives-section">
+          <h2>Weisungen</h2>
+          <p class="note">
+            Gelten ab dem nächsten Lauf, vor allen Regeln der Firma. Ändern heißt zurücknehmen und
+            neu schreiben.
+          </p>
+          <form id="directive-form">
+            <div id="directive-targets" class="row" role="group" aria-label="Gilt für"></div>
+            <textarea id="directive-text" rows="2" maxlength="1000" aria-label="Weisung"></textarea>
+            <button id="directive-send" type="submit">Weisung geben</button>
+            <p id="directive-error" role="alert"></p>
+          </form>
+          <ol id="directive-list" class="directives"></ol>
+        </section>
+
         <section id="agents-section">
           <h2>Agenten</h2>
           <div id="agents"></div>

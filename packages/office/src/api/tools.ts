@@ -1,5 +1,6 @@
 import { CEO_ID } from "../domain/agent.ts";
 import { CeoApprovalRequired, DomainError, type Office } from "../domain/office.ts";
+import { CLOSED_STATUSES, TASK_STATUSES, type TaskStatus } from "../domain/task.ts";
 import { Reader, ValidationError } from "../domain/validation.ts";
 import type { JsonValue } from "../events/canonical-json.ts";
 import type { RunGrant } from "./run-tokens.ts";
@@ -7,7 +8,7 @@ import type { RunGrant } from "./run-tokens.ts";
 /**
  * Werkzeuge der Office-API (P08, plan.md Kap. 5.4, 7.3): `send_message`, `create_task`,
  * `delegate`, `handover`, `escalate`. Jedes Werkzeug ruft genau einen Befehl des Domänenmodells.
- * Dazu kommt `read_messages` (E61), das nur liest.
+ * Dazu kommen `read_messages` (E61), das nur liest, und `set_task_status` (E66).
  *
  * Wer handelt, steht im Office-Token (`RunGrant`), nie in den Argumenten. Alle Prüfungen hier
  * dienen dem Komfort (E22). Sicherheitsrelevant ist von diesen Werkzeugen nur die Eskalation an
@@ -196,6 +197,51 @@ const delegate: ToolDefinition = {
     return {
       text: `Aufgabe ${taskId} an ${assigneeId} delegiert.`,
       structured: { taskId, assigneeId },
+    };
+  },
+};
+
+/** `set_task_status`: höchstens so viele Zeichen Notiz (E66). [Annahme: wie die Übergabenotiz] */
+export const TASK_STATUS_NOTE_CHARS = 2_000;
+
+const setTaskStatus: ToolDefinition = {
+  name: "set_task_status",
+  title: "Status einer Aufgabe setzen",
+  description:
+    "Status einer Aufgabe setzen, die bei dir liegt oder die du angelegt hast: `offen`, `in_arbeit`, `blockiert`, `erledigt` oder `abgebrochen`. Bei `erledigt` und `abgebrochen` mit kurzer Notiz, warum. Ein Merge erledigt die Aufgabe von selbst.",
+  inputSchema: schema(
+    {
+      taskId: EVENT_ID,
+      status: { type: "string", enum: [...TASK_STATUSES] },
+      note: { type: "string", maxLength: TASK_STATUS_NOTE_CHARS },
+    },
+    ["taskId", "status"],
+  ),
+  run(context, raw) {
+    const r = args(raw, "taskId", "status", "note");
+    const { office, grant } = context;
+    const taskId = r.raw("taskId") as string;
+    const status = r.raw("status") as TaskStatus;
+    const note = optional(r, "note") as string | null;
+    if (!office.hasCommitted(context.idempotencyKey)) {
+      const task = office.state.task(taskId);
+      if (task === undefined) {
+        throw new ToolError(`Aufgabe ${taskId} gibt es nicht.`);
+      }
+      if (task.assigneeId !== grant.agentId && task.createdBy !== grant.agentId) {
+        throw new ToolError("Den Status setzt nur, wer die Aufgabe bearbeitet oder angelegt hat.");
+      }
+      if (CLOSED_STATUSES.includes(status) && (note === null || note.trim() === "")) {
+        throw new ToolError(`Bei \`${status}\` bitte mit \`note\` sagen, warum.`);
+      }
+    }
+    const task = office.changeTaskStatus(grant.agentId, taskId, status, note, {
+      runId: grant.runId,
+      idempotencyKey: context.idempotencyKey,
+    });
+    return {
+      text: `Aufgabe ${task.id} steht auf ${status}.`,
+      structured: { taskId: task.id, status },
     };
   },
 };
@@ -420,6 +466,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   handover,
   escalate,
   readMessages,
+  setTaskStatus,
 ];
 
 /** Fehler, die das Modell selbst beheben kann, als Text; alles andere ist ein Serverfehler. */

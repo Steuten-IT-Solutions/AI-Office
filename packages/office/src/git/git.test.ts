@@ -449,6 +449,23 @@ describe("git.merge", () => {
     expect(() => office.recordGitMerge(RUN_A, WAITING)).toThrow(/schon endgültig/);
   });
 
+  it("ein Merge erledigt die Aufgabe des Laufs, andere Stände nicht (E66)", () => {
+    const taskId = werkbankTask();
+    startRun(RUN_A, taskId);
+    finishRun(RUN_A, taskId);
+    office.recordGitOutcome(RUN_A, OPENED);
+    office.recordGitMerge(RUN_A, WAITING);
+    expect(office.state.task(taskId)?.status).toBe("offen");
+    office.recordGitMerge(RUN_A, MERGED);
+    expect(office.state.task(taskId)?.status).toBe("erledigt");
+    const change = store
+      .read({ afterSeq: 0, limit: 10_000 })
+      .filter((e) => e.type === "task.status_changed");
+    expect(change).toHaveLength(1);
+    expect(change[0]).toMatchObject({ actor: "system", runId: RUN_A });
+    expect(JSON.stringify(change[0]?.payload)).toContain(`PR #${String(OPENED.pr)} gemergt`);
+  });
+
   it("prüft die Felder je Stand", () => {
     openedPr();
     const base = { pr: 42, waitingFor: null, reason: null, mergeSha: null, tag: null };
@@ -627,6 +644,17 @@ describe("FingerprintReporter", () => {
     const before = prints.received.length;
     expect((await reporter.report()).sent).toBe(0);
     expect(prints.received.length).toBe(before);
+  });
+
+  it("meldet Weisungen des CEO wie den CEO-Chat (E68)", async () => {
+    const prints = new FakePrints();
+    const reporter = new FingerprintReporter({ office, access: prints });
+    const text = "Schreibt jede Commit-Nachricht auf Deutsch und nennt immer das Paket";
+    office.issueDirective({ text, agentIds: [CTO] });
+
+    expect(await reporter.report()).toMatchObject({ unsent: 0, error: null });
+    expect(prints.has(text)).toBe(true);
+    expect(prints.received.map((r) => r.source)).toEqual(["ceo_chat"]);
   });
 
   it("stellt Texte eines Werkbank-Laufs zurück, bis seine Übergabe abgeschlossen ist", async () => {

@@ -281,6 +281,72 @@ describe("Aufgaben", () => {
     expect((await p.tick()).started).toEqual([]);
   });
 
+  it("eine abgelehnte Übergabe weckt den Bearbeiter einmal zu ihrer Aufgabe (E63)", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const task = office.createTask("ceo", {
+      title: "Readme ergänzen",
+      description: "Abschnitt Planer",
+      runType: "werkbank",
+      repo: REPO,
+      assigneeId: CTO,
+    });
+    const first = await p.tick();
+    finish(first);
+    const runId = first.started[0]?.runId as string;
+    const rejected = office.recordGitOutcome(runId, {
+      state: "rejected",
+      branch: null,
+      head: null,
+      pr: null,
+      url: null,
+      reason: "Ausgangsfilter: fingerabdruck (PR-Titel)",
+    });
+    advance(MINUTE);
+    const again = await p.tick();
+    expect(again.started.map((s) => [s.agentId, s.taskId, s.triggerIds])).toEqual([
+      [CTO, task.id, [rejected.eventId]],
+    ]);
+    const prompt = supervisor.requests.at(-1)?.prompt ?? "";
+    expect(prompt).toContain("vom Git-Gate abgelehnt, nichts gepusht");
+    expect(prompt).toContain("> Ausgangsfilter: fingerabdruck (PR-Titel)");
+
+    // Nach dem vollständigen Lauf weckt dieselbe Ablehnung nicht noch einmal.
+    finish(again);
+    advance(MINUTE);
+    expect((await p.tick()).started).toEqual([]);
+  });
+
+  it("ein geöffneter PR weckt niemanden, die Übergabe steht in späteren Läufen (E63)", async () => {
+    const p = planner({ bundleMinutes: 0 });
+    const task = office.createTask("ceo", {
+      title: "Readme ergänzen",
+      description: "Abschnitt Planer",
+      runType: "werkbank",
+      repo: REPO,
+      assigneeId: CTO,
+    });
+    const first = await p.tick();
+    finish(first);
+    office.recordGitOutcome(first.started[0]?.runId as string, {
+      state: "pr_opened",
+      branch: "agent/r-0123456789abcdef",
+      head: "a".repeat(40),
+      pr: 50,
+      url: "https://github.com/Steuten-IT-Solutions/AI-Office/pull/50",
+      reason: null,
+    });
+    advance(MINUTE);
+    expect((await p.tick()).started).toEqual([]);
+
+    // Ein Bürolauf ohne diese Aufgabe sieht die Übergabe unter „Deine letzten Übergaben“.
+    send("ceo", CTO, "frage");
+    expect((await p.tick()).started.map((s) => [s.agentId, s.taskId])).toEqual([[CTO, null]]);
+    const prompt = supervisor.requests.at(-1)?.prompt ?? "";
+    expect(prompt).toContain("# Deine letzten Übergaben ins Repo");
+    expect(prompt).toContain(`Readme ergänzen (\`${task.id}\`)`);
+    expect(prompt).toContain("PR #50 geöffnet.");
+  });
+
   it("weckt nach einer Delegation den neuen Bearbeiter, blockierte Aufgaben nicht", async () => {
     const p = planner();
     const task = office.createTask("ceo", {
