@@ -25,17 +25,17 @@ Wo der Test einen Zustand nachstellt statt ihn herbeizuführen, steht das beim K
 
 | Punkt | Stand |
 |---|---|
-| Supervisor-Release | `b8985ec` (Baum gleich `main` `1a4865f`), ab 24.11. 18:35 `a8595d7` (Baum gleich `main` `171be46`, Supervisor-PR #27) |
+| Supervisor-Release | `b8985ec` (Baum gleich `main` `1a4865f`), ab 24.11. 18:35 `a8595d7` (Baum gleich `main` `171be46`, Supervisor-PR #27), ab 24.11. 22:44 `bafb27f` (Baum gleich `main` `80389ab`, Supervisor-PR #28, E58), ab 25.11. 11:28 `207b3c0` (Baum gleich `main` `cea2bcc`, Supervisor-PR #29, E59) |
 | Office-Release vor dem Test | `f6761ff`, ab AK 3 `2d47bb7` (`main`) |
-| Benachrichtigung (E37, S14) | nicht konfiguriert, kein Mailanbieter |
-| Merge-Gate (S09) | nicht konfiguriert (`mergeGate` fehlt); für AK 1 am 24.11. eingeschaltet (`i01-ak1-vorbereiten.sh`), App `aio-supervisor` zusätzlich in der Push-Liste von `main`, Regel sonst Stufe 5.2 (Entscheidung des CEO) |
+| Benachrichtigung (E37, S14) | nicht konfiguriert, kein Mailanbieter; eingerichtet am 24.11. 20:02 über ein eigenes GMX-Postfach nur für den Supervisor (SMTP mit TLS, Port 465, `spikes/vm/i01-mail-einrichten.sh`), Testmail kam an |
+| Merge-Gate (S09) | nicht konfiguriert (`mergeGate` fehlt); für AK 1 am 24.11. eingeschaltet (`i01-ak1-vorbereiten.sh`), App `aio-supervisor` zusätzlich in der Push-Liste von `main`, Regel sonst Stufe 5.2 (Entscheidung des CEO); ab 25.11. gilt jeder PR aus einer Übergabe als beantragt (E59) |
 | Browserzugang des CEO | eingerichtet am 24.11.2026: hosts, Stamm-CA (Fingerabdruck `C3664B87…2A239606`, nur `.internal`), Firefox 160 mit Richtlinie aus `einrichtung.md` Teil 6 |
 
 ## 3. Ergebnisse je Kriterium
 
 | AK | Kriterium (kurz) | Prüfung | Ergebnis |
 |---|---|---|---|
-| 1 | Kernkreislauf | Teil 2 | offen |
+| 1 | Kernkreislauf | Teil 2 | **bestanden** nach Fix (25.11.) |
 | 2 | Workflow-PR wird nicht gemergt | Teil 2 | offen |
 | 3 | Rollback | Teil 1 | **bestanden** (24.11.) |
 | 4 | Speicher voll | Teil 1 | **bestanden** (24.11.) |
@@ -87,7 +87,19 @@ Bericht in der VM: `/opt/aio-spikes/berichte/I01-teil1.md`.
   Der Supervisor lehnt den Lauf ab: „Kontingent: seven_day bei 24 %, Pause ab 23,6 %
   (Tages-Zielkurve)“. Das ist das Verhalten aus Kap. 6 (E12): Am dritten Tag der Kontingentwoche
   gilt 55 % × 3/7. Der Planer fragt alle 5 Minuten erneut an. Der CEO hat entschieden zu warten;
-  die Kette läuft nach dem nächsten Tageswechsel der Kontingentwoche weiter. Ergebnis offen.
+  die Kette läuft nach dem nächsten Tageswechsel der Kontingentwoche weiter.
+  - Nach dem Tageswechsel startet der Lauf `r-d9db9f173d457102` (CTO). Um 1:17 öffnet die App
+    `aio-supervisor` AI-Office-PR #49 vom Branch `agent/r-d9db9f173d457102`: nur `README.md`,
+    7 Zeilen, CI grün. Der CEO approvt um 10:05 und erneut um 11:08.
+  - Das Merge-Gate merged nicht, siehe Funde (fehlender Merge-Antrag). Fix E59 als
+    Supervisor-PR #29.
+  - Mit `spikes/vm/i01-ak1-merge.sh` wird um 11:28 das Release `207b3c0` aktiviert. Das Gate
+    übernimmt PR #49 beim Start als Antrag, sieht das Approve des CEO auf dem Kopf und merged um
+    11:28 als `aio-supervisor[bot]`. Merge-Commit `61d358c`, Baum gleich dem Kopf (E39).
+  - Der Auslieferer liefert `61d358c` aus (Ergebnis `ausgeliefert`, ab 11:35 laut Journal „Release
+    läuft“), keine Merge-Sperre, `aio-office` aktiv. Health-Check `gesund`, 97 Prüfungen,
+    0 gescheitert.
+  - 10 von 10 Prüfungen grün, Bericht in der VM: `/opt/aio-spikes/berichte/I01-ak1.md`.
 - **AK 10:** Zustand vor und nach dem Neustart mit `spikes/vm/i01-ak10-pruefen.sh` (ohne sudo).
   Hyper-V: `AutomaticStartAction = Start`, `AutomaticStartDelay = 0`,
   `AutomaticStopAction = ShutDown`, also ein echter Boot der VM auch beim Neustart von Windows.
@@ -109,4 +121,16 @@ Bericht in der VM: `/opt/aio-spikes/berichte/I01-teil1.md`.
 - **Firefox-Zugang:** `curl.exe` unter Windows (Schannel) lehnt die Zertifikate des Webinterface
   ohne `--ssl-no-revoke` mit `CRYPT_E_NO_REVOCATION_CHECK` ab, weil sie keine Sperrinformation
   (CRL, OCSP) enthalten. Mit `--ssl-no-revoke` antworten Webinterface (200) und Konsole (303).
-  Ob Firefox das bemängelt, prüft Teil 2 **[Annahme: nein]**.
+  Firefox zeigt keine Warnung (geprüft am 24.11., Kap. 3.2).
+- **AK 1, Merge-Antrag fehlte (behoben):** Das Merge-Gate handelte nur auf `request_merge`. Der
+  Agent kann es erst in einem späteren Lauf stellen, weil der PR erst nach seiner Übergabe
+  entsteht. Keine Weckregel holte ihn dafür zurück; das Journal zeigt nach 1:17 keinen Lauf und
+  keinen Antrag. Das Approve des CEO blieb deshalb ohne Wirkung. Entscheidung des CEO am 25.11.:
+  Jeder PR aus einer Übergabe gilt als beantragt (E59). Fix: Supervisor-PR #29, das Gate übernimmt
+  jeden Eintrag `git.pr_opened` (beim Start die der letzten 30 Tage). Geprüft mit
+  `spikes/vm/i01-ak1-merge.sh` (Kap. 3.2), gemergt 25.11. (`cea2bcc`).
+- **Änderung auf Wunsch des CEO, Tages-Zielkurve aussetzen (E58):** Der CEO kann die Kurve für
+  1 bis 24 Stunden freigeben (`aioffice kontingent-freigabe` oder Konsole). Die Pause bei 55 % der
+  Woche, der Zielwert 60 % und das 5-Stunden-Fenster bleiben. Supervisor-PR #28, VM-Test
+  `spikes/vm/i01-kurve-vmtest.sh` am 24.11. 22:44 grün (16 von 16), gemergt 24.11. (`80389ab`).
+  Für AK 1 wurde die Freigabe nicht genutzt (Entscheidung des CEO).
