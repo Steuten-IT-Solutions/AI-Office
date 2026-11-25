@@ -570,10 +570,10 @@ describe("S2: Statistik", () => {
 });
 
 describe("MCP-Attrappe", () => {
-  it("bietet die fünf Werkzeuge der Office-API und drei Platzhalter", () => {
+  it("bietet die Werkzeuge der Office-API und drei Platzhalter", () => {
     const names = officeTools().map((t) => t.name);
-    expect(names).toHaveLength(8);
-    expect(names.slice(0, 5)).toEqual(TOOLS.map((t) => t.name));
+    expect(names).toHaveLength(TOOLS.length + 3);
+    expect(names.slice(0, TOOLS.length)).toEqual(TOOLS.map((t) => t.name));
   });
 
   it("beantwortet initialize, server/discover, tools/list und tools/call", () => {

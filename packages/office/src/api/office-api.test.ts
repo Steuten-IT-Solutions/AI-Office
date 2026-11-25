@@ -19,7 +19,7 @@ import {
   idempotencyKey,
 } from "./mcp-server.ts";
 import { RunTokens, type RunGrant } from "./run-tokens.ts";
-import { MAX_ESCALATIONS_PER_DAY, type EscalationGate } from "./tools.ts";
+import { MAX_ESCALATIONS_PER_DAY, READ_MESSAGES_MAX_CHARS, type EscalationGate } from "./tools.ts";
 
 const CTO = "jonas-albrecht";
 const CFO = "ingrid-wolters";
@@ -227,6 +227,7 @@ describe("MCP-Transport (Streamable HTTP, 2026-07-28)", () => {
       "delegate",
       "handover",
       "escalate",
+      "read_messages",
     ]);
     for (const x of tools) {
       expect(x.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
@@ -501,6 +502,71 @@ describe("Werkzeuge", () => {
       isError: true,
       text: "Dieser Lauf hat keine Aufgabe. Gib `taskId` an.",
     });
+  });
+
+  it("read_messages liest den eigenen Verlauf seitenweise, neueste zuerst (E61)", async () => {
+    const sent = [1, 2, 3].map((i) =>
+      office.sendMessage("ceo", { toId: CTO, kind: "auftrag", text: `CEO ${String(i)}` }),
+    );
+    office.sendMessage(CTO, { toId: "ceo", kind: "frage", text: "Rückfrage" }, { runId: "l0" });
+    office.sendMessage(CFO, { toId: CTO, kind: "info", text: "Vom CFO" });
+    office.sendMessage(CFO, { toId: COO, kind: "info", text: "Fremd, an den COO" });
+    const t = token(CTO);
+
+    const all = await tool(t, "read_messages", {});
+    expect(all.isError).toBe(false);
+    const texts = (data: Record<string, unknown>) =>
+      (data["nachrichten"] as { text: string }[]).map((m) => m.text);
+    expect(texts(all.data)).toEqual(["Vom CFO", "Rückfrage", "CEO 3", "CEO 2", "CEO 1"]);
+    expect(all.data["weiterAb"]).toBeNull();
+
+    const first = await tool(t, "read_messages", { withId: "ceo", limit: 2 });
+    expect(texts(first.data)).toEqual(["Rückfrage", "CEO 3"]);
+    const next = await tool(t, "read_messages", {
+      withId: "ceo",
+      limit: 2,
+      beforeSeq: first.data["weiterAb"],
+    });
+    expect(texts(next.data)).toEqual(["CEO 2", "CEO 1"]);
+    expect(next.data["weiterAb"]).toBeNull();
+    expect((next.data["nachrichten"] as unknown as { id: string }[])[1]?.id).toBe(sent[0]?.id);
+  });
+
+  it("read_messages begrenzt werkbank und recherche und die Textmenge je Seite (E61)", async () => {
+    const task = office.createTask("ceo", {
+      title: "Fix",
+      description: "Fix",
+      runType: "werkbank",
+      repo: REPO,
+      assigneeId: CTO,
+    });
+    office.sendMessage(CFO, { toId: CTO, kind: "info", text: "Zur Aufgabe", taskId: task.id });
+    office.sendMessage(CFO, { toId: CTO, kind: "info", text: "Ohne Aufgabe" });
+    const bench = token(CTO, { runType: "werkbank", taskId: task.id });
+    expect((await tool(bench, "read_messages", {})).isError).toBe(true);
+    expect((await tool(bench, "read_messages", { withId: CFO })).isError).toBe(true);
+    expect((await tool(bench, "read_messages", { withId: "ceo" })).isError).toBe(false);
+    const own = await tool(bench, "read_messages", { taskId: task.id });
+    expect((own.data["nachrichten"] as unknown as { text: string }[]).map((m) => m.text)).toEqual([
+      "Zur Aufgabe",
+    ]);
+    const research = token(CTO, { runType: "recherche", taskId: task.id });
+    expect(await tool(research, "read_messages", { withId: "ceo" })).toMatchObject({
+      isError: true,
+      text: "Im recherche-Lauf gibt es keine Nachrichten (Kap. 5.3).",
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      office.sendMessage("ceo", { toId: COO, kind: "info", text: "x".repeat(15_000) });
+    }
+    const big = await tool(token(COO), "read_messages", { withId: "ceo" });
+    const page = big.data["nachrichten"] as unknown as { text: string }[];
+    expect(page).toHaveLength(2);
+    expect(page.reduce((n, m) => n + m.text.length, 0)).toBeLessThanOrEqual(
+      READ_MESSAGES_MAX_CHARS,
+    );
+    expect(typeof big.data["weiterAb"]).toBe("number");
+    expect((await tool(token(COO), "read_messages", { limit: 21 })).isError).toBe(true);
   });
 
   it("eskaliert an den COO und den COO an den CEO, nach Prüfung des Supervisors", async () => {

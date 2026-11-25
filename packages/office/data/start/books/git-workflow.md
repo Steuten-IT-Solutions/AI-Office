@@ -20,8 +20,9 @@ Gilt für Läufe vom Typ `werkbank`. Nur sie haben eine Arbeitskopie und Bash.
    unter „Letzte Übergabe ins Repo“.
 3. Die CI läuft ohne Secrets und ohne echtes LLM. Tests nutzen den Fake-Runner.
 4. Gemergt wird nur, wenn der CEO genau den aktuellen Stand freigegeben hat und der Branch das
-   aktuelle `main` enthält. Nach jeder Änderung muss der CEO erneut freigeben. Den Merge
-   beantragst du mit `request_merge`, gemergt wird vom Supervisor. Ob der PR gemergt, gesperrt
+   aktuelle `main` enthält. Nach jeder Änderung muss der CEO erneut freigeben. Jeder PR aus
+   deiner Übergabe gilt schon als Merge-Antrag; `request_merge` brauchst du nur, wenn der
+   Merge-Stand keinen Antrag zeigt. Gemergt wird vom Supervisor. Ob der PR gemergt, gesperrt
    oder noch wartend ist und worauf, steht im nächsten Lauf zur Aufgabe unter „Merge-Stand“.
    Rote Checks oder ein Konflikt brauchen einen neuen Stand: Dein Branch gilt nur für diesen
    Lauf, ein neuer Stand kommt aus einem neuen Lauf mit neuem PR.

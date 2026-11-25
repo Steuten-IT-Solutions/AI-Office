@@ -20,7 +20,11 @@ import { truncateText } from "./validation.ts";
  * 2. Persona-Text des Agenten (≤ 300 Tokens, Kap. 5.1).
  * 3. Bücher: Kostenregeln und Office-API, für `werkbank` zusätzlich Git-Workflow.
  * 4. Aufgabe mit Übergabenotiz.
- * 5. Postfach: neue Nachrichten an den Agenten, älteste zuerst, so viele das Budget zulässt.
+ * 5. Verlauf mit dem CEO (E61): die letzten Nachrichten zwischen Agent und CEO in beide
+ *    Richtungen, die nicht ohnehin im Postfach stehen, höchstens `HISTORY_MESSAGES` und
+ *    `HISTORY_TOKENS`. So geht ein Auftrag des CEO nicht verloren, wenn der Lauf, der ihn las,
+ *    erst eine Aufgabe anlegte und ein späterer Lauf sie bearbeitet.
+ * 6. Postfach: neue Nachrichten an den Agenten, älteste zuerst, so viele das Budget zulässt.
  *
  * Ein `recherche`-Lauf bekommt nur Verfassung und Aufgabe (Kap. 5.3 „Minimaler Kontext“).
  *
@@ -35,6 +39,12 @@ export const MAX_HANDBOOK_TOKENS = 2_000;
 export const DEFAULT_CONTEXT_TOKENS = 8_000;
 /** Mindestplatz fürs Postfach, auch wenn der Rest das Budget schon ausschöpft. [Annahme: 500] */
 export const MIN_INBOX_TOKENS = 500;
+/** Verlauf mit dem CEO (E61): höchstens so viele Nachrichten. [Annahme: 6] */
+export const HISTORY_MESSAGES = 6;
+/** Verlauf mit dem CEO (E61): höchstens so viele Tokens. [Annahme: 800] */
+export const HISTORY_TOKENS = 800;
+/** Verlauf mit dem CEO (E61): längere Texte werden auf so viele Zeichen gekürzt. */
+export const HISTORY_TEXT_CHARS = 1_000;
 
 /** Bücher, die jeder `buero`- und `werkbank`-Lauf bekommt, in dieser Reihenfolge. */
 export const CONTEXT_BOOKS = ["kostenregeln", "office-api"] as const;
@@ -112,6 +122,7 @@ export function buildContext(input: ContextInput): RunContext {
     personaSection(input, agent, warnings),
     booksSection(input, runType, warnings),
     task === undefined ? NO_TASK : taskSection(state, task, { withHandover: true }),
+    ...historySection(state, agent),
   ];
   const fixedTokens = estimateTokens(joinSections(fixed));
   const inbox = inboxSection(state, agent, Math.max(budget - fixedTokens, MIN_INBOX_TOKENS));
@@ -444,6 +455,47 @@ function renderEscalation(state: OfficeState, e: Escalation, text: string): stri
       : []),
   ];
   return `## Eskalation von ${agentLabel(state, e.fromId)}\n\n${facts.join("\n")}\n\n${quote(text)}`;
+}
+
+/**
+ * Verlauf mit dem CEO (E61): die letzten Nachrichten zwischen Agent und CEO, älteste zuerst. Was
+ * ungelesen im Postfach steht, fehlt hier. Lange Texte werden gekürzt; passt der Verlauf nicht in
+ * `HISTORY_TOKENS`, fallen die ältesten weg. Ohne solche Nachrichten gibt es den Abschnitt nicht.
+ */
+function historySection(state: OfficeState, agent: AgentProfile): string[] {
+  const readSeq = state.inboxReadSeq(agent.id);
+  const between = state
+    .messages()
+    .filter(
+      (m) =>
+        (m.fromId === agent.id && m.toId === CEO_ID) ||
+        (m.fromId === CEO_ID && m.toId === agent.id && m.seq <= readSeq),
+    )
+    .slice(-HISTORY_MESSAGES);
+  if (between.length === 0) {
+    return [];
+  }
+  const head =
+    "# Verlauf mit dem CEO\n\nDie letzten Nachrichten zwischen dir und dem CEO, älteste zuerst. Du hast sie schon gelesen oder selbst geschrieben. Neues steht im Postfach.";
+  const rendered = between.map((m) => {
+    const who = m.fromId === CEO_ID ? "Vom CEO" : "Von dir an den CEO";
+    const facts = [
+      `- Nachricht: \`${m.id}\`, ${m.occurredAt}`,
+      ...(m.taskId === null ? [] : [`- Aufgabe: ${taskLabel(state, m.taskId)}`]),
+    ];
+    return `## ${who} · ${m.kind}\n\n${facts.join("\n")}\n\n${quote(truncateText(m.text, HISTORY_TEXT_CHARS))}`;
+  });
+  let used = estimateTokens(head);
+  const kept: string[] = [];
+  for (const part of rendered.reverse()) {
+    const tokens = estimateTokens(part) + 1;
+    if (used + tokens > HISTORY_TOKENS) {
+      break;
+    }
+    kept.unshift(part);
+    used += tokens;
+  }
+  return kept.length === 0 ? [] : [[head, ...kept].join("\n\n")];
 }
 
 /** Eintrag im Postfach: Nachricht oder Eskalation. */
