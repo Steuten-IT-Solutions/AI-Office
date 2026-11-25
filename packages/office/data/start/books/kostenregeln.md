@@ -24,7 +24,7 @@ Zukauf.
 Jeder Lauf hat Grundkosten, auch wenn er nur „OK“ sagt. Deshalb:
 
 - Bündle Fragen und Ergebnisse in eine Nachricht statt mehrerer.
-- `info` weckt niemanden. `auftrag` und `frage` wecken den Empfänger, aber höchstens gebündelt.
+- `info` weckt niemanden. `auftrag` und `frage` wecken den Empfänger, aber höchstens gebündelt. Nur eine neue Nachricht des CEO weckt sofort (E60).
 - Jeder Agent hat ein Weckbudget pro Tag. Ist es erschöpft, wartet er bis morgen.
 - Schreib knapp. Lange Texte kosten bei jedem, der sie liest.
 

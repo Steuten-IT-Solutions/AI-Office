@@ -178,7 +178,7 @@ describe("Weckregeln (E32)", () => {
     const first = await p.tick();
     finish(first);
     advance(5 * MINUTE);
-    const a = send("ceo", COO, "auftrag");
+    const a = send(CHRO, COO, "auftrag");
     advance(4 * MINUTE);
     const b = send(CFO, COO, "frage");
     const held = await p.tick();
@@ -190,6 +190,51 @@ describe("Weckregeln (E32)", () => {
     const bundled = await p.tick();
     expect(bundled.started.map((s) => s.triggerIds)).toEqual([[a.id, b.id]]);
     expect(supervisor.requests).toHaveLength(2);
+  });
+
+  it("eine neue Nachricht des CEO weckt ohne Bündelung (E60)", async () => {
+    const p = planner();
+    send("ceo", COO, "auftrag");
+    finish(await p.tick());
+    advance(2 * MINUTE);
+    const other = send(CFO, COO, "frage");
+    expect((await p.tick()).started).toEqual([]);
+    advance(MINUTE);
+    const answer = send("ceo", COO, "frage");
+    const result = await p.tick();
+    // Der Lauf liest alles Neue, auch die wartende Nachricht des CFO.
+    expect(result.started.map((s) => [s.agentId, s.triggerIds])).toEqual([
+      [COO, [other.id, answer.id]],
+    ]);
+    // Während des Laufs wartet die nächste Nachricht des CEO, danach weckt sie sofort.
+    const next = send("ceo", COO, "frage");
+    expect((await p.tick()).started).toEqual([]);
+    finish(result);
+    advance(MINUTE);
+    expect((await p.tick()).started.map((s) => s.triggerIds)).toEqual([[next.id]]);
+  });
+
+  it("wiederholt einen gescheiterten Lauf zu einer Nachricht des CEO erst nach der Bündelung (E60)", async () => {
+    const p = planner();
+    send("ceo", COO, "auftrag");
+    finish(await p.tick(), 0, "error");
+    advance(MINUTE);
+    const held = await p.tick();
+    expect(held.started).toEqual([]);
+    expect(held.plan.holds).toEqual([
+      { agentId: COO, reason: "buendelung", until: new Date("2026-11-05T08:15:00.000Z") },
+    ]);
+    advance(14 * MINUTE);
+    expect((await p.tick()).started.map((s) => s.agentId)).toEqual([COO]);
+  });
+
+  it("Info des CEO weckt auch ohne Bündelung niemanden (E60)", async () => {
+    const p = planner();
+    send("ceo", COO, "auftrag");
+    finish(await p.tick());
+    advance(MINUTE);
+    send("ceo", COO, "info");
+    expect((await p.tick()).started).toEqual([]);
   });
 
   it("weckt nach einem vollständigen Lauf nicht erneut, nach einem Fehler schon", async () => {

@@ -16,6 +16,10 @@ import type { IpcParams, IpcResult } from "../ipc/protocol.ts";
  *   Die Zuweisung einer Aufgabe (`create_task` mit Bearbeiter, `delegate`) weckt den Bearbeiter.
  * - Bündelung: Ein Agent wird höchstens alle `bundleMinutes` geweckt und liest dann alle neuen
  *   Nachrichten auf einmal. Ein Agent mit laufendem Lauf wird nicht geweckt.
+ * - Ausnahme (E60): Eine Nachricht des CEO, die nach dem Start des letzten Laufs des Agenten kam,
+ *   weckt ihn ohne Bündelung, damit der CEO einen Dialog führen kann. Lag sie schon beim letzten
+ *   Lauf vor und ist noch ungelesen (der Lauf scheiterte), gilt die Bündelung wieder. So wird ein
+ *   scheiternder Lauf nicht im Takt des Planers wiederholt.
  * - Weckbudget je Agent und Kalendertag (UTC) wie im Supervisor (S03). Hier nur Komfort: Ist es
  *   erschöpft, beantragt der Planer nichts mehr und informiert einmal am Tag den Vorgesetzten.
  * - Zyklenerkennung im ganzen Nachrichtengraphen über die Ursachenkette: Eine Nachricht aus
@@ -493,7 +497,10 @@ export function plan(input: PlanInput): Plan {
       .at(-1);
     if (last !== undefined) {
       const until = new Date(at(last.occurredAt) + config.bundleMinutes * MINUTE_MS);
-      if (until > now) {
+      const fromCeo = items.some(
+        (i) => i.kind === "message" && i.fromId === CEO_ID && i.seq > last.seq,
+      );
+      if (until > now && !fromCeo) {
         result.holds.push({ agentId: agent.id, reason: "buendelung", until });
         result.nextCheckAt = earliest(result.nextCheckAt, until);
         continue;
