@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunRecord, RunStart } from "./domain/office-state.ts";
+import type { DirectiveReport } from "./events/directive-reporter.ts";
 import type { HeadReport } from "./events/head-reporter.ts";
 import type { FingerprintReport } from "./git/fingerprints.ts";
 import type { ProfileSyncResult } from "./ipc/profile-sync.ts";
@@ -65,6 +66,13 @@ const fingerprintReport = (extra: Partial<FingerprintReport> = {}): FingerprintR
   ...extra,
 });
 const headReport = (): HeadReport => ({ reported: null, auditSeq: null });
+const directiveReport = (extra: Partial<DirectiveReport> = {}): DirectiveReport => ({
+  sent: 0,
+  recorded: 0,
+  pending: 0,
+  error: null,
+  ...extra,
+});
 const checkStep = (extra: Partial<CheckRunStep> = {}): CheckRunStep => ({
   started: null,
   reported: null,
@@ -96,6 +104,7 @@ let results: {
   merges: () => Promise<MergeFollowResult>;
   fingerprints: () => Promise<FingerprintReport>;
   head: () => Promise<HeadReport>;
+  directives: () => Promise<DirectiveReport>;
   checkRuns: () => Promise<CheckRunStep>;
   checkRunPoll: () => Promise<CheckRunStep>;
 };
@@ -126,6 +135,7 @@ function parts(): TaktParts {
     merges: { poll: track("merges", () => results.merges) },
     fingerprints: { report: track("fingerprints", () => results.fingerprints) },
     head: { report: track("head", () => results.head) },
+    directives: { report: track("directives", () => results.directives) },
     // `poll` läuft im Takt `runs` mit und zählt nicht als eigener Teil.
     checkRuns: {
       fetch: track("checkRuns", () => results.checkRuns),
@@ -163,6 +173,7 @@ beforeEach(() => {
     merges: () => Promise.resolve(merges()),
     fingerprints: () => Promise.resolve(fingerprintReport()),
     head: () => Promise.resolve(headReport()),
+    directives: () => Promise.resolve(directiveReport()),
     checkRuns: () => Promise.resolve(checkStep()),
     checkRunPoll: () => Promise.resolve(checkStep()),
   };
@@ -392,6 +403,8 @@ describe("OfficeTakt", () => {
     results.merges = () => Promise.resolve(merges({ unavailable: true }));
     results.fingerprints = () =>
       Promise.resolve(fingerprintReport({ unsent: 3, error: "Socket weg" }));
+    results.directives = () =>
+      Promise.resolve(directiveReport({ pending: 2, error: "not_available" }));
     const t = create();
     t.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -404,6 +417,7 @@ describe("OfficeTakt", () => {
       planner: "deniz-kaya: kaputt; hinweis:1: voll",
       merges: "Der Supervisor hat kein Merge-Gate (not_available)",
       fingerprints: "3 Fingerabdrücke offen: Socket weg",
+      directives: "2 Weisungen nicht gemeldet: not_available",
     });
   });
 

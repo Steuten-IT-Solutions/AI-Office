@@ -7,6 +7,8 @@ import type { Building } from "./building.ts";
 import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
+  DIRECTIVE_ISSUED,
+  DIRECTIVE_REVOKED,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
   GIT_MERGE,
@@ -19,6 +21,8 @@ import {
   TASK_DELEGATED,
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
+  parseDirectiveIssued,
+  parseDirectiveRevoked,
   parseEscalationRaised,
   parseGitMerge,
   parseGitOutcome,
@@ -39,6 +43,7 @@ import {
 import type { Escalation, Message, MessageKind } from "./message.ts";
 import {
   OfficeState,
+  type Directive,
   type GitMergeRecord,
   type GitOutcomeRecord,
   type RunRecord,
@@ -198,6 +203,26 @@ export class Office {
     const payload = valid("Delegation", parseTaskDelegated({ taskId, assigneeId }));
     this.commit(TASK_DELEGATED, actor, payload, options);
     return this.state.task(taskId) as Task;
+  }
+
+  /** Weisung des CEO (Kap. 4.4, E68). `agentIds: null` gilt für alle Agenten. */
+  issueDirective(
+    input: { text: string; agentIds: string[] | null },
+    options: CommandOptions = {},
+  ): Directive {
+    const payload = valid(
+      "Weisung",
+      parseDirectiveIssued({ text: input.text.trim(), agentIds: input.agentIds }),
+    );
+    const event = this.commit(DIRECTIVE_ISSUED, CEO_ID, payload, options);
+    return this.state.directive(event.id) as Directive;
+  }
+
+  /** Nimmt eine Weisung zurück (E68). Ändern heißt zurücknehmen und neu schreiben. */
+  revokeDirective(directiveId: string, options: CommandOptions = {}): Directive {
+    const payload = valid("Rücknahme", parseDirectiveRevoked({ directiveId }));
+    this.commit(DIRECTIVE_REVOKED, CEO_ID, payload, options);
+    return this.state.directive(directiveId) as Directive;
   }
 
   changeTaskStatus(

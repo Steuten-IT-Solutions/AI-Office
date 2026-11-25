@@ -3,7 +3,9 @@ import type { Duplex } from "node:stream";
 import { CEO_ID } from "../domain/agent.ts";
 import { findRoom } from "../domain/building.ts";
 import { MESSAGE_KINDS, type Message, type MessageKind } from "../domain/message.ts";
+import { MAX_DIRECTIVE_CHARS, MAX_DIRECTIVE_CHARS_PER_AGENT } from "../domain/events.ts";
 import { DomainError, type Office } from "../domain/office.ts";
+import type { Directive } from "../domain/office-state.ts";
 import { CLOSED_STATUSES } from "../domain/task.ts";
 import { ValidationError, isRecord } from "../domain/validation.ts";
 import type { JsonValue } from "../events/canonical-json.ts";
@@ -81,6 +83,8 @@ const ALLOWED_METHODS: Readonly<Record<string, string>> = {
   "/api/timeline": "GET",
   "/api/chat": "GET, POST",
   "/api/prs": "GET",
+  "/api/directives": "GET, POST",
+  "/api/directives/revoke": "POST",
   [LIVE_PATH]: "GET",
 };
 
@@ -110,6 +114,8 @@ export interface GatewayOptions {
    * liefern; ein verworfenes landet im Log.
    */
   onCeoMessage?: (message: Message) => unknown;
+  /** Nach jeder gespeicherten Weisung oder Rücknahme, z. B. um die Meldung anzustoßen (E68). */
+  onDirective?: () => unknown;
   /** Weisung aus E46 aktiv: Der CEO schreibt nur dem COO. Standard: nein. */
   ceoViaCooOnly?: () => boolean;
   loginThrottle?: Partial<LoginThrottle>;
@@ -127,8 +133,8 @@ export interface GatewayOptions {
   /** Gebautes Webinterface. Standard: `packages/office/web/dist/`. */
   web?: StaticFiles;
   /**
-   * Stand des Kontingents vom Supervisor (S04). `null` oder fehlend: noch keine Messung, das
-   * Webinterface zeigt das an.
+   * Stand des Kontingents vom Supervisor (S04). `null` oder fehlend: nicht angebunden, das
+   * Webinterface verweist dann auf Konsole und `aioffice status` (E67).
    */
   quota?: () => QuotaView | null;
   /**
@@ -405,6 +411,15 @@ export class OfficeGateway {
           this.authenticate(req);
           return this.pullRequests();
         });
+      case "GET /api/directives":
+        return this.read(req, () => {
+          this.authenticate(req);
+          return this.directives();
+        });
+      case "POST /api/directives":
+        return this.write(req, this.authenticate(req), (body) => this.issueDirective(body));
+      case "POST /api/directives/revoke":
+        return this.write(req, this.authenticate(req), (body) => this.revokeDirective(body));
       default:
         break;
     }
@@ -694,6 +709,89 @@ export class OfficeGateway {
     return { status: 200, body: { messages: messages as unknown as JsonValue } };
   }
 
+  /** Alle Weisungen, neueste zuerst, auch zurückgenommene (Kap. 4.4, E68). */
+  private directives(): Reply {
+    const office = this.options.office;
+    office.sync();
+    const directives = office.state.directives().reverse();
+    return {
+      status: 200,
+      body: {
+        directives: directives as unknown as JsonValue,
+        maxChars: MAX_DIRECTIVE_CHARS,
+        maxCharsPerAgent: MAX_DIRECTIVE_CHARS_PER_AGENT,
+      },
+    };
+  }
+
+  private issueDirective(body: unknown): Reply {
+    if (!isRecord(body)) {
+      throw new HttpError(400, "Erwartet: { text, agentIds, clientId? }");
+    }
+    const unknown = Object.keys(body).filter(
+      (key) => !["text", "agentIds", "clientId"].includes(key),
+    );
+    if (unknown.length > 0) {
+      throw new HttpError(400, `Unbekannte Felder: ${unknown.join(", ")}`);
+    }
+    const text = body["text"];
+    const agentIds = body["agentIds"] ?? null;
+    if (typeof text !== "string") {
+      throw new HttpError(422, "Text fehlt");
+    }
+    if (
+      agentIds !== null &&
+      (!Array.isArray(agentIds) || !agentIds.every((id) => typeof id === "string"))
+    ) {
+      throw new HttpError(422, "agentIds: Liste von Agenten-IDs oder null für alle");
+    }
+    const clientId = clientIdOf(body);
+    return this.command(() =>
+      this.options.office.issueDirective(
+        { text, agentIds },
+        clientId === null ? {} : { idempotencyKey: `ceo-weisung:${clientId}` },
+      ),
+    );
+  }
+
+  private revokeDirective(body: unknown): Reply {
+    if (!isRecord(body) || typeof body["id"] !== "string" || Object.keys(body).length !== 1) {
+      throw new HttpError(400, "Erwartet: { id }");
+    }
+    const id = body["id"];
+    return this.command(() =>
+      this.options.office.revokeDirective(id, { idempotencyKey: `ceo-weisung-zurueck:${id}` }),
+    );
+  }
+
+  /** Führt einen Befehl des CEO aus; Prüffehler werden 422. */
+  private command(run: () => Directive): Reply {
+    let directive: Directive;
+    try {
+      directive = run();
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return { status: 422, body: { error: error.message, issues: [...error.issues] } };
+      }
+      if (error instanceof DomainError) {
+        return { status: 422, body: { error: error.message } };
+      }
+      throw error;
+    }
+    try {
+      const result = this.options.onDirective?.();
+      if (result instanceof Promise) {
+        result.catch((error: unknown) => {
+          this.log("Gateway: onDirective fehlgeschlagen", error);
+        });
+      }
+    } catch (error) {
+      this.log("Gateway: onDirective fehlgeschlagen", error);
+    }
+    this.poll();
+    return { status: 201, body: { directive: directive as unknown as JsonValue } };
+  }
+
   private send(body: unknown): Reply {
     if (!isRecord(body)) {
       throw new HttpError(400, "Erwartet: { text, to?, kind?, clientId? }");
@@ -724,13 +822,7 @@ export class OfficeGateway {
     if (typeof body["text"] !== "string") {
       throw new HttpError(422, "Text fehlt");
     }
-    const clientId = body["clientId"];
-    if (
-      clientId !== undefined &&
-      (typeof clientId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(clientId))
-    ) {
-      throw new HttpError(422, "clientId: 8 bis 64 Zeichen aus A–Z, a–z, 0–9, _ und -");
-    }
+    const clientId = clientIdOf(body) ?? undefined;
     const optionalId = (name: string): string | null => {
       const value = body[name];
       if (value === undefined || value === null) {
@@ -786,4 +878,16 @@ export function createGatewayServer(gateway: OfficeGateway): Server {
   const server = createServer(gateway.handle);
   server.on("upgrade", gateway.upgrade);
   return server;
+}
+
+/** Kennung des Browsers für Wiederholungen nach einem Abbruch, sonst `null`. */
+function clientIdOf(body: Record<string, unknown>): string | null {
+  const clientId = body["clientId"];
+  if (clientId === undefined) {
+    return null;
+  }
+  if (typeof clientId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(clientId)) {
+    throw new HttpError(422, "clientId: 8 bis 64 Zeichen aus A–Z, a–z, 0–9, _ und -");
+  }
+  return clientId;
 }

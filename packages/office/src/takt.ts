@@ -1,5 +1,6 @@
 import type { RunTokens } from "./api/run-tokens.ts";
 import type { CheckRunFollower, CheckRunStep } from "./runs/check-run.ts";
+import type { DirectiveReporter } from "./events/directive-reporter.ts";
 import type { HeadReporter } from "./events/head-reporter.ts";
 import type { FingerprintReporter } from "./git/fingerprints.ts";
 import type { ProfileSync } from "./ipc/profile-sync.ts";
@@ -11,7 +12,7 @@ import type { RunFollower } from "./runs/run-follower.ts";
 
 /**
  * Takt des Office: ruft Planer, Begleiter und Melder regelmäßig auf (Office-Seite von S05, S08,
- * S09, S11b und E38). Jeder Teil hat seine eigene Schleife mit eigenem Abstand. Ein Teil läuft nie
+ * S09, S11b, E38 und E68). Jeder Teil hat seine eigene Schleife mit eigenem Abstand. Ein Teil läuft nie
  * zweimal gleichzeitig; der nächste Durchlauf beginnt erst, wenn der letzte fertig ist, plus den
  * Abstand. Ein Fehler in einem Teil hält die anderen nicht auf.
  *
@@ -25,6 +26,7 @@ import type { RunFollower } from "./runs/run-follower.ts";
  * | `fingerprints` | Fingerabdrücke für den Ausgangsfilter (S08) | 30 s |
  * | `head` | Kopf der Hash-Kette an den Supervisor (E38) | 60 s |
  * | `checkRuns` | Prüflauf des Health-Checks abholen und anfordern (S11b) | 30 s |
+ * | `directives` | Weisungen des CEO ins Audit-Log des Supervisors (E38, E68) | 30 s |
  *
  * Alle Abstände sind [Annahme], gewählt nach diesen Grenzen:
  * - `runs`: Der Supervisor beendet einen Lauf ungestartet, wenn das Office das Token nicht
@@ -60,6 +62,7 @@ export const TAKT_JOBS = [
   "fingerprints",
   "head",
   "checkRuns",
+  "directives",
 ] as const;
 export type TaktJob = (typeof TAKT_JOBS)[number];
 
@@ -74,6 +77,7 @@ export const DEFAULT_TAKT_INTERVALS: Readonly<TaktIntervals> = Object.freeze({
   fingerprints: 30_000,
   head: 60_000,
   checkRuns: 30_000,
+  directives: 30_000,
 });
 
 /** Die Teile, die der Takt aufruft. Im Betrieb die Klassen aus P06, S05, S08, S09 und E38. */
@@ -87,6 +91,8 @@ export interface TaktParts {
   head: Pick<HeadReporter, "report">;
   /** Prüfläufe des Health-Checks (S11b). */
   checkRuns: Pick<CheckRunFollower, "fetch" | "poll">;
+  /** Weisungen des CEO an den Supervisor (E68). */
+  directives: Pick<DirectiveReporter, "report">;
   /** Abgelaufene Office-Tokens entfernt der Takt bei jedem Durchlauf von `runs`. */
   tokens: Pick<RunTokens, "prune">;
 }
@@ -148,6 +154,7 @@ export class OfficeTakt {
       fingerprints: slot(),
       head: slot(),
       checkRuns: slot(),
+      directives: slot(),
     };
   }
 
@@ -264,6 +271,8 @@ export class OfficeTakt {
         return this.head();
       case "checkRuns":
         return this.checkRuns(problems);
+      case "directives":
+        return this.directives(problems);
     }
   }
 
@@ -414,6 +423,19 @@ export class OfficeTakt {
     }
     if (report.error !== null) {
       problems.push(`${String(report.unsent)} Fingerabdrücke offen: ${report.error}`);
+    }
+  }
+
+  private async directives(problems: Problems): Promise<void> {
+    const report = await this.parts.directives.report();
+    if (report.sent > 0) {
+      this.log.info("Weisungen an den Supervisor gemeldet", {
+        sent: report.sent,
+        recorded: report.recorded,
+      });
+    }
+    if (report.error !== null) {
+      problems.push(`${String(report.pending)} Weisungen nicht gemeldet: ${report.error}`);
     }
   }
 

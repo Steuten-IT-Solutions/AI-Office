@@ -162,29 +162,39 @@ Bericht in der VM: `/opt/aio-spikes/berichte/I01-teil1.md`.
   (12:10–13:40). Entscheidung des CEO am 25.11. (E61): Der Kontext zeigt die letzten 6 Nachrichten
   mit dem CEO (höchstens 800 Tokens), dazu das Werkzeug `read_messages`. Gemergt mit AI-Office-PR
   #47 (`ba9c805`). Geprüft am 25.11.: Die Übergabenotiz von Test A nennt den Auftrag des CEO.
-- **AK 2, Grund der Push-Ablehnung unvollständig (offen):** Das Git-Gate übernimmt nur die letzte
+- **AK 2, Grund der Push-Ablehnung unvollständig (umgesetzt):** Das Git-Gate übernimmt nur die letzte
   Zeile der Ausgabe von `git push`: „error: failed to push some refs …“. Die Erklärung von GitHub
   (fehlendes Recht „Workflows“) steht in Git üblicherweise in der Zeile `! [remote rejected] …`
   davor und geht verloren **[Annahme: im Journal nicht sichtbar, weil nur die letzte Zeile geloggt
-  wird]** (`gate.ts`, `lastLine`).
-- **AK 2, Ausgangsfilter sperrt Vorgaben des CEO (offen, Entwurfsfrage):** Der erste Versuch von
+  wird]** (`gate.ts`, `lastLine`). Entscheidung des CEO am 25.11. (E65): Das Gate speichert die
+  Zeilen zu abgelehnten Refs und die Zeilen `remote:`. Umgesetzt am 25.11., VM-Test offen.
+- **AK 2, Ausgangsfilter sperrt Vorgaben des CEO (umgesetzt):** Der erste Versuch von
   Test B scheiterte am Ausgangsfilter: „fingerabdruck (PR-Titel); fingerabdruck (Commit …:
   Nachricht)“. Der CEO hatte den PR-Titel wörtlich vorgegeben, der CTO hat ihn übernommen. Der
   Filter vergleicht jede Folge von 8 Wörtern mit CEO-Chat und Übergabenotizen (Kap. 5.9, E33) und
   arbeitet damit wie geplant. Folge für die Bedienung: Texte, die der CEO für das Repo wörtlich
-  vorgibt, sperren die Übergabe.
-- **AK 2, Rückmeldungen erreichen den CEO nicht (offen):** Der Chat zeigt nur Nachrichten, die ein
+  vorgibt, sperren die Übergabe. Entscheidung des CEO am 25.11. (E64): Der Filter bleibt; das Buch
+  `git-workflow` verlangt eigene Worte und einen Hinweis an den CEO. Umgesetzt am 25.11., VM-Test offen.
+- **AK 2, Rückmeldungen erreichen den CEO nicht (umgesetzt):** Der Chat zeigt nur Nachrichten, die ein
   Agent mit `send_message` schickt. Der Schlusstext eines Laufs steht nur als „denkt“ in der
   Zeitleiste. Nach beiden abgelehnten Übergaben kam deshalb keine Nachricht an den CEO. Zudem nennt
   die Übergabenotiz des CTO um 17:41 Test A noch offen, obwohl das Gate ihn um 17:15 abgelehnt
-  hatte; die Ursache ist nicht untersucht.
-- **Chat ohne Bezug (offen):** Der Web-Chat setzt weder `replyToId` noch `taskId`, obwohl die API
+  hatte. Ursache: Das Ergebnis der Übergabe stand nur im nächsten Werkbank-Lauf zur selben
+  Aufgabe, und kein Weckgrund holte den CTO dafür zurück. Entscheidungen des CEO am 25.11.: Der
+  Schlusstext eines vom CEO geweckten Laufs geht als Antwort in den Chat (E62); eine Ablehnung
+  weckt den Bearbeiter, und jeder Kontext zeigt die letzten Übergaben (E63). Umgesetzt am 25.11., VM-Test offen.
+- **Chat ohne Bezug (bleibt so):** Der Web-Chat setzt weder `replyToId` noch `taskId`, obwohl die API
   beides annimmt. Eine Antwort des CEO auf eine Rückfrage weckt so einen Büro-Lauf ohne Aufgabe.
-- **Weisungen fehlen (offen):** Kap. 4.4 ist nicht umgesetzt; das Office gibt dem Kontext keine
-  Weisungen mit (`directives: []`).
-- **Alte Aufgaben bleiben offen (offen):** Für das Schließen einer Aufgabe hat der Agent kein
-  Werkzeug. Ältere Aufgaben des CTO (`cfe6ecfd`, `8875fef5`) bleiben deshalb offen.
-- **Anzeige des Kontingents irreführend (offen):** Ohne frische Messung, also ohne Nachfrage,
+  Entscheidung des CEO am 25.11.: so lassen, der Verlauf aus E61 reicht.
+- **Weisungen fehlen (umgesetzt):** Kap. 4.4 ist nicht umgesetzt; das Office gibt dem Kontext keine
+  Weisungen mit (`directives: []`). Entscheidung des CEO am 25.11. (E68): Weisungen im
+  Office-Webinterface, für alle oder ausgewählte Agenten, mit Rücknahme und Eintrag im Audit-Log des
+  Supervisors. Umgesetzt am 25.11., VM-Test offen.
+- **Alte Aufgaben bleiben offen (umgesetzt):** Für das Schließen einer Aufgabe hat der Agent kein
+  Werkzeug. Ältere Aufgaben des CTO (`cfe6ecfd`, `8875fef5`) bleiben deshalb offen. Entscheidung
+  des CEO am 25.11. (E66): Werkzeug `set_task_status`, und ein Merge schließt die Aufgabe. Umgesetzt am 25.11., VM-Test offen.
+- **Anzeige des Kontingents irreführend (umgesetzt):** Ohne frische Messung, also ohne Nachfrage,
   meldet `aioffice status` den Modus `pause` und „Zähler nicht lesbar“, das Webinterface „noch
   keine Messung vom Supervisor“. Der Supervisor misst beim nächsten Antrag neu; eine Störung liegt
-  nicht vor.
+  nicht vor. Entscheidung des CEO am 25.11. (E67): letzte Messung mit Uhrzeit, „nicht lesbar“ nur bei
+  einer gescheiterten Messung. Umgesetzt am 25.11., VM-Test offen.

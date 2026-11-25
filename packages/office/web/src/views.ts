@@ -151,7 +151,12 @@ export function renderCosts(doc: Document, state: OfficeStateView): HTMLElement 
       ` in ${String(state.costs.runs)} ${state.costs.runs === 1 ? "Lauf" : "Läufen"}`,
     ),
     quota === null
-      ? h(doc, "p", { class: "empty" }, "Kontingent: noch keine Messung vom Supervisor.")
+      ? h(
+          doc,
+          "p",
+          { class: "empty" },
+          "Kontingent: hier noch nicht angebunden. Den Stand zeigen die Supervisor-Konsole und „aioffice status“ (E67).",
+        )
       : h(
           doc,
           "div",
@@ -239,6 +244,56 @@ export function renderChatMessage(
       time(doc, message.occurredAt),
     ),
     h(doc, "div", { class: "text" }, message.text),
+  );
+}
+
+/** Eine Weisung aus `GET /api/directives` (Kap. 4.4, E68). */
+export interface DirectiveView {
+  id: string;
+  text: string;
+  agentIds: string[] | null;
+  occurredAt: string;
+  revokedAt: string | null;
+}
+
+/**
+ * Weisung des CEO mit Empfängern und Zeit. Eine geltende hat einen Knopf zum Zurücknehmen; der
+ * Aufrufer hängt die Aktion an. Der Text erscheint nur als Text (AK 9).
+ */
+export function renderDirective(
+  doc: Document,
+  directive: DirectiveView,
+  lookup: Lookup,
+  onRevoke: (id: string) => void,
+): HTMLElement {
+  const targets =
+    directive.agentIds === null
+      ? "alle Agenten"
+      : directive.agentIds.map((id) => lookup.agentName(id)).join(", ");
+  const revoked = directive.revokedAt !== null;
+  const meta = h(
+    doc,
+    "div",
+    { class: "meta" },
+    `Für ${targets} · seit `,
+    time(doc, directive.occurredAt),
+  );
+  if (revoked) {
+    meta.append(doc.createTextNode(" · zurückgenommen "), time(doc, directive.revokedAt as string));
+  } else {
+    const button = h(doc, "button", { class: "small" }, "Zurücknehmen");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      onRevoke(directive.id);
+    });
+    meta.append(doc.createTextNode(" · "), button);
+  }
+  return h(
+    doc,
+    "li",
+    { class: revoked ? "revoked" : "active", "data-state": revoked ? "revoked" : "active" },
+    meta,
+    h(doc, "div", { class: "text" }, directive.text),
   );
 }
 

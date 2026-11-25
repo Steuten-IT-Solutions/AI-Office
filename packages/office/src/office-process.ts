@@ -9,6 +9,7 @@ import { Office } from "./domain/office.ts";
 import { loadStartBooks, loadStartPersonas } from "./domain/start-content.ts";
 import { loadStartData, seedStartAgents } from "./domain/start-data.ts";
 import { EventStore } from "./events/event-store.ts";
+import { DirectiveReporter } from "./events/directive-reporter.ts";
 import { HeadReporter } from "./events/head-reporter.ts";
 import { OfficeGateway, createGatewayServer } from "./gateway/gateway.ts";
 import { readPasswordFile } from "./gateway/password.ts";
@@ -42,9 +43,9 @@ import { OFFICE_VERSION } from "./version.ts";
  * dann Datenbank und Migrationen, dann die Server, zuletzt der Takt. Scheitert ein Schritt, ist
  * alles schon Geöffnete wieder geschlossen.
  *
- * Weisungen des CEO (Kap. 4.4) gibt es noch nicht als Ereignis; der Kontext bekommt deshalb eine
- * leere Liste. Kontingent und PR-Liste für das Webinterface liefert der Supervisor noch nicht
- * (S04, Kap. 5.11); das Webinterface zeigt dann „noch keine Messung“ bzw. „nicht angebunden“.
+ * Weisungen des CEO (Kap. 4.4) kommen seit E68 aus dem Protokoll: Jeder Lauf bekommt die für
+ * seinen Agenten geltenden. Kontingent und PR-Liste für das Webinterface liefert der Supervisor
+ * noch nicht (S04, Kap. 5.11); das Webinterface zeigt dann jeweils „nicht angebunden“.
  */
 
 export interface StartOptions {
@@ -148,7 +149,16 @@ export async function startOffice(
       office,
       requester: fingerprintsFirst(supervisorRunRequester(client), fingerprints),
       context: (state, agentId, taskId) =>
-        buildContext({ state, agentId, taskId, constitution, directives: [], books, personas }),
+        buildContext({
+          state,
+          agentId,
+          taskId,
+          constitution,
+          // Geltende Weisungen des CEO für diesen Agenten (Kap. 4.4, E68).
+          directives: state.activeDirectives(agentId).map((d) => d.text),
+          books,
+          personas,
+        }),
     });
     const takt = new OfficeTakt({
       parts: {
@@ -166,6 +176,10 @@ export async function startOffice(
           runs: runAccess,
           tokens,
           head,
+        }),
+        directives: new DirectiveReporter({
+          office,
+          access: { reportDirective: (params) => client.call("directive.report", params) },
         }),
         tokens,
       },
@@ -199,6 +213,9 @@ export async function startOffice(
       store,
       host: config.webHost,
       passwordHash: () => readPasswordFile(config.passwordFile),
+      onDirective: () => {
+        takt.kick("directives");
+      },
       onCeoMessage: () => {
         takt.kick("planner");
       },

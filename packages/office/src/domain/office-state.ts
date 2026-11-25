@@ -6,12 +6,15 @@ import { findRoom, type Building } from "./building.ts";
 import {
   AGENT_HIRED,
   AGENT_PROFILE_CHANGED,
+  DIRECTIVE_ISSUED,
+  DIRECTIVE_REVOKED,
   DOMAIN_EVENT_TYPES,
   ESCALATION_ANSWERED,
   ESCALATION_RAISED,
   GIT_MERGE,
   GIT_MERGE_FINAL_STATES,
   GIT_OUTCOME,
+  MAX_DIRECTIVE_CHARS_PER_AGENT,
   MESSAGE_SENT,
   RUN_FINISHED,
   RUN_STARTED,
@@ -20,6 +23,8 @@ import {
   TASK_DELEGATED,
   TASK_HANDOVER,
   TASK_STATUS_CHANGED,
+  type DirectiveIssued,
+  type DirectiveRevoked,
   type EscalationAnswered,
   type EscalationRaised,
   type GitMerge,
@@ -101,6 +106,17 @@ export interface WakeItem {
   toId: string;
   runId: string | null;
   taskId: string | null;
+}
+
+/** Weisung des CEO (Kap. 4.4, E68). */
+export interface Directive extends DirectiveIssued {
+  /** ID des Ereignisses `directive.issued`. */
+  id: string;
+  seq: number;
+  occurredAt: string;
+  /** Zurückgenommen: Sequenznummer und Zeit von `directive.revoked`, sonst `null`. */
+  revokedSeq: number | null;
+  revokedAt: string | null;
 }
 
 /** Endgültiger Stand der Git-Übergabe eines Werkbank-Laufs (S08). */
@@ -186,6 +202,7 @@ export class OfficeState {
   private readonly gitOutcomeRunByEventId = new Map<string, string>();
   /** Je Lauf mit PR: alle Merge-Stände in Reihenfolge des Protokolls. */
   private readonly gitMergesByRun = new Map<string, GitMergeRecord[]>();
+  private readonly directiveById = new Map<string, Directive>();
 
   constructor(building: Building) {
     this.building = building;
@@ -275,6 +292,22 @@ export class OfficeState {
   /** Endgültiger Stand der Git-Übergabe eines Laufs, sonst `undefined` (S08). */
   gitOutcome(runId: string): GitOutcomeRecord | undefined {
     return this.gitOutcomeById.get(runId);
+  }
+
+  /** Alle Weisungen, auch zurückgenommene, älteste zuerst (E68). */
+  directives(): Directive[] {
+    return [...this.directiveById.values()].sort((a, b) => a.seq - b.seq);
+  }
+
+  directive(id: string): Directive | undefined {
+    return this.directiveById.get(id);
+  }
+
+  /** Geltende Weisungen für diesen Agenten, älteste zuerst (E68). */
+  activeDirectives(agentId: string): Directive[] {
+    return this.directives().filter(
+      (d) => d.revokedSeq === null && (d.agentIds === null || d.agentIds.includes(agentId)),
+    );
   }
 
   /** Endgültige Stände aller Git-Übergaben, in der Reihenfolge des Protokolls. */
@@ -460,6 +493,10 @@ export class OfficeState {
         return this.checkGitOutcome(actor, runId);
       case GIT_MERGE.type:
         return this.checkGitMerge(actor, payload as GitMerge, runId);
+      case DIRECTIVE_ISSUED.type:
+        return this.checkDirectiveIssued(actor, payload as DirectiveIssued);
+      case DIRECTIVE_REVOKED.type:
+        return this.checkDirectiveRevoked(actor, payload as DirectiveRevoked);
       default:
         return `${type} ist kein Ereignistyp des Domänenmodells`;
     }
@@ -624,6 +661,27 @@ export class OfficeState {
           taskId: run.taskId,
           seq: event.seq,
           occurredAt: event.occurredAt,
+        });
+        return;
+      }
+      case DIRECTIVE_ISSUED.type: {
+        this.directiveById.set(event.id, {
+          ...(payload as DirectiveIssued),
+          id: event.id,
+          seq: event.seq,
+          occurredAt: event.occurredAt,
+          revokedSeq: null,
+          revokedAt: null,
+        });
+        return;
+      }
+      case DIRECTIVE_REVOKED.type: {
+        const id = (payload as DirectiveRevoked).directiveId;
+        const directive = this.directiveById.get(id) as Directive;
+        this.directiveById.set(id, {
+          ...directive,
+          revokedSeq: event.seq,
+          revokedAt: event.occurredAt,
         });
         return;
       }
@@ -857,6 +915,43 @@ export class OfficeState {
     }
     if (this.gitOutcomeById.has(runId)) {
       return `Stand der Git-Übergabe von ${runId} ist schon festgehalten`;
+    }
+    return null;
+  }
+
+  /**
+   * Weisungen schreibt nur der CEO (Kap. 4.4). Empfänger müssen Agenten sein, und kein Agent darf
+   * mehr als `MAX_DIRECTIVE_CHARS_PER_AGENT` Zeichen geltender Weisungen haben: Weisungen werden
+   * im Firmenhandbuch nie gekürzt (E68).
+   */
+  private checkDirectiveIssued(actor: string, p: DirectiveIssued): string | null {
+    if (actor !== CEO_ID) {
+      return "Weisungen gibt nur der CEO";
+    }
+    const unknown = (p.agentIds ?? []).filter((id) => !this.profiles.has(id));
+    if (unknown.length > 0) {
+      return `Unbekannte Agenten: ${unknown.join(", ")}`;
+    }
+    const targets = p.agentIds ?? [...this.profiles.keys()];
+    for (const agentId of targets) {
+      const used = this.activeDirectives(agentId).reduce((sum, d) => sum + d.text.length, 0);
+      if (used + p.text.length > MAX_DIRECTIVE_CHARS_PER_AGENT) {
+        return `Für ${agentId} gelten schon ${String(used)} Zeichen Weisungen; zusammen höchstens ${String(MAX_DIRECTIVE_CHARS_PER_AGENT)}. Bitte zusammenfassen oder eine zurücknehmen.`;
+      }
+    }
+    return null;
+  }
+
+  private checkDirectiveRevoked(actor: string, p: DirectiveRevoked): string | null {
+    if (actor !== CEO_ID) {
+      return "Weisungen nimmt nur der CEO zurück";
+    }
+    const directive = this.directiveById.get(p.directiveId);
+    if (directive === undefined) {
+      return `Weisung ${p.directiveId} gibt es nicht`;
+    }
+    if (directive.revokedSeq !== null) {
+      return `Weisung ${p.directiveId} ist schon zurückgenommen`;
     }
     return null;
   }

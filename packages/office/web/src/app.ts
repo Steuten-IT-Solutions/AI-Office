@@ -15,9 +15,11 @@ import {
   renderChatMessage,
   renderConsoleLink,
   renderCosts,
+  renderDirective,
   renderPullRequests,
   renderTimelineItem,
   type ChatMessage,
+  type DirectiveView,
   type OfficeStateView,
   type PullRequestList,
 } from "./views.ts";
@@ -60,6 +62,12 @@ const ui = {
   chatSend: byId("chat-send") as HTMLButtonElement,
   chatError: byId("chat-error"),
   chatLog: byId("chat-log"),
+  directiveForm: byId("directive-form") as HTMLFormElement,
+  directiveTargets: byId("directive-targets"),
+  directiveText: byId("directive-text") as HTMLTextAreaElement,
+  directiveSend: byId("directive-send") as HTMLButtonElement,
+  directiveError: byId("directive-error"),
+  directiveList: byId("directive-list"),
 };
 
 const api = new Api();
@@ -82,6 +90,8 @@ const session = {
   refreshAgain: false,
   /** Entwurf im Chat: dieselbe `clientId` bei einer Wiederholung (Idempotenz im Gateway). */
   draft: { text: "", to: "", kind: "", clientId: "" },
+  /** Entwurf einer Weisung, wie `draft` (E68). */
+  directiveDraft: { text: "", targets: "", clientId: "" },
 };
 
 const lookup: Lookup = {
@@ -165,6 +175,7 @@ async function refresh(): Promise<void> {
       await loadState();
       await loadTimeline();
       await loadChat();
+      await loadDirectives();
       // Über eine Funktion gelesen: Die Ladefunktionen setzen den Wert während der await-Pausen.
     } while (refreshRequested());
     setStatus(session.socket?.readyState === WebSocket.OPEN ? "Live" : "Verbinde …");
@@ -187,6 +198,59 @@ async function loadState(): Promise<void> {
   replace(document, ui.costs, renderCosts(document, state));
   replace(document, ui.consoleLink, renderConsoleLink(document, state.consoleUrl));
   updateRecipients(state);
+  updateDirectiveTargets(state);
+}
+
+/** Auswahl „Alle“ oder einzelne Agenten für eine Weisung (E68). Gewählte bleiben gewählt. */
+function updateDirectiveTargets(state: OfficeStateView): void {
+  const checked = new Set(
+    [...ui.directiveTargets.querySelectorAll("input")]
+      .filter((input) => input.checked)
+      .map((input) => input.value),
+  );
+  const box = (value: string, label: string, on: boolean) => {
+    const input = h(document, "input", { "aria-label": label });
+    input.type = "checkbox";
+    input.value = value;
+    input.checked = on;
+    return h(document, "label", null, input, ` ${label}`);
+  };
+  const all = checked.size === 0 || checked.has("*");
+  replace(
+    document,
+    ui.directiveTargets,
+    box("*", "Alle", all),
+    ...state.agents.map((agent) => box(agent.id, agent.name, !all && checked.has(agent.id))),
+  );
+}
+
+/** Gewählte Empfänger: `null` für alle. */
+function directiveTargets(): string[] | null {
+  const checked = [...ui.directiveTargets.querySelectorAll("input")]
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  return checked.length === 0 || checked.includes("*") ? null : checked;
+}
+
+async function loadDirectives(): Promise<void> {
+  const data = (await api.get("/api/directives")) as { directives: DirectiveView[] };
+  replace(
+    document,
+    ui.directiveList,
+    ...data.directives.map((d) => renderDirective(document, d, lookup, revokeDirective)),
+  );
+}
+
+function revokeDirective(id: string): void {
+  replace(document, ui.directiveError);
+  void api
+    .post("/api/directives/revoke", { id })
+    .then(() => refresh())
+    .catch((error: unknown) => {
+      if (!handleAuthError(error)) {
+        replace(document, ui.directiveError, message(error));
+      }
+    });
 }
 
 /** Empfänger im Chat. Mit der Weisung aus E46 nur der COO. */
@@ -416,6 +480,55 @@ ui.chatForm.addEventListener("submit", (event) => {
     })
     .finally(() => {
       ui.chatSend.disabled = false;
+    });
+});
+
+// „Alle“ und einzelne Agenten schließen einander aus; ohne Auswahl gilt wieder „Alle“.
+ui.directiveTargets.addEventListener("change", (event) => {
+  const changed = event.target as HTMLInputElement;
+  const inputs = [...ui.directiveTargets.querySelectorAll("input")];
+  if (changed.checked) {
+    for (const input of inputs) {
+      if (input !== changed && (changed.value === "*" || input.value === "*")) {
+        input.checked = false;
+      }
+    }
+  } else if (!inputs.some((input) => input.checked)) {
+    const all = inputs.find((input) => input.value === "*");
+    if (all !== undefined) {
+      all.checked = true;
+    }
+  }
+});
+
+ui.directiveForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = ui.directiveText.value;
+  if (text.trim() === "") {
+    return;
+  }
+  const agentIds = directiveTargets();
+  const targets = JSON.stringify(agentIds);
+  const draft = session.directiveDraft;
+  if (draft.text !== text || draft.targets !== targets || draft.clientId === "") {
+    session.directiveDraft = { text, targets, clientId: crypto.randomUUID() };
+  }
+  ui.directiveSend.disabled = true;
+  replace(document, ui.directiveError);
+  void api
+    .post("/api/directives", { text, agentIds, clientId: session.directiveDraft.clientId })
+    .then(() => {
+      ui.directiveText.value = "";
+      session.directiveDraft = { text: "", targets: "", clientId: "" };
+      return refresh();
+    })
+    .catch((error: unknown) => {
+      if (!handleAuthError(error)) {
+        replace(document, ui.directiveError, message(error));
+      }
+    })
+    .finally(() => {
+      ui.directiveSend.disabled = false;
     });
 });
 

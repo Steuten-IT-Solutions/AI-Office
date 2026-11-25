@@ -10,14 +10,14 @@ import {
 } from "./protocol.ts";
 
 /**
- * SHA-256 von `packages/supervisor/src/ipc/protocol.ts` im Supervisor-Repo, Stand S11b.
+ * SHA-256 von `packages/supervisor/src/ipc/protocol.ts` im Supervisor-Repo, Stand E68.
  * Das Repo ist privat, die CI hier kann es nicht lesen; der Hash hält die Kopie trotzdem fest.
  * Neue Protokollversion: Datei im Supervisor ändern, hierher kopieren, Hash und Stand anpassen.
  */
 const SUPERVISOR_PROTOCOL_SHA256 =
-  "a6fc6d649c506d4c19016344f809c9a6b1b68aadf30025034c7859c71640279e";
+  "592239515694eca961eece2a2c955a840dd8875f1ac687d215366d31888e81ba";
 
-describe("Kopie des Protokolls aus S02, S05, S08, S09 und S11b", () => {
+describe("Kopie des Protokolls aus S02, S05, S08, S09, S11b und E68", () => {
   it("ist unterhalb des Kopfkommentars unverändert", () => {
     const source = readFileSync(new URL("protocol.ts", import.meta.url), "utf8");
     const start = source.indexOf('import { z } from "zod";');
@@ -26,7 +26,7 @@ describe("Kopie des Protokolls aus S02, S05, S08, S09 und S11b", () => {
     expect(hash).toBe(SUPERVISOR_PROTOCOL_SHA256);
   });
 
-  it("spricht Version 1 mit den Methoden aus Kap. 4.6, S05, S08, S09 und den drei aus S11b", () => {
+  it("spricht Version 1 mit den Methoden aus Kap. 4.6, S05, S08, S09, den drei aus S11b und E68", () => {
     expect(PROTOCOL_VERSION).toBe(1);
     expect(IPC_METHODS).toEqual([
       "run.request",
@@ -42,6 +42,7 @@ describe("Kopie des Protokolls aus S02, S05, S08, S09 und S11b", () => {
       "checkRun.next",
       "checkRun.request",
       "checkRun.report",
+      "directive.report",
     ]);
     const parsed = METHODS["run.request"].params.safeParse(
       {

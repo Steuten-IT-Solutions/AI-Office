@@ -25,6 +25,8 @@ export class FakeElement {
   target = "";
   rel = "";
   value = "";
+  type = "";
+  readonly listeners = new Map<string, (() => void)[]>();
 
   readonly tagName: string;
   private readonly doc: FakeDocument;
@@ -37,6 +39,17 @@ export class FakeElement {
   setAttribute(name: string, value: string): void {
     this.doc.attributeLog.push([name, value]);
     this.attributes.set(name, value);
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  /** Löst die Zuhörer für `click` aus, wie ein Klick im Browser. */
+  click(): void {
+    for (const listener of this.listeners.get("click") ?? []) {
+      listener();
+    }
   }
 
   getAttribute(name: string): string | null {

@@ -646,6 +646,17 @@ describe("FingerprintReporter", () => {
     expect(prints.received.length).toBe(before);
   });
 
+  it("meldet Weisungen des CEO wie den CEO-Chat (E68)", async () => {
+    const prints = new FakePrints();
+    const reporter = new FingerprintReporter({ office, access: prints });
+    const text = "Schreibt jede Commit-Nachricht auf Deutsch und nennt immer das Paket";
+    office.issueDirective({ text, agentIds: [CTO] });
+
+    expect(await reporter.report()).toMatchObject({ unsent: 0, error: null });
+    expect(prints.has(text)).toBe(true);
+    expect(prints.received.map((r) => r.source)).toEqual(["ceo_chat"]);
+  });
+
   it("stellt Texte eines Werkbank-Laufs zurück, bis seine Übergabe abgeschlossen ist", async () => {
     const prints = new FakePrints();
     const reporter = new FingerprintReporter({ office, access: prints });

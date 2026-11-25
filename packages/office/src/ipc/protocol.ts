@@ -1,8 +1,7 @@
 /*
  * KOPIE von `packages/supervisor/src/ipc/protocol.ts` aus Steuten-IT-Solutions/ai-office-supervisor,
- * Stand S11b. Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
- * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kamen in S11b `checkRun.next`, `checkRun.request`
- * und `checkRun.report` hinzu.
+ * Stand E68. Unterhalb dieses Kommentars unverändert; geändert wird immer zuerst im
+ * Supervisor (P02, plan.md Kap. 4.6). Zuletzt kam in E68 `directive.report` hinzu.
  *
  * Die Prüfungen hier dienen im Office nur dem Komfort (E22): Fehler fallen auf, bevor eine
  * Anfrage den Socket erreicht. Maßgeblich ist die Prüfung im Supervisor.
@@ -43,6 +42,10 @@ import { z } from "zod";
  * `run.output` und meldet, was es gesehen hat. Ebenfalls nur hinzugefügt; ein Office ohne diese
  * Methoden spricht v1 weiter wie bisher. Sie sind keine Prüfung im Sinne von E22: Ein Prüflauf
  * hat ein festes Fake-CLI und keinen Prompt des Office.
+ *
+ * Ergänzt in E68 (CEO-Entscheidung vom 25.11.2026, Weisungen über das Office-Webinterface):
+ * `directive.report`. Das Office meldet jede Weisung des CEO und jede Rücknahme; der Supervisor
+ * hält sie im Audit-Log fest (E38). Ebenfalls nur hinzugefügt.
  *
  * Die Methoden folgen der abschließenden Liste in Kap. 4.6. Git-Übergabe, PR und Merge-Antrag
  * fehlen bewusst: Sie kommen nach E40 direkt aus dem Container über das Supervisor-Gateway (S07),
@@ -381,6 +384,39 @@ const checkRunReportParams = z.strictObject({
 
 const checkRunReportResult = z.strictObject({ recorded: z.boolean() });
 
+/** Zeichen je Weisung und Empfänger je Weisung, wie im Office (E68). */
+export const MAX_DIRECTIVE_CHARS = 1_000;
+export const MAX_DIRECTIVE_AGENTS = 100;
+
+/**
+ * Weisung des CEO melden (E68, Kap. 4.4). Der CEO schreibt sie im Office-Webinterface; das Office
+ * speichert sie als Ereignis und meldet sie hier. Nicht vertrauenswürdig wie `office.reportHead`:
+ * Der Supervisor hält fest, was das Office behauptet. `directiveId` ist die ID des Ereignisses
+ * `directive.issued`, `officeSeq` seine Nummer im Protokoll des Office (bei `revoked` die der
+ * Rücknahme). `agentIds: null` heißt: für alle Agenten.
+ */
+const directiveReportParams = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("issued"),
+    directiveId: z.string().regex(UUID_PATTERN),
+    text: text(MAX_DIRECTIVE_CHARS),
+    agentIds: uniqueList(id, MAX_DIRECTIVE_AGENTS).min(1).nullable(),
+    officeSeq: z.int().min(1),
+  }),
+  z.strictObject({
+    action: z.literal("revoked"),
+    directiveId: z.string().regex(UUID_PATTERN),
+    officeSeq: z.int().min(1),
+  }),
+]);
+
+const directiveReportResult = z.strictObject({
+  /** `false`, wenn dieselbe Meldung schon im Audit-Log steht (etwa nach einem Neustart). */
+  recorded: z.boolean(),
+  /** Nummer des Eintrags im Audit-Log, auch bei einer schon bekannten Meldung. */
+  auditSeq: z.int().min(1),
+});
+
 export const METHODS = {
   "run.request": { params: runRequestParams, result: runRequestResult },
   "profile.check": { params: profileCheckParams, result: verdict },
@@ -395,6 +431,7 @@ export const METHODS = {
   "checkRun.next": { params: z.strictObject({}), result: checkRunNextResult },
   "checkRun.request": { params: runIdParams, result: checkRunRequestResult },
   "checkRun.report": { params: checkRunReportParams, result: checkRunReportResult },
+  "directive.report": { params: directiveReportParams, result: directiveReportResult },
 } as const;
 
 export type IpcMethod = keyof typeof METHODS;
