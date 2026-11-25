@@ -20,6 +20,7 @@ Jeder Aufruf wird ein Ereignis im Protokoll.
 | `delegate` | Aufgabe an einen anderen Agenten geben. Eine `werkbank`-Aufgabe nur an jemanden mit Werkbank. |
 | `handover` | Übergabenotiz zum Stand deiner Aufgabe. Pflicht am Ende jedes Laufs, kurz halten. Der nächste Lauf kennt deinen Stand nur daraus. |
 | `escalate` | Problem melden. Wohin, regelt das Firmenhandbuch. Die Zahl ist begrenzt. Ohne Antwort geht die Eskalation eine Ebene höher. |
+| `read_messages` | Frühere eigene Nachrichten nachlesen, neueste zuerst, seitenweise, optional nur mit einem Partner (z. B. `ceo`) oder zu einer Aufgabe. Die letzten Nachrichten mit dem CEO stehen schon im Kontext. Im `werkbank`-Lauf nur Verlauf mit dem CEO oder zur eigenen Aufgabe. |
 
 ## Lauftypen
 

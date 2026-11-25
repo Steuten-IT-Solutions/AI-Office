@@ -22,7 +22,7 @@ export interface ToolInfo {
 }
 
 /**
- * Plan S2d nennt acht Werkzeuge. Bisher gibt es fünf (P08); die drei aus plan.md Kap. 5.3 und 5.7
+ * Plan S2d nennt acht Werkzeuge. Bisher gibt es sechs (P08, E61); die drei aus plan.md Kap. 5.3 und 5.7
  * (`search_books`, `read_book`, `web_fetch`) sind Platzhalter mit ähnlich großem Schema.
  */
 const PLACEHOLDERS: ToolInfo[] = [

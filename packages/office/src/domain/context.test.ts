@@ -8,6 +8,8 @@ import { FakeRunner } from "../llm/fake-runner.ts";
 import type { RunOutcome, RunRequest } from "../llm/runner.ts";
 import {
   DEFAULT_CONTEXT_TOKENS,
+  HISTORY_MESSAGES,
+  HISTORY_TEXT_CHARS,
   MAX_HANDBOOK_TOKENS,
   buildContext,
   nest,
@@ -369,6 +371,72 @@ describe("Kontextaufbau", () => {
     expect(context.warnings).toContain(
       "Postfach: erste Nachricht gekürzt, sie passt nicht ins Budget",
     );
+  });
+});
+
+describe("Verlauf mit dem CEO (E61)", () => {
+  it("zeigt dem späteren werkbank-Lauf den gelesenen Auftrag des CEO", () => {
+    const order = office.sendMessage("ceo", {
+      toId: CTO,
+      kind: "auftrag",
+      text: "Füge in ci.yml Zeile 1 ein und übergib einmal.",
+    });
+    office.sendMessage(CFO, { toId: CTO, kind: "info", text: "Nur zur Info vom CFO" });
+    // Der Bürolauf liest das Postfach, fragt nach und legt die Aufgabe an.
+    const question = office.sendMessage(
+      CTO,
+      { toId: "ceo", kind: "frage", text: "Welches Repo?" },
+      { runId: "lauf-1" },
+    );
+    const task = office.createTask(
+      CTO,
+      {
+        title: "ci.yml Zeile 1",
+        description: "Laut Auftrag des CEO",
+        runType: "werkbank",
+        repo: REPO,
+        assigneeId: CTO,
+      },
+      { runId: "lauf-1" },
+    );
+    office.recordRunFinished(CTO, finished({ inboxUpToSeq: order.seq + 1 }), { runId: "lauf-1" });
+
+    const context = buildContext(input(CTO, task.id));
+    expect(context.prompt).toContain("# Verlauf mit dem CEO");
+    expect(context.prompt).toContain("## Vom CEO · auftrag");
+    expect(context.prompt).toContain("> Füge in ci.yml Zeile 1 ein und übergib einmal.");
+    expect(context.prompt).toContain("## Von dir an den CEO · frage");
+    expect(context.prompt).toContain("> Welches Repo?");
+    expect(context.prompt).not.toContain("Nur zur Info vom CFO");
+    expect(context.prompt).toContain("# Postfach\n\nKeine neuen Nachrichten.");
+    // Reihenfolge: Aufgabe, Verlauf, Postfach; im Verlauf älteste zuerst.
+    const at = (text: string) => context.prompt.indexOf(text);
+    expect(at("# Deine Aufgabe")).toBeLessThan(at("# Verlauf mit dem CEO"));
+    expect(at("> Füge in ci.yml")).toBeLessThan(at("> Welches Repo?"));
+    expect(at("> Welches Repo?")).toBeLessThan(at("# Postfach"));
+    expect(question.toId).toBe("ceo");
+  });
+
+  it("zeigt Ungelesenes nur im Postfach und lässt den Abschnitt ohne Verlauf weg", () => {
+    expect(buildContext(input(COO, null)).prompt).not.toContain("# Verlauf mit dem CEO");
+    office.sendMessage("ceo", { toId: COO, kind: "frage", text: "Neu und ungelesen" });
+    const context = buildContext(input(COO, null));
+    expect(context.prompt).not.toContain("# Verlauf mit dem CEO");
+    expect(context.prompt.split("> Neu und ungelesen")).toHaveLength(2);
+  });
+
+  it("begrenzt den Verlauf auf die letzten Nachrichten und kürzt lange Texte", () => {
+    for (let i = 1; i <= HISTORY_MESSAGES + 2; i += 1) {
+      office.sendMessage("ceo", { toId: COO, kind: "info", text: `Alt ${String(i)}` });
+    }
+    office.sendMessage("ceo", { toId: COO, kind: "info", text: "z".repeat(5_000) });
+    office.recordRunFinished(COO, finished(), { runId: "lauf-1" });
+    const context = buildContext(input(COO, null));
+    expect(context.prompt).not.toContain("> Alt 1\n");
+    expect(context.prompt).not.toContain("> Alt 3\n");
+    expect(context.prompt).toContain(`> Alt ${String(HISTORY_MESSAGES + 2)}`);
+    expect(context.prompt).not.toContain("z".repeat(HISTORY_TEXT_CHARS));
+    expect(context.prompt).toContain("…");
   });
 });
 
